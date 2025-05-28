@@ -56,3 +56,19 @@ def get_json_object(col: Union[str, Column], path: str) -> Column:
     col_expr = col.to_native() if isinstance(col, Column) else pl.col(col)
 
     return Column(col_expr.str.json_path_match(path))
+
+def lit(value) -> Column:
+    """
+    Mimics pyspark.sql.functions.lit.
+
+    Creates a Column of literal value.
+
+    Args:
+        value: A literal value (int, float, str, bool, None, etc.)
+
+    Returns:
+        Column: A Column object wrapping a literal Polars expression.
+    """
+    if value is None:
+        return Column(pl.lit(value).cast(pl.String).repeat_by(pl.len()).explode())
+    return Column(pl.lit(value).repeat_by(pl.len()).explode())

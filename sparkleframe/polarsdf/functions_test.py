@@ -1,10 +1,10 @@
 import json
-from pyspark.sql.functions import get_json_object as spark_get_json_object
+from pyspark.sql.functions import get_json_object as spark_get_json_object, lit as spark_lit, when as spark_when, col as spark_col
 import pytest
 import polars as pl
 import pandas as pd
-from pyspark.sql import functions as F
-from sparkleframe.polarsdf.functions import col, when, get_json_object
+import pandas.testing as pdt
+from sparkleframe.polarsdf.functions import col, when, get_json_object, lit
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 
@@ -33,7 +33,7 @@ class TestFunctions:
 
         # Add result column to full Spark DataFrame
         expected_spark_df = spark_df.withColumn(
-            "result", F.when(F.col("a") > 2, "yes").otherwise("no")
+            "result", spark_when(spark_col("a") > 2, "yes").otherwise("no")
         )
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
@@ -58,3 +58,28 @@ class TestFunctions:
         result_spark_df = spark.createDataFrame(result_df.toPandas())
 
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    from sparkleframe.polarsdf.functions import lit as sf_lit  # Your lit function
+
+    @pytest.mark.parametrize("literal_value", [
+        42,  # int
+        3.14,  # float
+        "hello",  # string
+        True,  # boolean
+        None,  # null
+    ])
+    def test_lit_against_spark(self, spark, literal_value):
+        df = pl.DataFrame({"x": [1, 2, 3]})
+        sparkle_df = DataFrame(df)
+        result_df = sparkle_df.select(lit(literal_value).alias("value")).toPandas()
+
+        # Result using Spark
+        spark_df = spark.createDataFrame(pd.DataFrame({"x": [1, 2, 3]}))
+        expected_df = spark_df.select(spark_lit(literal_value).alias("value")).toPandas()
+
+        # Compare using pandas
+        pdt.assert_frame_equal(
+            result_df.reset_index(drop=True),
+            expected_df.reset_index(drop=True),
+            check_dtype=False  # Important: ignores schema/type mismatches
+        )
