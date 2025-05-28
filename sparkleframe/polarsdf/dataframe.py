@@ -138,3 +138,15 @@ class DataFrame(BaseDataFrame):
             GroupedData: An object that can perform aggregations.
         """
         return GroupedData(self, list(cols))
+
+    def groupby(self, *cols: Union[str, Column]) -> GroupedData:
+        """
+        Mimics PySpark's DataFrame.groupBy() using Polars.
+
+        Args:
+            *cols: One or more column names or Column objects.
+
+        Returns:
+            GroupedData: An object that can perform aggregations.
+        """
+        return self.groupBy(*cols)

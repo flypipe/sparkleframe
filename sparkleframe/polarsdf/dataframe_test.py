@@ -391,14 +391,19 @@ class TestDataFrame:
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
 
-    @pytest.mark.parametrize("spark_func, sparkle_func", [
-        (F.count, PF.count),
-        (F.sum, PF.sum),
-        (F.mean, PF.mean),
-        (F.min, PF.min),
-        (F.max, PF.max),
+    @pytest.mark.parametrize("use_alias, spark_func, sparkle_func", [
+        (False, F.count, PF.count),
+        (False, F.sum, PF.sum),
+        (False, F.mean, PF.mean),
+        (False, F.min, PF.min),
+        (False, F.max, PF.max),
+        (True, F.count, PF.count),
+        (True, F.sum, PF.sum),
+        (True, F.mean, PF.mean),
+        (True, F.min, PF.min),
+        (True, F.max, PF.max),
     ])
-    def test_groupby_aggregations(self, spark, spark_func, sparkle_func):
+    def test_groupby_aggregations(self, use_alias, spark, spark_func, sparkle_func):
         # Data: two groups, multiple rows per group
         data = to_records({
             "group": ["A", "A", "B", "B", "A", "B"],
@@ -407,11 +412,19 @@ class TestDataFrame:
 
         # Spark DataFrame
         spark_df = spark.createDataFrame(data)
-        expected_df = spark_df.groupBy("group").agg(spark_func("value").alias("agg_result"))
+        if not use_alias:
+            expected_df = spark_df.groupBy("group")
+        else:
+            expected_df = spark_df.groupby("group")
+        expected_df = expected_df.agg(spark_func("value").alias("agg_result"))
 
         # Sparkleframe Polars DataFrame
         pl_df = DataFrame(pl.DataFrame(data))
-        result_df = pl_df.groupBy("group").agg(sparkle_func("value").alias("agg_result"))
+        if not use_alias:
+            result_df = pl_df.groupBy("group")
+        else:
+            result_df = pl_df.groupby("group")
+        result_df = result_df.agg(sparkle_func("value").alias("agg_result"))
 
         # Convert Polars result to Spark for comparison
         result_spark_df = spark.createDataFrame(result_df.toPandas())
