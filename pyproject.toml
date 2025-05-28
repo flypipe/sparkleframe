@@ -1,0 +1,26 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "sparkleframe"
+authors = [
+    {name = "Jose Helio de Brum Muller", email = "josemuller.flypipe@gmail.com"},
+]
+readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+]
+dynamic = ["version", "description"]
+requires-python=">=3.8"
+dependencies  = [
+    "polars >=1.30"
+]
+
+[project.urls]
+Home = "https://github.com/flypipe/sparkleframe.git"

@@ -1,0 +1,10 @@
+services:
+  sparkleframe:
+    build:
+      context: ../
+      dockerfile: ./.docker/Dockerfile
+    container_name: sparkleframe
+    environment:
+      TIMEZONE: US/Eastern
+    volumes:
+      - ./../sparkleframe:/sparkleframe
