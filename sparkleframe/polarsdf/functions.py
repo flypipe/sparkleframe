@@ -72,3 +72,25 @@ def lit(value) -> Column:
     if value is None:
         return Column(pl.lit(value).cast(pl.String).repeat_by(pl.len()).explode())
     return Column(pl.lit(value).repeat_by(pl.len()).explode())
+
+def coalesce(*cols: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.coalesce.
+
+    Returns the first non-null value among the given columns.
+
+    Args:
+        *cols: A variable number of columns (str or Column)
+
+    Returns:
+        Column: A Column representing the coalesced expression.
+    """
+    if not cols:
+        raise ValueError("coalesce requires at least one column")
+
+    expressions = [
+        _to_expr(col) if isinstance(col, Column) else pl.col(col)
+        for col in cols
+    ]
+
+    return Column(pl.coalesce(*expressions))

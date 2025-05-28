@@ -1,12 +1,13 @@
 import json
-from pyspark.sql.functions import get_json_object as spark_get_json_object, lit as spark_lit, when as spark_when, col as spark_col
+from pyspark.sql.functions import get_json_object as spark_get_json_object, lit as spark_lit, when as spark_when, col as spark_col, coalesce as spark_coalesce
 import pytest
 import polars as pl
 import pandas as pd
 import pandas.testing as pdt
-from sparkleframe.polarsdf.functions import col, when, get_json_object, lit
+from sparkleframe.polarsdf.functions import col, when, get_json_object, lit, coalesce
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
+from sparkleframe.tests.utils import to_records
 
 sample_data = {
     "a": [1, 2, 3],
@@ -106,3 +107,25 @@ class TestFunctions:
             expected_df.reset_index(drop=True),
             check_dtype=False  # Important: ignores schema/type mismatches
         )
+
+    @pytest.mark.parametrize("a_vals, b_vals, expected_vals", [
+        ([None, 2, None], [1, None, 3], [1, 2, 3]),
+        ([None, None, None], [None, None, None], [None, None, None]),
+        ([None, 5, 6], ["x", "y", None], ["x", 5, 6]),
+        (["", None, "z"], ["a", "b", None], ["", "b", "z"]),
+    ])
+    def test_coalesce_against_spark(self, spark, a_vals, b_vals, expected_vals):
+        # Build pandas DataFrame for both Spark and Polars
+        data = to_records({"a": a_vals, "b": b_vals})
+
+        # Spark setup
+        spark_df = spark.createDataFrame(data)
+        expected_spark_df = spark_df.select(spark_coalesce(spark_col("a"), spark_col("b")).alias("result"))
+
+        # sparkleframe setup
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_df = polars_df.select(coalesce(col("a"), col("b")).alias("result"))
+        result_spark_df = spark.createDataFrame(result_df.toPandas())
+
+        # Compare using PySpark equality
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
