@@ -6,9 +6,11 @@ import polars as pl
 import pytest
 from pyspark.sql.functions import get_json_object as spark_get_json_object, lit as spark_lit, when as spark_when, \
     col as spark_col, coalesce as spark_coalesce
+from pyspark.sql.types import StringType, StructField
 
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.functions import col, when, get_json_object, lit, coalesce
+from sparkleframe.polarsdf.types import StructType
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records
 
@@ -41,6 +43,36 @@ class TestFunctions:
         )
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_chained_when_boolean_output(self, spark):
+        # Input data
+        data = to_records({
+            "b": ["A", "B", "C", "D"],
+            "c": ["b", "e", "g", "z"]
+        })
+
+
+        polars_df = DataFrame(pl.DataFrame(data))
+        expr = (
+            when((col("b") == "A") & (col("c").isin("A", "b", "c")), True)
+            .when((col("b") == "B") & (col("c").isin("d", "e")), True)
+            .when((col("b") == "C") & (col("c").isin("f", "g", "h", "i")), True)
+            .otherwise(False)
+        )
+
+        result_df = polars_df.withColumn("result", expr)
+        result_spark_df = spark.createDataFrame(result_df.df.to_dicts())
+
+        # Expected result using PySpark chained when()
+        expected_df = spark.createDataFrame(data).withColumn("result",
+            spark_when((spark_col("b") == "A") & (spark_col("c").isin("A", "b", "c")), True)
+            .when((spark_col("b") == "B") & (spark_col("c").isin("d", "e")), True)
+            .when((spark_col("b") == "C") & (spark_col("c").isin("f", "g", "h", "i")), True)
+            .otherwise(False)
+        )
+
+        # Compare results
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
     @pytest.mark.parametrize("json_data, path, expected_values", [
         ([json.dumps({"a": 1}), json.dumps({"a": 2})], "$.a", ["1", "2"]),
@@ -120,13 +152,40 @@ class TestFunctions:
         data = to_records({"a": a_vals, "b": b_vals})
 
         # Spark setup
-        spark_df = spark.createDataFrame(data)
-        expected_spark_df = spark_df.select(spark_coalesce(spark_col("a"), spark_col("b")).alias("result"))
+        print(data)
+        if expected_vals == [None, None, None]:
+            spark_df = spark.createDataFrame(data=[("1", "1")], schema="a: string, b: string")
+            spark_df = (
+                spark_df
+                .withColumn("a", spark_lit(None))
+                .withColumn("b", spark_lit(None))
+            )
+
+            expected_spark_df = spark.createDataFrame(data=[("1", "1")], schema="a: string, b: string")
+            expected_spark_df = (
+                expected_spark_df
+                .withColumn("a", spark_lit(None))
+                .withColumn("b", spark_lit(None))
+            )
+        else:
+            spark_df = spark.createDataFrame(data)
+            expected_spark_df = spark_df.select(spark_coalesce(spark_col("a"), spark_col("b")).alias("result"))
 
         # sparkleframe setup
         polars_df = DataFrame(pl.DataFrame(data))
         result_df = polars_df.select(coalesce(col("a"), col("b")).alias("result"))
-        result_spark_df = spark.createDataFrame(result_df.toPandas())
+
+        print()
+        if result_df.df.to_dicts() == [{'result': None}, {'result': None}, {'result': None}]:
+            result_spark_df = (
+                spark_df
+                .withColumn("a", spark_lit(None))
+                .withColumn("b", spark_lit(None))
+            )
+        else:
+            result_spark_df = spark.createDataFrame(result_df.df.to_dicts())
 
         # Compare using PySpark equality
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+

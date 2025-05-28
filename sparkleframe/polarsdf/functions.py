@@ -1,6 +1,7 @@
-from typing import Union
+from typing import Union, Any
+import polars as pl
 
-from sparkleframe.polarsdf.column import Column
+from sparkleframe.polarsdf.column import Column, _to_expr
 
 
 def col(name: str) -> Column:
@@ -14,30 +15,6 @@ def col(name: str) -> Column:
         Column: A Column object for building expressions.
     """
     return Column(name)
-
-# Entry point function that mimics pyspark.sql.functions.when
-def when(condition: Column, value) -> Column:
-    """
-    Starts a conditional column expression.
-
-    Returns a Column containing a partial when().then() expression,
-    which must be completed with .otherwise().
-    """
-    expr = pl.when(condition.to_native()).then(_to_expr(value))
-    return Column(expr)
-
-from sparkleframe.polarsdf.column import Column, _to_expr
-import polars as pl
-
-
-def col(name: str) -> Column:
-    return Column(name)
-
-
-def when(condition: Column, value) -> Column:
-    expr = pl.when(condition.to_native()).then(_to_expr(value))
-    return Column(expr)
-
 
 def get_json_object(col: Union[str, Column], path: str) -> Column:
     """
@@ -94,3 +71,28 @@ def coalesce(*cols: Union[str, Column]) -> Column:
     ]
 
     return Column(pl.coalesce(*expressions))
+
+
+class WhenBuilder:
+    def __init__(self, condition: Column, value):
+        self.branches = [(condition.to_native(), _to_expr(value))]
+
+    def when(self, condition: Any, value) -> 'WhenBuilder':
+        condition = Column(condition) if not isinstance(condition, Column) else condition
+        self.branches.append((condition.to_native(), _to_expr(value)))
+        return self
+
+    def otherwise(self, value) -> Column:
+        expr = pl.when(self.branches[0][0]).then(self.branches[0][1])
+        for cond, val in self.branches[1:]:
+            expr = expr.when(cond).then(val)
+        return Column(expr.otherwise(_to_expr(value)))
+
+def when(condition: Any, value) -> WhenBuilder:
+    """
+    Starts a multi-branch conditional expression.
+
+    Returns a WhenBuilder which can be chained with .when(...).otherwise(...).
+    """
+    condition = Column(condition) if not isinstance(condition, Column) else condition
+    return WhenBuilder(condition, value)

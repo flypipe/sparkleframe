@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 import polars as pl
 
+
 from sparkleframe.polarsdf.types import DataType
 
 
@@ -139,13 +140,6 @@ class Column:
             raise TypeError(f"rlike() expects a string pattern, got {type(pattern)}")
 
         return Column(self.expr.str.contains(pattern))
-
-
-    def otherwise(self, value) -> Column:
-        """
-        Finalize a conditional column by providing the fallback (else) value.
-        """
-        return Column(self.expr.otherwise(_to_expr(value)))
 
     def to_native(self) -> pl.Expr:
         return self.expr

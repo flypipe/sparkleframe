@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Union
+from typing import Union, Any
 
 import pandas as pd
 import polars as pl
@@ -60,7 +60,7 @@ class DataFrame(BaseDataFrame):
         selected_df = self.df.select(*pl_expressions)
         return DataFrame(selected_df)
 
-    def withColumn(self, name: str, col: Column) -> DataFrame:
+    def withColumn(self, name: str, col: Any) -> DataFrame:
         """
         Mimics PySpark's withColumn method using Polars.
 
@@ -71,6 +71,7 @@ class DataFrame(BaseDataFrame):
         Returns:
             A new DataFrame with the added or updated column.
         """
+        col = Column(col) if not isinstance(col, Column) else col
         expr = col.to_native().alias(name)
         updated_df = self.df.with_columns(expr)
         return DataFrame(updated_df)
