@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import polars as pl
 
 from sparkleframe.polarsdf.types import DataType
@@ -95,17 +97,24 @@ class Column:
             raise TypeError(f"cast() expects a DataType, got {type(data_type)}")
         return Column(self.expr.cast(data_type.to_native()))
 
-    def isin(self, values: list) -> Column:
+    def isin(self, *values) -> Column:
         """
-        Mimics pyspark.sql.Column.isin
+        Mimics pyspark.sql.Column.isin and supports both:
+            col("x").isin("a", "b") and col("x").isin(["a", "b"])
 
         Args:
-            values (list): A list of values to check for inclusion.
+            *values: A list of values or individual arguments.
 
         Returns:
             Column: A Column representing a boolean expression.
         """
-        return Column(self.expr.is_in(values))
+        # If a single iterable (non-str) is passed, use that directly
+        if len(values) == 1 and isinstance(values[0], Iterable) and not isinstance(values[0], str):
+            value_list = list(values[0])
+        else:
+            value_list = list(values)
+
+        return Column(self.expr.is_in(value_list))
 
     def isNotNull(self) -> Column:
         """

@@ -356,3 +356,42 @@ class TestDataFrame:
             expected_df = spark_df.select(F.col("name").rlike(pattern).alias("match"))
             assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
+    @pytest.mark.parametrize("column_name, values, use_variadic", [
+        ("name", ["Alice", "Bob"], False),
+        ("name", ["Alice", "Bob"], True),
+        ("name", ["Zoe"], False),
+        ("name", ["Zoe"], True),
+        ("age", [25, 30], False),
+        ("age", [25, 30], True),
+        ("age", [100], False),
+        ("age", [100], True),
+        ("salary", [], False),
+        ("salary", [], True),
+    ])
+    def test_isin(self, spark, column_name, values, use_variadic):
+        # Sample data
+        data = {
+            "name": ["Alice", "Bob", "Charlie"],
+            "age": [25, 30, 35],
+            "salary": [70000, 80000, 90000],
+        }
+
+        # Create both Spark and Polars-backed Sparkle DataFrames
+        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        sparkle_df = DataFrame(pl.DataFrame(data))
+
+        # Build .isin expression using list or variadic arguments
+        if use_variadic:
+            expr = PF.col(column_name).isin(*values).alias("match")
+        else:
+            expr = PF.col(column_name).isin(values).alias("match")
+
+        result_df = sparkle_df.select(expr).toPandas()
+        result_spark_df = spark.createDataFrame(result_df)
+
+        # Expected result from PySpark directly
+        expected_df = spark_df.select(F.col(column_name).isin(values).alias("match"))
+
+        # Compare
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+

@@ -76,18 +76,28 @@ class TestColumn:
         expected = sample_df.select((pl.col("a") + pl.col("b")).alias("sum_ab")).to_series()
         assert result.to_list() == expected.to_list()
 
-    @pytest.mark.parametrize("column_name, values", [
-        ("a", [1, 2]),  # int
-        ("a", [10]),  # int (no match)
-        ("d", ["cat", "dog"]),  # str
-        ("d", ["fish"]),  # str (no match)
-        ("d", []),  # empty list
+    @pytest.mark.parametrize("column_name, values, use_variadic", [
+        ("a", [1, 2], False),
+        ("a", [1, 2], True),
+        ("a", [10], False),
+        ("a", [10], True),
+        ("d", ["cat", "dog"], False),
+        ("d", ["cat", "dog"], True),
+        ("d", ["fish"], False),
+        ("d", ["fish"], True),
+        ("d", [], False),
+        ("d", [], True),
     ])
-    def test_isin(self, sample_df, column_name, values):
-        expr = col(column_name).isin(values)
-        result = self.evaluate_expr(expr, sample_df)
+    def test_isin(self, sample_df, column_name, values, use_variadic):
+        # Build expression using either list or variadic form
+        if use_variadic:
+            expr = col(column_name).isin(*values)
+        else:
+            expr = col(column_name).isin(values)
 
+        result = sample_df.select(expr.to_native().alias("result")).to_series()
         expected = sample_df.select(pl.col(column_name).is_in(values).alias("result")).to_series()
+
         assert result.to_list() == expected.to_list()
 
     def test_otherwise(self, sample_df):
