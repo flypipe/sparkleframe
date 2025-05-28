@@ -175,7 +175,6 @@ class TestFunctions:
         polars_df = DataFrame(pl.DataFrame(data))
         result_df = polars_df.select(coalesce(col("a"), col("b")).alias("result"))
 
-        print()
         if result_df.df.to_dicts() == [{'result': None}, {'result': None}, {'result': None}]:
             result_spark_df = (
                 spark_df

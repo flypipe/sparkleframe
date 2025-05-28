@@ -9,6 +9,7 @@ from pandas import DataFrame as PandasDataFrame
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf.column import Column
+from sparkleframe.polarsdf.group import GroupedData
 
 
 class DataFrame(BaseDataFrame):
@@ -125,3 +126,15 @@ class DataFrame(BaseDataFrame):
                     print(f"{key}: {val}")
         else:
             print(self.df.head(n))
+
+    def groupBy(self, *cols: Union[str, Column]) -> GroupedData:
+        """
+        Mimics PySpark's DataFrame.groupBy() using Polars.
+
+        Args:
+            *cols: One or more column names or Column objects.
+
+        Returns:
+            GroupedData: An object that can perform aggregations.
+        """
+        return GroupedData(self, list(cols))

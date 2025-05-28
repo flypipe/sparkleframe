@@ -72,6 +72,82 @@ def coalesce(*cols: Union[str, Column]) -> Column:
 
     return Column(pl.coalesce(*expressions))
 
+def count(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.count.
+
+    Counts the number of non-null elements for the specified column.
+
+    Args:
+        col_name (str or Column): The column to count non-null values in.
+
+    Returns:
+        Column: A Column representing the count aggregation expression.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.count())
+
+def sum(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.sum.
+
+    Computes the sum of non-null values in the specified column.
+
+    Args:
+        col_name (str or Column): The column to sum.
+
+    Returns:
+        Column: A Column representing the sum aggregation expression.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.sum())
+
+def mean(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.mean (alias for avg).
+
+    Computes the mean of non-null values in the specified column.
+
+    Args:
+        col_name (str or Column): The column to average.
+
+    Returns:
+        Column: A Column representing the mean aggregation expression.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.mean())
+
+def min(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.min.
+
+    Computes the minimum of non-null values in the specified column.
+
+    Args:
+        col_name (str or Column): The column to find the minimum value of.
+
+    Returns:
+        Column: A Column representing the min aggregation expression.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.min())
+
+def max(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.max.
+
+    Computes the maximum of non-null values in the specified column.
+
+    Args:
+        col_name (str or Column): The column to find the maximum value of.
+
+    Returns:
+        Column: A Column representing the max aggregation expression.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.max())
+
+
 
 class WhenBuilder:
     def __init__(self, condition: Column, value):

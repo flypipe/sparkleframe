@@ -26,6 +26,7 @@ from sparkleframe.polarsdf.types import (
     DoubleType, BooleanType, DateType, TimestampType, DecimalType, ByteType, ShortType, BinaryType
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
+from sparkleframe.tests.utils import to_records
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -388,4 +389,33 @@ class TestDataFrame:
 
         # Compare
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+
+    @pytest.mark.parametrize("spark_func, sparkle_func", [
+        (F.count, PF.count),
+        (F.sum, PF.sum),
+        (F.mean, PF.mean),
+        (F.min, PF.min),
+        (F.max, PF.max),
+    ])
+    def test_groupby_aggregations(self, spark, spark_func, sparkle_func):
+        # Data: two groups, multiple rows per group
+        data = to_records({
+            "group": ["A", "A", "B", "B", "A", "B"],
+            "value": [10, 20, 5, 15, 30, 25]
+        })
+
+        # Spark DataFrame
+        spark_df = spark.createDataFrame(data)
+        expected_df = spark_df.groupBy("group").agg(spark_func("value").alias("agg_result"))
+
+        # Sparkleframe Polars DataFrame
+        pl_df = DataFrame(pl.DataFrame(data))
+        result_df = pl_df.groupBy("group").agg(sparkle_func("value").alias("agg_result"))
+
+        # Convert Polars result to Spark for comparison
+        result_spark_df = spark.createDataFrame(result_df.toPandas())
+
+        # Assert equivalence
+        assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
 
