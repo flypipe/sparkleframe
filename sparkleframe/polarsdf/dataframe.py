@@ -23,6 +23,27 @@ class DataFrame(BaseDataFrame):
 
         super().__init__(self.df)
 
+    def filter(self, condition: Union[str, Column]) -> DataFrame:
+        """
+        Mimics PySpark's DataFrame.filter() method using Polars.
+
+        Args:
+            condition (Union[str, Column]): A filter condition either as a string or a Column expression.
+
+        Returns:
+            DataFrame: A new DataFrame containing only the rows that match the filter condition.
+        """
+        if isinstance(condition, str):
+            filtered_df = self.df.filter(pl.col(condition))
+        elif isinstance(condition, Column):
+            filtered_df = self.df.filter(condition.to_native())
+        else:
+            raise TypeError("filter() expects a string column name or a Column expression")
+
+        return DataFrame(filtered_df)
+
+    where = filter  # Alias for .filter()
+
     def select(self, *cols: Union[str, Column]) -> 'DataFrame':
         """
         Mimics PySpark's select method using Polars.
