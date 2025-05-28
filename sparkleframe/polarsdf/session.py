@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Union
 
-import polars as pl
 import pandas as pd
+import polars as pl
+
 from sparkleframe.polarsdf.dataframe import DataFrame
+
 
 class SparkSession:
     def __init__(self):

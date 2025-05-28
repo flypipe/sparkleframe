@@ -8,7 +8,6 @@ from sparkleframe.polarsdf.functions import col, lit
 from sparkleframe.polarsdf.types import *
 
 
-
 @pytest.fixture
 def sample_df():
     return pl.DataFrame({

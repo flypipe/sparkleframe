@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from typing import Union
+
 import pandas as pd
 import polars as pl
-from typing import List, Union
+import pyarrow as pa
+from pandas import DataFrame as PandasDataFrame
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf.column import Column
-from pandas import DataFrame as PandasDataFrame
-import pyarrow as pa
+
 
 class DataFrame(BaseDataFrame):
 

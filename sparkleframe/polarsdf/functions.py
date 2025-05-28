@@ -1,7 +1,7 @@
 from typing import Union
 
-from sparkleframe.polarsdf.column import Column, _to_expr
-import polars as pl
+from sparkleframe.polarsdf.column import Column
+
 
 def col(name: str) -> Column:
     """

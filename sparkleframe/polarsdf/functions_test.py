@@ -1,11 +1,14 @@
 import json
-from pyspark.sql.functions import get_json_object as spark_get_json_object, lit as spark_lit, when as spark_when, col as spark_col, coalesce as spark_coalesce
-import pytest
-import polars as pl
+
 import pandas as pd
 import pandas.testing as pdt
-from sparkleframe.polarsdf.functions import col, when, get_json_object, lit, coalesce
+import polars as pl
+import pytest
+from pyspark.sql.functions import get_json_object as spark_get_json_object, lit as spark_lit, when as spark_when, \
+    col as spark_col, coalesce as spark_coalesce
+
 from sparkleframe.polarsdf.dataframe import DataFrame
+from sparkleframe.polarsdf.functions import col, when, get_json_object, lit, coalesce
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records
 
@@ -59,8 +62,6 @@ class TestFunctions:
         result_spark_df = spark.createDataFrame(result_df.toPandas())
 
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
-
-    from sparkleframe.polarsdf.functions import lit as sf_lit  # Your lit function
 
     @pytest.mark.parametrize("literal_value", [
         42,  # int

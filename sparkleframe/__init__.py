@@ -2,9 +2,9 @@
 Sparkleframe
 """
 from __future__ import annotations
+
 import importlib
 import sys
-import typing as t
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
@@ -26,7 +26,7 @@ NAME_TO_FILE_OVERRIDE = {
 }
 
 ACTIVATE_CONFIG = {}
-from pyspark import testing
+
 
 def activate() -> None:
 

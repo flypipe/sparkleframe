@@ -1,9 +1,10 @@
-import sys
-from typing import Callable
-from sparkleframe import Engine
-import types
 import importlib
+import sys
+import types
 from contextlib import contextmanager
+from typing import Callable
+
+from sparkleframe import Engine
 
 SPARKLE_MODULES = [
     "functions",

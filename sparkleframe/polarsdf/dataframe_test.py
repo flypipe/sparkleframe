@@ -1,14 +1,9 @@
-import numpy as np
-import pytest
-import polars as pl
 import pandas as pd
-from pyspark.sql.functions import col as spark_col
-
-from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.polarsdf.dataframe import DataFrame
-import sparkleframe.polarsdf.functions as PF
-
+import polars as pl
+import pyarrow as pa
+import pytest
 from pyspark.sql import functions as F
+from pyspark.sql.functions import col as spark_col
 from pyspark.sql.types import (
     StringType as SparkStringType,
     IntegerType as SparkIntegerType,
@@ -24,11 +19,13 @@ from pyspark.sql.types import (
     BinaryType as SparkBinaryType
 )
 
+import sparkleframe.polarsdf.functions as PF
+from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.types import (
     StringType, IntegerType, LongType, FloatType,
     DoubleType, BooleanType, DateType, TimestampType, DecimalType, ByteType, ShortType, BinaryType
 )
-import pyarrow as pa
+from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -329,9 +326,6 @@ class TestDataFrame:
         where_result = sparkle_df.where(expr_func(PF.col("a"), PF.col("b"), PF.col("c"))).toPandas()
         result_spark_df = spark.createDataFrame(where_result)
         assert_pyspark_df_equal(result_spark_df, expected_result, ignore_nullable=True)
-
-    import re
-    from pyspark.sql.functions import col as spark_col, rlike as spark_rlike
 
     @pytest.mark.parametrize("pattern, expected_matches", [
         (".*a.*", ["Alice", "Charlie"]),  # contains 'a'
