@@ -147,6 +147,21 @@ def max(col_name: Union[str, Column]) -> Column:
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.max())
 
+def round(col_name: Union[str, Column], scale: int = 0) -> Column:
+    """
+    Mimics pyspark.sql.functions.round.
+
+    Rounds the values of a column to the specified number of decimal places.
+
+    Args:
+        col_name (str or Column): The column to round.
+        scale (int): Number of decimal places to round to. Default is 0 (nearest integer).
+
+    Returns:
+        Column: A Column representing the rounded values.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.round(scale))
 
 
 class WhenBuilder:

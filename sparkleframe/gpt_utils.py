@@ -73,16 +73,16 @@ generate a pytest test case, using pytest.parametrize to test the logic `{functi
 """
     return message
 
-file_path = "./polarsdf/functions.py"
+file_path = "./polarsdf/functions_test.py"
 function_name = "round"
 pyspark_function_url="https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.round.html"
 
-msg = generate_pyspark_function_instruction(
-    file_path,
-    function_name,
-    pyspark_function_url
-)
+# msg = generate_pyspark_function_instruction(
+#     file_path,
+#     function_name,
+#     pyspark_function_url
+# )
 
-# msg = generate_test_instruction(file_path, function_name, compare_output_spark=True)
+msg = generate_test_instruction(file_path, function_name, compare_output_spark=True)
 
 print(msg)
