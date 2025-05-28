@@ -277,3 +277,27 @@ class TestDataFrame:
 
         # Assert equality
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, precision=5)
+
+    @pytest.mark.parametrize("description, expr_func", [
+        ("AND", lambda a, b, c: (a > 1) & (b < 6)),
+        ("OR", lambda a, b, c: (a > 2) | (b < 6)),
+        ("chained AND-OR", lambda a, b, c: ((a > 1) & (b < 6)) | (c > 7)),
+        ("chained OR-AND", lambda a, b, c: (a < 2) | ((b == 5) & (c < 9))),
+    ])
+    def test_logical_operations(self, spark, description, expr_func):
+        data = {
+            "a": [1, 2, 3, 4],
+            "b": [10, 5, 3, 8],
+            "c": [7, 12, 9, 4]
+        }
+
+        sparkle_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(pd.DataFrame(data))
+
+        expr = expr_func(PF.col("a"), PF.col("b"), PF.col("c")).alias("result")
+        expected_expr = expr_func(F.col("a"), F.col("b"), F.col("c")).alias("result")
+
+        result_df = spark.createDataFrame(sparkle_df.select(expr).toPandas())
+        expected_df = spark_df.select(expected_expr)
+
+        assert_pyspark_df_equal(result_df, expected_df, ignore_nullable=True)

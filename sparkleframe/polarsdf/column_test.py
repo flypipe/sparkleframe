@@ -131,3 +131,18 @@ class TestColumn:
         expected = df.select(pl.col("x").is_not_null().alias("result")).to_series()
 
         assert result.to_list() == expected.to_list()
+
+    @pytest.mark.parametrize("expr_func, description", [
+        (lambda a, b, c: (a > 1) & (b < 6), "AND"),
+        (lambda a, b, c: (a > 2) | (b < 6), "OR"),
+        (lambda a, b, c: ((a > 1) & (b < 6)) | (c > 7), "chained AND-OR"),
+        (lambda a, b, c: (a < 2) | ((b == 5) & (c < 9)), "chained OR-AND"),
+    ])
+    def test_logical_operations_chained(self, sample_df, expr_func, description):
+        result_expr = expr_func(col("a"), col("b"), col("c")).alias("result")
+        expected_expr = expr_func(pl.col("a"), pl.col("b"), pl.col("c")).alias("result")
+
+        result = sample_df.select(result_expr.to_native()).to_series()
+        expected = sample_df.select(expected_expr).to_series()
+
+        assert result.to_list() == expected.to_list()

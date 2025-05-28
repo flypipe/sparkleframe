@@ -12,6 +12,7 @@ class Column:
         else:
             self.expr = expr_or_name
 
+    # Arithmetic operations
     def __mul__(self, other):
         return Column(self.expr * _to_expr(other))
 
@@ -36,7 +37,7 @@ class Column:
     def __rtruediv__(self, other):
         return Column(_to_expr(other) / self.expr)
 
-
+    # Comparison operations
     def __eq__(self, other):
         return Column(self.expr == _to_expr(other))
 
@@ -54,6 +55,19 @@ class Column:
 
     def __ge__(self, other):
         return Column(self.expr >= _to_expr(other))
+
+    # Logical operations
+    def __and__(self, other):
+        return Column(self.expr & _to_expr(other))
+
+    def __rand__(self, other):
+        return Column(_to_expr(other) & self.expr)
+
+    def __or__(self, other):
+        return Column(self.expr | _to_expr(other))
+
+    def __ror__(self, other):
+        return Column(_to_expr(other) | self.expr)
 
     def alias(self, name: str) -> Column:
         """
