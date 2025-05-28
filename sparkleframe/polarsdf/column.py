@@ -116,6 +116,22 @@ class Column:
         """
         return Column(self.expr.is_not_null())
 
+    def rlike(self, pattern: str) -> Column:
+        """
+        Mimics pyspark.sql.Column.rlike using Polars' regex matching.
+
+        Args:
+            pattern (str): Regular expression pattern to match.
+
+        Returns:
+            Column: A new Column representing a boolean expression.
+        """
+        if not isinstance(pattern, str):
+            raise TypeError(f"rlike() expects a string pattern, got {type(pattern)}")
+
+        return Column(self.expr.str.contains(pattern))
+
+
     def otherwise(self, value) -> Column:
         """
         Finalize a conditional column by providing the fallback (else) value.

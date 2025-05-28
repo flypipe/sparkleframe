@@ -177,3 +177,19 @@ class TestColumn:
 
         expr = expr_func(col("birth_date"), datetime(2024, 1, 1))
         sparkle_df.select(expr.alias("result")).toPandas()
+
+    @pytest.mark.parametrize("values, pattern, expected", [
+        (["apple", "banana", "apricot"], "^a", [True, False, True]),    # Starts with 'a'
+        (["apple", "banana", "apricot"], "a$", [False, True, False]),   # Ends with 'a'
+        (["car", "cat", "dog"], "ca.", [True, True, False]),            # Starts with 'ca' and any char
+        (["spark", "flame", "flash"], ".*a.*", [True, True, True]),    # Contains 'a'
+        (["123", "abc", "456"], r"\d+", [True, False, True]),           # Digits only
+    ])
+    def test_rlike(self, values, pattern, expected):
+        df = pl.DataFrame({"col": values})
+        sparkle_df = DataFrame(df)
+
+        expr = col("col").rlike(pattern).alias("result")
+        result = sparkle_df.select(expr).to_native_df()["result"].to_list()
+
+        assert result == expected

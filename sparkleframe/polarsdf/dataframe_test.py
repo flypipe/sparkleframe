@@ -329,3 +329,30 @@ class TestDataFrame:
         where_result = sparkle_df.where(expr_func(PF.col("a"), PF.col("b"), PF.col("c"))).toPandas()
         result_spark_df = spark.createDataFrame(where_result)
         assert_pyspark_df_equal(result_spark_df, expected_result, ignore_nullable=True)
+
+    import re
+    from pyspark.sql.functions import col as spark_col, rlike as spark_rlike
+
+    @pytest.mark.parametrize("pattern, expected_matches", [
+        (".*a.*", ["Alice", "Charlie"]),  # contains 'a'
+        ("^A.*", ["Alice"]),  # starts with 'A'
+        (".*b$", ["Bob"]),  # ends with 'b'
+        ("^C.*e$", ["Charlie"]),  # starts with C and ends with e
+        ("[aeiou]{2}", []),  # two vowels in a row
+    ])
+    def test_rlike(self, spark, pattern, expected_matches):
+        data = {
+            "name": ["Alice", "Bob", "Charlie"],
+        }
+        pandas_df = pd.DataFrame(data)
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(pandas_df)
+
+        for pattern, expected in [(pattern, expected_matches)]:
+            expr = PF.col("name").rlike(pattern).alias("match")
+            result_df = polars_df.select(expr)
+            result_spark_df = spark.createDataFrame(result_df.toPandas())
+
+            expected_df = spark_df.select(F.col("name").rlike(pattern).alias("match"))
+            assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
