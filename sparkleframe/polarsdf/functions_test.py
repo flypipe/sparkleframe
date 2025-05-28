@@ -83,3 +83,26 @@ class TestFunctions:
             expected_df.reset_index(drop=True),
             check_dtype=False  # Important: ignores schema/type mismatches
         )
+
+    @pytest.mark.parametrize("literal_value", [
+        42,  # int
+        3.14,  # float
+        "hello",  # string
+        True,  # boolean
+        None,  # null
+    ])
+    def test_lit_against_spark(self, spark, literal_value):
+        df = pl.DataFrame({"x": [1, 2, 3]})
+        sparkle_df = DataFrame(df)
+        result_df = sparkle_df.select(lit(literal_value).alias("value")).toPandas()
+
+        # Result using Spark
+        spark_df = spark.createDataFrame(pd.DataFrame({"x": [1, 2, 3]}))
+        expected_df = spark_df.select(spark_lit(literal_value).alias("value")).toPandas()
+
+        # Compare using pandas
+        pdt.assert_frame_equal(
+            result_df.reset_index(drop=True),
+            expected_df.reset_index(drop=True),
+            check_dtype=False  # Important: ignores schema/type mismatches
+        )

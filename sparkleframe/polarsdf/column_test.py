@@ -1,7 +1,10 @@
+from datetime import datetime
+
 import pytest
+from polars.polars import InvalidOperationError
 
 from sparkleframe.polarsdf import DataFrame
-from sparkleframe.polarsdf.functions import col
+from sparkleframe.polarsdf.functions import col, lit
 from sparkleframe.polarsdf.types import *
 
 
@@ -146,3 +149,31 @@ class TestColumn:
         expected = sample_df.select(expected_expr).to_series()
 
         assert result.to_list() == expected.to_list()
+
+    @pytest.mark.parametrize("op_name, expr_func", [
+        ("==", lambda col, val: col == val),
+        ("!=", lambda col, val: col != val),
+        ("<", lambda col, val: col < val),
+        ("<=", lambda col, val: col <= val),
+        (">", lambda col, val: col > val),
+        (">=", lambda col, val: col >= val),
+    ])
+    def test_temporal_column_string_comparison_raises(spark, op_name, expr_func):
+        df = pl.DataFrame({
+            "birth_date": [datetime(1990, 1, 1), datetime(1985, 5, 15), datetime(1970, 12, 30)]
+        })
+        sparkle_df = DataFrame(df)
+
+        # Attempt comparison with a string (should raise)
+        with pytest.raises(InvalidOperationError):
+            expr = expr_func(col("birth_date"), "2024-01-01")
+            sparkle_df.select(expr.alias("result")).toPandas()
+
+        # Attempt comparison with a lit string (should raise)
+        with pytest.raises(InvalidOperationError):
+            expr = expr_func(col("birth_date"), lit("2024-01-01"))
+            sparkle_df.select(expr.alias("result")).toPandas()
+
+
+        expr = expr_func(col("birth_date"), datetime(2024, 1, 1))
+        sparkle_df.select(expr.alias("result")).toPandas()
