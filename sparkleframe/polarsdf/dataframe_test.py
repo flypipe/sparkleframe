@@ -45,9 +45,35 @@ def spark_df(spark):
     return spark.createDataFrame(pd.DataFrame(sample_data))
 
 class TestDataFrame:
+
+    @pytest.mark.parametrize("cols", [
+        ("name"),
+        (["name", "age"]),
+    ])
+    def test_select_by_list_str(self, spark, sparkle_df, spark_df, cols):
+        result_spark_df = spark.createDataFrame(sparkle_df.select(cols).toPandas())
+        expected_spark_df = spark_df.select(cols)
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+
+    @pytest.mark.parametrize("cols", [
+        ("name"),
+        (["name", "age"]),
+    ])
+    def test_select_by_list_columns(self, spark, sparkle_df, spark_df, cols):
+        cols = [cols] if isinstance(cols, str) else cols
+        result_spark_df = spark.createDataFrame(sparkle_df.select([PF.col(col) for col in cols]).toPandas())
+        expected_spark_df = spark_df.select([F.col(col) for col in cols])
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+
     def test_select_by_column_name(self, spark, sparkle_df, spark_df):
         result_spark_df = spark.createDataFrame(sparkle_df.select("name").toPandas())
         expected_spark_df = spark_df.select("name")
+
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+
+    def test_select_by_pointer_list(self, spark, sparkle_df, spark_df):
+        result_spark_df = spark.createDataFrame(sparkle_df.select(*["name", "age"]).toPandas())
+        expected_spark_df = spark_df.select(*["name", "age"])
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df)
 
@@ -56,7 +82,7 @@ class TestDataFrame:
             sparkle_df.select(
                 PF.col("name"),
                 PF.col("salary") * 1.1
-            ).toPandas()
+            ).df.to_dicts()
         )
 
         expected_spark_df = spark_df.select(

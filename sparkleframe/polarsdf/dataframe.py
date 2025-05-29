@@ -77,7 +77,7 @@ class DataFrame(BaseDataFrame):
 
     where = filter  # Alias for .filter()
 
-    def select(self, *cols: Union[str, Column]) -> 'DataFrame':
+    def select(self, *cols: Union[str, Column, List[str], List[Column]]) -> 'DataFrame':
         """
         Mimics PySpark's select method using Polars.
 
@@ -87,6 +87,8 @@ class DataFrame(BaseDataFrame):
         Returns:
             A new DataFrame with selected columns.
         """
+        cols = list(cols)
+        cols = cols[0] if isinstance(cols[0], list) else cols
         pl_expressions = [col.to_native() if isinstance(col, Column) else col for col in cols]
         selected_df = self.df.select(*pl_expressions)
         return DataFrame(selected_df)
