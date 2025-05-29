@@ -27,6 +27,18 @@ class DataFrame(BaseDataFrame):
 
         super().__init__(self.df)
 
+    @property
+    def columns(self) -> List[str]:
+        """
+        Returns the list of column names in the DataFrame.
+
+        Mimics PySpark's DataFrame.columns property.
+
+        Returns:
+            List[str]: List of column names.
+        """
+        return self.df.columns
+
     def alias(self, name: str) -> DataFrame:
         """
         Mimics PySpark's DataFrame.alias(name).
@@ -144,6 +156,61 @@ class DataFrame(BaseDataFrame):
                     print(f"{key}: {val}")
         else:
             print(self.df.head(n))
+
+    def fillna(
+            self,
+            value: Union[Any, dict],
+            subset: Union[str, List[str], None] = None
+    ) -> DataFrame:
+        """
+        Mimics PySpark's DataFrame.fillna() using Polars.
+
+        Args:
+            value (Any or dict): The value to replace nulls with. If a dict, keys are column names.
+            subset (str or list[str], optional): Subset of columns to apply fillna to.
+                Ignored if value is a dict.
+
+        Returns:
+            DataFrame: A new DataFrame with nulls filled.
+        """
+        value_type = type(value)
+
+        def matches_dtype(dtype: pl.DataType) -> bool:
+            """Helper to determine if Polars dtype matches Python type."""
+            return (
+                    (value_type is int and dtype in (
+                    pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64))
+                    or (value_type is float and dtype in (pl.Float32, pl.Float64))
+                    or (value_type is str and dtype == pl.Utf8)
+                    or (value_type is bool and dtype == pl.Boolean)
+            )
+
+        if isinstance(value, dict):
+            # Fillna with different values per column
+            exprs = [
+                pl.col(col).fill_null(val).alias(col)
+                for col, val in value.items()
+                if col in self.df.columns
+            ]
+            filled_df = self.df.with_columns(exprs)
+        else:
+            # Fillna with the same value across specified columns (or all columns)
+            if subset is None:
+                subset = self.df.columns
+            elif isinstance(subset, str):
+                subset = [subset]
+
+            # Build expressions
+
+            exprs = [
+                pl.col(col).fill_null(value).alias(col)
+                for col in subset
+                if col in self.df.columns and matches_dtype(self.df.schema[col])
+            ]
+
+            filled_df = self.df.with_columns(exprs)
+
+        return DataFrame(filled_df)
 
     def groupBy(self, *cols: Union[str, Column]) -> GroupedData:
         """

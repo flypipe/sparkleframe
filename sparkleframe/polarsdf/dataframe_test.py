@@ -678,7 +678,7 @@ class TestDataFrame:
         )
 
 
-    def test_keys_different_type_raise_error(self):
+    def test_join_keys_different_type_raise_error(self):
 
         left_data = to_records({
             "id": [1, 2, 3],
@@ -695,3 +695,99 @@ class TestDataFrame:
 
         with pytest.raises(TypeError):
             pl_left_df.join(pl_right_df, on=["id", PF.col("id")], how="left")
+
+    @pytest.mark.parametrize("fillna_value, subset", [
+        (0, None),  # Fill all columns with 0
+        ("unknown", "name"),  # Fill only name column
+        ({"name": "missing", "age": 0}, None),  # Fill with per-column values
+    ])
+    def test_pyspark_fillna(self, spark, fillna_value, subset):
+        # Sample data with nulls
+        data = to_records({
+            "name": ["Alice", None, "Charlie"],
+            "age": [25, None, 35]
+        })
+
+        # Create Polars DataFrame (Sparkleframe)
+        sparkle_df = DataFrame(pl.DataFrame(data))
+
+        # Create Spark DataFrame
+        spark_df = spark.createDataFrame(data)
+
+        # Apply fillna in Sparkleframe
+        if isinstance(fillna_value, dict):
+            filled_sparkle = sparkle_df.fillna(fillna_value)
+            filled_spark = spark_df.fillna(fillna_value)
+        else:
+            filled_sparkle = sparkle_df.fillna(fillna_value, subset=subset)
+            filled_spark = spark_df.fillna(fillna_value, subset=subset)
+
+        # Convert Sparkleframe to Spark for comparison
+        sparkle_as_spark = spark.createDataFrame(filled_sparkle.df.to_dicts())
+
+        # Convert result to Pandas for assertion
+        sparkle_as_spark = sparkle_as_spark.select(sorted(sparkle_as_spark.columns)).orderBy("name", "age")
+        print("result_df")
+        sparkle_as_spark.show()
+
+        filled_spark = filled_spark.select(sorted(filled_spark.columns)).orderBy("name", "age")
+        print("expected_df")
+        filled_spark.show()
+
+        # Assert equality
+        assert_pyspark_df_equal(sparkle_as_spark, filled_spark, ignore_nullable=True)
+
+    @pytest.mark.parametrize("fillna_value, subset, expected_dict", [
+        (
+                1, None,
+                {"name": ["Alice", None, "Charlie"], "age": [25, 1, 35]}
+        ),
+        (
+                "unknown", "name",
+                {"name": ["Alice", "unknown", "Charlie"], "age": [25, None, 35]}
+        ),
+        (
+                {"name": "missing", "age": 0}, None,
+                {"name": ["Alice", "missing", "Charlie"], "age": [25, 0, 35]}
+        ),
+    ])
+    def test_fillna(self, spark, fillna_value, subset, expected_dict):
+        expected_dict = to_records(expected_dict)
+
+        # Sample data with nulls
+        data = {
+            "name": ["Alice", None, "Charlie"],
+            "age": [25, None, 35]
+        }
+
+        sparkle_df = DataFrame(pl.DataFrame(to_records(data)))
+        sparkle_df = sparkle_df.fillna(fillna_value, subset=subset)
+
+        # Convert result to Pandas for assertion
+        result_df = spark.createDataFrame(sparkle_df.df.to_dicts())
+        result_df = result_df.select(sorted(result_df.columns)).orderBy("name", "age")
+        print("result_df")
+        result_df.show()
+
+        expected_df = spark.createDataFrame(expected_dict)
+        expected_df = expected_df.select(sorted(expected_df.columns)).orderBy("name", "age")
+        print("expected_df")
+        expected_df.show()
+
+        assert_pyspark_df_equal(
+            result_df,
+            expected_df,
+            ignore_nullable=True
+        )
+
+    def test_columns_property(self):
+        # Create sample Polars DataFrame
+        data = {
+            "name": ["Alice", "Bob"],
+            "age": [30, 40],
+            "salary": [1000, 2000]
+        }
+        df = DataFrame(pl.DataFrame(data))
+
+        # Validate the columns property
+        assert df.columns == ["name", "age", "salary"]
