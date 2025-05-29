@@ -5,6 +5,7 @@ from pandas import DataFrame as PandasDataFrame
 
 class DataFrame:
     def __init__(self, df: Any):
+        self._alias = None
         self.df = df
 
     def pandas_api(self) -> PandasDataFrame:

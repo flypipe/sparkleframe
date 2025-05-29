@@ -20,6 +20,7 @@ from pyspark.sql.types import (
 )
 
 import sparkleframe.polarsdf.functions as PF
+from sparkleframe.polarsdf import Column
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.types import (
     StringType, IntegerType, LongType, FloatType,
@@ -158,8 +159,6 @@ class TestDataFrame:
         polars_dtype = polars_result_df.schema[col_name]
         spark_dtype = spark_result_df.schema[col_name].dataType
 
-        print(f"Polars dtype: {polars_dtype}")
-        print(f"Spark dtype: {spark_dtype}")
 
         # Manual mapping to match Spark types to Polars types
         spark_to_polars_map = {
@@ -432,3 +431,268 @@ class TestDataFrame:
         # Assert equivalence
         assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
 
+
+    @pytest.mark.parametrize("how,on_input,expected", [
+        (
+                "inner", "id",
+                pl.DataFrame({"id": [2, 3], "left_val": ["b", "c"], "right_val": ["x", "y"]})
+        ),
+        (
+                "left", "id",
+                pl.DataFrame({"id": [1, 2, 3], "left_val": ["a", "b", "c"], "right_val": [None, "x", "y"]})
+        ),
+        (
+                "right", "id",
+                pl.DataFrame({"id": [2, 3, 4], "left_val": ["b", "c", None], "right_val": ["x", "y", "z"]})
+        ),
+        (
+                "outer", "id",
+                pl.DataFrame({
+                    "id": [1, 2, 3, 4],
+                    "left_val": ["a", "b", "c", None],
+                    "right_val": [None, "x", "y", "z"]
+                })
+        ),
+        (
+                "semi", "id",
+                pl.DataFrame({"id": [2, 3], "left_val": ["b", "c"]})
+        ),
+        (
+                "anti", "id",
+                pl.DataFrame({"id": [1], "left_val": ["a"]})
+        ),
+        (
+                "cross", None,
+                pl.DataFrame({
+                    "id": [1, 1, 1, 2, 2, 2, 3, 3, 3],
+                    "left_val": ["a", "a", "a", "b", "b", "b", "c", "c", "c"],
+                    "id_right": [2, 3, 4, 2, 3, 4, 2, 3, 4],
+                    "right_val": ["x", "y", "z", "x", "y", "z", "x", "y", "z"]
+                })
+        ),
+    ])
+    @pytest.mark.parametrize("on_format", [
+        "str",
+        "col",
+        "list_str",
+        "list_col"
+    ])
+    def test_polars_joins(self, spark, how, on_input, expected, on_format):
+
+        if how == "outer" and on_format in ["col", "list_col"]:
+            expected = pl.DataFrame({
+                "id": [1, 2, 3, None],
+                "left_val": ["a", "b", "c", None],
+                "right_val": [None, "x", "y", "z"]
+            })
+
+        left_data = pl.DataFrame({
+            "id": [1, 2, 3],
+            "left_val": ["a", "b", "c"]
+        })
+
+        right_data = pl.DataFrame({
+            "id": [2, 3, 4],
+            "right_val": ["x", "y", "z"]
+        })
+
+        left = DataFrame(left_data)
+        right = DataFrame(right_data)
+
+        # Adjust 'on' input depending on format
+        if on_input is None:
+            on = None
+        elif on_format == "str":
+            on = on_input
+        elif on_format == "col":
+            on = PF.col(on_input)
+        elif on_format == "list_str":
+            on = [on_input]
+        elif on_format == "list_col":
+            on = [PF.col(on_input)]
+        else:
+            raise ValueError("Invalid on_format")
+
+        result = left.join(right, on=on, how=how).toPandas()
+
+        spark_result = spark.createDataFrame(result)
+        cols = sorted(spark_result.columns)
+        spark_result = (
+            spark_result
+            .select(cols)
+            .orderBy(cols)
+        )
+
+        spark_expected = spark.createDataFrame(expected.to_arrow().to_pandas())
+        cols = sorted(spark_expected.columns)
+        spark_expected = (
+            spark_expected
+            .select(cols)
+            .orderBy(cols)
+        )
+
+        spark_expected.show()
+        spark_result.show()
+        assert_pyspark_df_equal(spark_result, spark_expected, ignore_nullable=True, allow_nan_equality=True)
+
+    @pytest.mark.parametrize("how,on_keys", [
+        ("inner", (False, "id")),  # string
+        ("left", (False, "id")),  # string
+        ("right", (False, "id")),  # string
+        ("outer", (False, "id")),  # string
+
+        ("inner", [(False, "id")]),  # list of string
+        ("left", [(False, "id")]),  # list of string
+        ("right", [(False, "id")]),  # list of string
+        ("outer", [(False, "id")]),  # list of string
+    ])
+    def test_joins_non_spark_duplicated_keys(self, spark, how, on_keys):
+
+        def get_on(is_spark, is_col, k):
+            if is_col:
+                return F.col(k) if is_spark else PF.col(k)
+            return k
+
+        if isinstance(on_keys, list):
+            spark_on_keys = []
+
+            for i, k in enumerate(on_keys):
+                spark_on_keys.append(get_on(True, k[0], k[1]))
+
+                on_keys[i] = get_on(False, k[0], k[1])
+        else:
+            spark_on_keys = get_on(True, on_keys[0], on_keys[1])
+            on_keys = get_on(False, on_keys[0], on_keys[1])
+
+        # Prepare left and right datasets
+        left_data = to_records({
+            "id": [1, 2, 3],
+            "left_val": ["a", "b", "c"]
+        })
+
+        right_data = to_records({
+            "id": [2, 3, 4],
+            "right_val": ["x", "y", "z"]
+        })
+
+        # Spark setup
+        spark_left_df = spark.createDataFrame(left_data)
+        spark_right_df = spark.createDataFrame(right_data)
+
+        # Perform Spark join
+        expected_df = spark_left_df.join(spark_right_df, on=spark_on_keys, how=how)
+
+        # Sparkleframe setup
+        pl_left_df = DataFrame(pl.DataFrame(left_data))
+        pl_right_df = DataFrame(pl.DataFrame(right_data))
+
+        # Perform Sparkleframe join
+        result_df = pl_left_df.join(pl_right_df, on=on_keys, how=how)
+
+        # Convert Sparkleframe result to Spark DataFrame
+        result_spark_df = spark.createDataFrame(
+            schema=tuple(result_df.df.columns),
+            data=[tuple(d.values()) for d in result_df.df.to_dicts()]
+        )
+
+        # Sort to ensure deterministic comparison
+        assert_pyspark_df_equal(
+            result_spark_df.select(sorted(result_spark_df.columns)).orderBy("id"),
+            expected_df.select(sorted(expected_df.columns)).orderBy("id"),
+            ignore_nullable=True
+        )
+
+    @pytest.mark.parametrize("how,on_keys", [
+        ("inner", (True, "id")),  # Column
+        ("left", (True, "id")),  # Column
+        # ("right", (True, "id")),  # Column
+        ("outer", (True, "id")),  # Column
+
+        ("inner", [(True, "id")]),  # list of column
+        ("left", [(True, "id")]),  # list of column
+        # ("right", [(True, "id")]),  # list of column
+        ("outer", [(True, "id")]),  # list of column
+    ])
+    def test_joins_with_duplicated_spark_keys(self, spark, how, on_keys):
+
+        def get_on(is_spark, is_col, k):
+            if is_col:
+                return F.col(k) if is_spark else PF.col(k)
+            return k
+
+        if isinstance(on_keys, list):
+            spark_on_keys = []
+
+            for i, k in enumerate(on_keys):
+                spark_on_keys.append(get_on(True, k[0], k[1]))
+
+                on_keys[i] = get_on(False, k[0], k[1])
+        else:
+            spark_on_keys = get_on(True, on_keys[0], on_keys[1])
+            on_keys = get_on(False, on_keys[0], on_keys[1])
+
+        # Prepare left and right datasets
+        left_data = to_records({
+            "id": [1, 2, 3],
+            "left_val": ["a", "b", "c"]
+        })
+
+        right_data = to_records({
+            "id": [2, 3, 4],
+            "right_val": ["x", "y", "z"]
+        })
+
+        # Spark setup
+        spark_left_df = spark.createDataFrame(left_data)
+        spark_right_df = spark.createDataFrame(right_data)
+
+        # # Perform Spark join
+
+        with pytest.raises(Exception):
+            expected_df = spark_left_df.join(spark_right_df, on=spark_on_keys, how=how)
+
+        spark_left_df = spark_left_df
+        spark_right_df = spark_right_df.withColumnRenamed("id", "id_right")
+        expected_df = (
+            spark_left_df.join(spark_right_df, F.col("id") == F.col("id_right"), how=how)
+            .drop("id_right")
+        )
+
+        # Sparkleframe setup
+        pl_left_df = DataFrame(pl.DataFrame(left_data))
+        pl_right_df = DataFrame(pl.DataFrame(right_data))
+
+        # Perform Sparkleframe join
+        result_df = pl_left_df.join(pl_right_df, on=on_keys, how=how)
+
+        # Convert Sparkleframe result to Spark DataFrame
+        result_spark_df = spark.createDataFrame(
+            schema=tuple(result_df.df.columns),
+            data=[tuple(d.values()) for d in result_df.df.to_dicts()]
+        )
+
+        # Sort to ensure deterministic comparison
+        assert_pyspark_df_equal(
+            result_spark_df.select(sorted(result_spark_df.columns)).orderBy("id"),
+            expected_df.select(sorted(expected_df.columns)).orderBy("id"),
+            ignore_nullable=True
+        )
+
+
+    def test_keys_different_type_raise_error(self):
+
+        left_data = to_records({
+            "id": [1, 2, 3],
+            "left_val": ["a", "b", "c"]
+        })
+
+        right_data = to_records({
+            "id": [2, 3, 4],
+            "right_val": ["x", "y", "z"]
+        })
+
+        pl_left_df = DataFrame(pl.DataFrame(left_data))
+        pl_right_df = DataFrame(pl.DataFrame(right_data))
+
+        with pytest.raises(TypeError):
+            pl_left_df.join(pl_right_df, on=["id", PF.col("id")], how="left")

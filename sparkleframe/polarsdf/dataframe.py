@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Union, Any
+from typing import Union, Any, List
 
 import pandas as pd
 import polars as pl
@@ -10,7 +10,7 @@ from pandas import DataFrame as PandasDataFrame
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf.column import Column
 from sparkleframe.polarsdf.group import GroupedData
-
+from uuid import uuid4
 
 class DataFrame(BaseDataFrame):
 
@@ -25,6 +25,23 @@ class DataFrame(BaseDataFrame):
             raise TypeError("DataFrame constructor accepts polars.DataFrame, pandas.DataFrame, or pyarrow.Table")
 
         super().__init__(self.df)
+
+    def alias(self, name: str) -> DataFrame:
+        """
+        Mimics PySpark's DataFrame.alias(name).
+
+        While Polars doesn't use DataFrame aliases directly, this method
+        stores the alias internally for potential use in more complex query building.
+
+        Args:
+            name (str): The alias to assign to this DataFrame.
+
+        Returns:
+            DataFrame: The same DataFrame instance with alias stored.
+        """
+        df = DataFrame(self.df)
+        df._alias = name
+        return df
 
     def filter(self, condition: Union[str, Column]) -> DataFrame:
         """
@@ -150,3 +167,103 @@ class DataFrame(BaseDataFrame):
             GroupedData: An object that can perform aggregations.
         """
         return self.groupBy(*cols)
+
+    def join(
+            self,
+            other: DataFrame,
+            on: Union[str, List[str], Column, List[Column], None] = None,
+            how: str = "inner"
+    ) -> DataFrame:
+        """
+        Mimics PySpark's DataFrame.join() using Polars.
+
+        Args:
+            other (DataFrame): The DataFrame to join with.
+            on (str or List[str] or Column or List[Column], None): Column(s) to join on. If None, uses common column names.
+            how (str): Type of join to perform. Supports all PySpark variants.
+
+        Returns:
+            DataFrame: A new DataFrame resulting from the join.
+        """
+        has_col = False
+        if isinstance(on, str):
+            on = [on]
+        elif isinstance(on, Column):
+            has_col = True
+            on = [on.to_native()]
+        elif isinstance(on, list):
+
+            type_ = None
+            for n in on:
+                type_ = type_ or type(n)
+                if type_ != type(n):
+                    raise TypeError("On columns must have the same type. str or List[str] or Column or List[Column], None)")
+
+                if isinstance(n, Column):
+                    has_col = True
+                    break
+            on = [n.to_native() if isinstance(n, Column) else n for n in on]
+
+        # Mapping of PySpark join types to Polars join types
+        PYSPARK_TO_POLARS_JOIN_MAP = {
+            "inner": "inner",
+            "cross": "cross",
+            "outer": "full",
+            "full": "full",
+            "fullouter": "full",
+            "full_outer": "full",
+            "left": "left",
+            "leftouter": "left",
+            "left_outer": "left",
+            "right": "right",
+            "rightouter": "right",
+            "right_outer": "right",
+            "semi": "semi",
+            "leftsemi": "semi",
+            "left_semi": "semi",
+            "anti": "anti",
+            "leftanti": "anti",
+            "left_anti": "anti"
+        }
+
+        how = how.lower()
+        if how not in PYSPARK_TO_POLARS_JOIN_MAP:
+            raise ValueError(f"Unsupported join type: '{how}'")
+
+        polars_join_type = PYSPARK_TO_POLARS_JOIN_MAP[how]
+        suffix = "_" + str(uuid4()).replace("-", "")
+        result = self.df.join(other.df, on=on, how=polars_join_type, suffix=suffix)
+
+        if how == "outer":
+            """
+            Polars does not automatically coalesce join keys (e.g., id) in a full outer join because it retains both left and right keys explicitly, especially when:
+                * There are mismatches in the keys (e.g., id exists only on one side).
+                * It needs to distinguish between matching and non-matching keys.
+            
+            Why this happens?
+            Polars must preserve all information during a full (outer) join:
+                * If the key is missing on one side, it will still be included in the output, but with nulls on the missing side.
+                * Rather than overwrite or merge the column into one, it creates:
+                    - id from the left table
+                    - id_right (or similar suffix) from the right table
+            
+            This ensures no loss of data or ambiguity, which is particularly important for:
+                * Asymmetric joins (like one-to-many).
+                * Duplicated key values or nulls.
+            """
+
+            for col in result.columns:
+                if col.endswith(suffix):
+
+                    # TODO: for some reason pyspark results from outer differs when `on_keys` are Column or str, wheter
+                    # the col is dropped or a coalesce happens
+                    if has_col:
+                        result = result.drop(col)
+                    else:
+                        result = result.with_columns(pl.coalesce(col.replace(suffix, ""), col).alias(col.replace(suffix, ""))).drop(col)
+
+        for col in result.columns:
+            if col.endswith(suffix):
+                result = result.rename({col: col.replace(suffix, "") + "_right"})
+
+        return DataFrame(result)
