@@ -4,7 +4,6 @@ from collections.abc import Iterable
 
 import polars as pl
 
-
 from sparkleframe.polarsdf.types import DataType
 
 

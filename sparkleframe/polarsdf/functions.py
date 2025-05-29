@@ -1,4 +1,5 @@
 from typing import Union, Any
+
 import polars as pl
 
 from sparkleframe.polarsdf.column import Column, _to_expr

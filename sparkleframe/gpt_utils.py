@@ -73,9 +73,9 @@ generate a pytest test case, using pytest.parametrize to test the logic `{functi
 """
     return message
 
-file_path = "./polarsdf/functions_test.py"
-function_name = "round"
-pyspark_function_url="https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.round.html"
+file_path = "./polarsdf/dataframe_test.py"
+function_name = "join"
+pyspark_function_url="https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.join.html"
 
 # msg = generate_pyspark_function_instruction(
 #     file_path,

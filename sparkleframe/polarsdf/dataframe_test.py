@@ -20,7 +20,6 @@ from pyspark.sql.types import (
 )
 
 import sparkleframe.polarsdf.functions as PF
-from sparkleframe.polarsdf import Column
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.types import (
     StringType, IntegerType, LongType, FloatType,

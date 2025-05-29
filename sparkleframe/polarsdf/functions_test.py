@@ -1,17 +1,11 @@
-import json
-
 import pandas as pd
 import pandas.testing as pdt
 import polars as pl
 import pytest
-from pyspark.sql.functions import get_json_object as spark_get_json_object, lit as spark_lit, when as spark_when, \
-    col as spark_col, coalesce as spark_coalesce, round as spark_round
-from pyspark.sql.types import StringType, StructField
+from pyspark.sql.functions import col as spark_col, round as spark_round
 
 from sparkleframe.polarsdf.dataframe import DataFrame
-from sparkleframe.polarsdf.functions import col, when, get_json_object, lit, coalesce, round
-from sparkleframe.polarsdf.types import StructType
-from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
+from sparkleframe.polarsdf.functions import col, round
 from sparkleframe.tests.utils import to_records
 
 sample_data = {

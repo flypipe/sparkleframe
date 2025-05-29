@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Union, Any, List
+from uuid import uuid4
 
 import pandas as pd
 import polars as pl
@@ -10,7 +11,7 @@ from pandas import DataFrame as PandasDataFrame
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf.column import Column
 from sparkleframe.polarsdf.group import GroupedData
-from uuid import uuid4
+
 
 class DataFrame(BaseDataFrame):
 
