@@ -10,3 +10,4 @@ services:
       - ./../sparkleframe:/sparkleframe
       - ./../.coverage:/sparkleframe/.coverage
       - ./../pyproject.toml:/pyproject.toml
+      - ./../.pylintrc:/.pylintrc

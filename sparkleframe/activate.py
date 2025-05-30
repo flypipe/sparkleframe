@@ -2,6 +2,7 @@
 Sparkleframe
 """
 
+# ruff: noqa: F401
 from __future__ import annotations
 
 import importlib
@@ -93,4 +94,3 @@ def deactivate() -> None:
 def activate_context():
     activate()
     yield
-    deactivate()

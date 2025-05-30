@@ -257,7 +257,7 @@ class DataFrame(BaseDataFrame):
             type_ = None
             for n in on:
                 type_ = type_ or type(n)
-                if type_ != type(n):
+                if not isinstance(type_, n):
                     raise TypeError(
                         "On columns must have the same type. str or List[str] or Column or List[Column], None)"
                     )

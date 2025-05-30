@@ -1,11 +1,23 @@
 from datetime import datetime
 
 import pytest
+import polars as pl
 from polars.polars import InvalidOperationError
 
-from sparkleframe.polarsdf import DataFrame
+from sparkleframe.polarsdf import DataFrame, StringType
 from sparkleframe.polarsdf.functions import col, lit
-from sparkleframe.polarsdf.types import *
+from sparkleframe.polarsdf.types import (
+    IntegerType,
+    LongType,
+    FloatType,
+    DoubleType,
+    BooleanType,
+    DateType,
+    TimestampType,
+    ByteType,
+    ShortType,
+    BinaryType,
+)
 
 
 @pytest.fixture

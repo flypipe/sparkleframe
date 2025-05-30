@@ -20,7 +20,7 @@ build:
 .PHONY: build
 
 lint:
-	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "python -m ruff check --line-length 119 sparkleframe notebooks"
+	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "python -m ruff check --line-length 119 sparkleframe"
 .PHONY: lint
 
 pip-compile:
