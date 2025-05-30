@@ -87,7 +87,7 @@ def calculate_version(to_branch: str = None, re_commit_type: str = None) -> List
 
 def save_version(new_version):
     new_version_string = ".".join([str(num) for num in new_version])
-    with open('../sparkleframe/version.txt', 'w') as f:
+    with open('sparkleframe/version.txt', 'w') as f:
         f.write(new_version_string)
 
 if __name__ == '__main__':
