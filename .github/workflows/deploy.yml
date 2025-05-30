@@ -1,0 +1,57 @@
+# Release a new version of SparkleFrame. Changes that take place:
+# -
+# - Documentation is regenerated and a new version added to the docs.
+
+name: 'deploy'
+
+on:
+
+  # Allow for manual invocation
+  workflow_dispatch:
+
+jobs:
+  predeploy:
+    uses: ./.github/workflows/predeploy.yml
+
+  deploy-pypi:
+    needs: predeploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FLIT_USERNAME: __token__
+      FLIT_INDEX_URL: https://upload.pypi.org/legacy/
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Dependencies
+        uses: './.github/actions/setup-dependencies'
+      - name: Download version file
+        uses: actions/download-artifact@v4
+        with:
+          name: version.txt
+          path: sparkleframe
+      - name: Store version number
+        run: echo "VERSION_NUMBER=$(cat sparkleframe/version.txt)" >> $GITHUB_ENV
+      - name: Download changelog
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog.md
+      - name: Create new branch
+        run: |
+          git config --global user.email "flypipe@dummy.com"
+          git config --global user.name "flypipe"
+          git checkout -b "release/${{ env.VERSION_NUMBER }}"
+          git add sparkleframe/version.txt
+          git add changelog.md
+          git commit -m 'chore: update version file'
+          git push origin "release/${{ env.VERSION_NUMBER }}"
+      - name: Upload to pypi
+        run: |
+          flit publish
+        env:
+          FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+#  build-docs:
+#    needs: deploy-pypi
+#    uses: ./.github/workflows/build-docs.yml
