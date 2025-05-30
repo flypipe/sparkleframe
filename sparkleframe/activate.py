@@ -21,7 +21,7 @@ NAME_TO_FILE_OVERRIDE = {
     # "DataFrameWriter": "readwriter",
     # "GroupedData": "group",
     "SparkSession": "session",
-    # "WindowSpec": "window",
+    "WindowSpec": "window",
     # "UDFRegistration": "udf",
 }
 
