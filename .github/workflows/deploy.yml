@@ -38,15 +38,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: changelog.md
-#      - name: Create new branch
-#        run: |
-#          git config --global user.email "flypipe@dummy.com"
-#          git config --global user.name "flypipe"
-#          git checkout -b "release/${{ env.VERSION_NUMBER }}"
-#          git add sparkleframe/version.txt
-#          git add changelog.md
-#          git commit -m 'chore: update version file'
-#          git push origin "release/${{ env.VERSION_NUMBER }}"
+      - name: Create new branch
+        run: |
+          git config --global user.email "flypipe@dummy.com"
+          git config --global user.name "flypipe"
+          git checkout -b "test-release/${{ env.VERSION_NUMBER }}"
+          git add sparkleframe/version.txt
+          git add changelog.md
+          git commit -m 'chore: update version file'
+          git push origin "test-release/${{ env.VERSION_NUMBER }}"
       - name: Upload to pypi
         run: |
           flit publish
