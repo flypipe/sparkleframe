@@ -54,10 +54,6 @@ jobs:
         with:
           name: changelog.md
           path: ./changelog.md
-      - name: Build frontend
-        run: |
-          cd frontend
-          yarn build
       # Build and upload the wheel so we can access the wheel without having to upload it to pypi
       - name: Build wheel
         run: flit build

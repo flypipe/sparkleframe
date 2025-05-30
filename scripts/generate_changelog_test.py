@@ -13,7 +13,9 @@ class TestGenerateChangeLog:
     @pytest.mark.parametrize(
         "message,expected_message",
         [
-            ("#173 msg", {'173': '<a href="https://github.com/flypipe/sparkleframe/issues/173" target="_blank" rel="noopener noreferrer">173 Apply a function on dataframes of the node dependencies</a>'}),
+            ("#3-set-up-publish-to-testpypi fix linter", {'3': '<a href="https://github.com/flypipe/sparkleframe/issues/3" '
+      'target="_blank" rel="noopener noreferrer">3 Set up publish to '
+      'testpypi</a>'}),
         ]
     )
     def test_calculate_version(self, message, expected_message):
