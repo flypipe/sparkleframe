@@ -1,5 +1,5 @@
 """
-This script calculates the next version number which Flypipe ought to release to. Flypipe uses semantic versioning
+This script calculates the next version number which Sparkleframe ought to release to. Flypipe uses semantic versioning
 (https://semver.org/) for its releases, and a simplified form of conventional commits where the each commit has the form:
 <commit type>: <summary>
 We leverage these to get the appropriate version for new releases in the following process:
