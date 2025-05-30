@@ -39,7 +39,7 @@ jobs:
       - name: Calculate new version number
         run: |
           python scripts/calculate_version.py
-          echo "VERSION_NUMBER=$(cat sparkleframe/version.txt)" >> $GITHUB_ENV
+          echo "VERSION_NUMBER=$(cat ./sparkleframe/version.txt)" >> $GITHUB_ENV
           echo ${{ env.VERSION_NUMBER }}
       - name: Upload version file
         uses: actions/upload-artifact@v4
