@@ -13,6 +13,7 @@ SPARKLE_MODULES = [
     "dataframe",
 ]
 
+
 @contextmanager
 def mock_pyspark_modules(mock_map):
     # Save original pyspark modules
@@ -55,8 +56,8 @@ def mock_pyspark_modules(mock_map):
             sys.modules[name] = module
             importlib.import_module(name)
 
-def get_mock_map(engine: Engine) -> dict:
 
+def get_mock_map(engine: Engine) -> dict:
 
     sparkleframe_module = f"sparkleframe.{engine.module}"
     engine_module = importlib.import_module(sparkleframe_module)
@@ -74,7 +75,8 @@ def get_mock_map(engine: Engine) -> dict:
 
     return mock_map
 
-def run_with_context(func: Callable, engine: Engine=None):
+
+def run_with_context(func: Callable, engine: Engine = None):
     engine = engine or Engine.POLARS
 
     with mock_pyspark_modules(get_mock_map(engine)):

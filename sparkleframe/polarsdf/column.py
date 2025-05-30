@@ -143,6 +143,7 @@ class Column:
     def to_native(self) -> pl.Expr:
         return self.expr
 
+
 def _to_expr(value):
     if isinstance(value, Column):
         return value.to_native()

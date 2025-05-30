@@ -1,0 +1,13 @@
+[run]
+include=
+
+omit=
+    # put your paths here
+    __init__.py
+    *_test.py
+    sparkleframe/conftest.py
+    sparkleframe/activate.py
+    sparkleframe/gpt_utils.py
+    sparkleframe/tests/spark.py
+    sparkleframe/tests/utils.py
+    sparkleframe/polarsdf/types.py

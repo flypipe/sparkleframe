@@ -10,10 +10,7 @@ class GroupedData:
     def __init__(self, df: DataFrame, group_cols: list[Union[str, Column]]):
         self.spark_df = df
         self.df = self.spark_df.df
-        self.group_cols = [
-            col.to_native() if isinstance(col, Column) else pl.col(col)
-            for col in group_cols
-        ]
+        self.group_cols = [col.to_native() if isinstance(col, Column) else pl.col(col) for col in group_cols]
 
     def agg(self, *exprs: Union[str, Column]) -> DataFrame:
         pl_exprs = [e.to_native() if isinstance(e, Column) else e for e in exprs]

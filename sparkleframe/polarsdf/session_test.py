@@ -35,4 +35,3 @@ class TestSparkSession:
         assert result_native.shape == expected_pl.shape
         assert result_native.columns == expected_pl.columns
         assert result_native.to_dicts() == expected_pl.to_dicts()
-

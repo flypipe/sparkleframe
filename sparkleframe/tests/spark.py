@@ -17,4 +17,5 @@ def get_spark():
     spark = configs.getOrCreate()
     return spark
 
+
 spark = get_spark()

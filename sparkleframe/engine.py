@@ -1,7 +1,8 @@
 from enum import Enum
 
+
 class Engine(Enum):
-    POLARS=("polarsdf", "Polars")
+    POLARS = ("polarsdf", "Polars")
 
     @property
     def module(self):
@@ -12,4 +13,4 @@ class Engine(Enum):
         return self.value[1]
 
     def clean_class_name(self, klass):
-        return klass.replace(self.class_prefix, '') if klass.startswith(self.class_prefix) else klass
+        return klass.replace(self.class_prefix, "") if klass.startswith(self.class_prefix) else klass

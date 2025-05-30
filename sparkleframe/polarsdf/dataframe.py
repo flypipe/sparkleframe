@@ -77,7 +77,7 @@ class DataFrame(BaseDataFrame):
 
     where = filter  # Alias for .filter()
 
-    def select(self, *cols: Union[str, Column, List[str], List[Column]]) -> 'DataFrame':
+    def select(self, *cols: Union[str, Column, List[str], List[Column]]) -> "DataFrame":
         """
         Mimics PySpark's select method using Polars.
 
@@ -159,11 +159,7 @@ class DataFrame(BaseDataFrame):
         else:
             print(self.df.head(n))
 
-    def fillna(
-            self,
-            value: Union[Any, dict],
-            subset: Union[str, List[str], None] = None
-    ) -> DataFrame:
+    def fillna(self, value: Union[Any, dict], subset: Union[str, List[str], None] = None) -> DataFrame:
         """
         Mimics PySpark's DataFrame.fillna() using Polars.
 
@@ -180,20 +176,18 @@ class DataFrame(BaseDataFrame):
         def matches_dtype(dtype: pl.DataType) -> bool:
             """Helper to determine if Polars dtype matches Python type."""
             return (
-                    (value_type is int and dtype in (
-                    pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64))
-                    or (value_type is float and dtype in (pl.Float32, pl.Float64))
-                    or (value_type is str and dtype == pl.Utf8)
-                    or (value_type is bool and dtype == pl.Boolean)
+                (
+                    value_type is int
+                    and dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64)
+                )
+                or (value_type is float and dtype in (pl.Float32, pl.Float64))
+                or (value_type is str and dtype == pl.Utf8)
+                or (value_type is bool and dtype == pl.Boolean)
             )
 
         if isinstance(value, dict):
             # Fillna with different values per column
-            exprs = [
-                pl.col(col).fill_null(val).alias(col)
-                for col, val in value.items()
-                if col in self.df.columns
-            ]
+            exprs = [pl.col(col).fill_null(val).alias(col) for col, val in value.items() if col in self.df.columns]
             filled_df = self.df.with_columns(exprs)
         else:
             # Fillna with the same value across specified columns (or all columns)
@@ -239,10 +233,7 @@ class DataFrame(BaseDataFrame):
         return self.groupBy(*cols)
 
     def join(
-            self,
-            other: DataFrame,
-            on: Union[str, List[str], Column, List[Column], None] = None,
-            how: str = "inner"
+        self, other: DataFrame, on: Union[str, List[str], Column, List[Column], None] = None, how: str = "inner"
     ) -> DataFrame:
         """
         Mimics PySpark's DataFrame.join() using Polars.
@@ -266,8 +257,10 @@ class DataFrame(BaseDataFrame):
             type_ = None
             for n in on:
                 type_ = type_ or type(n)
-                if type_ != type(n):
-                    raise TypeError("On columns must have the same type. str or List[str] or Column or List[Column], None)")
+                if type_ is not type(n):
+                    raise TypeError(
+                        "On columns must have the same type. str or List[str] or Column or List[Column], None)"
+                    )
 
                 if isinstance(n, Column):
                     has_col = True
@@ -293,7 +286,7 @@ class DataFrame(BaseDataFrame):
             "left_semi": "semi",
             "anti": "anti",
             "leftanti": "anti",
-            "left_anti": "anti"
+            "left_anti": "anti",
         }
 
         how = how.lower()
@@ -309,14 +302,14 @@ class DataFrame(BaseDataFrame):
             Polars does not automatically coalesce join keys (e.g., id) in a full outer join because it retains both left and right keys explicitly, especially when:
                 * There are mismatches in the keys (e.g., id exists only on one side).
                 * It needs to distinguish between matching and non-matching keys.
-            
+
             Why this happens?
             Polars must preserve all information during a full (outer) join:
                 * If the key is missing on one side, it will still be included in the output, but with nulls on the missing side.
                 * Rather than overwrite or merge the column into one, it creates:
                     - id from the left table
                     - id_right (or similar suffix) from the right table
-            
+
             This ensures no loss of data or ambiguity, which is particularly important for:
                 * Asymmetric joins (like one-to-many).
                 * Duplicated key values or nulls.
@@ -330,7 +323,9 @@ class DataFrame(BaseDataFrame):
                     if has_col:
                         result = result.drop(col)
                     else:
-                        result = result.with_columns(pl.coalesce(col.replace(suffix, ""), col).alias(col.replace(suffix, ""))).drop(col)
+                        result = result.with_columns(
+                            pl.coalesce(col.replace(suffix, ""), col).alias(col.replace(suffix, ""))
+                        ).drop(col)
 
         for col in result.columns:
             if col.endswith(suffix):
