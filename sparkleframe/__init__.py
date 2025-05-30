@@ -1,5 +1,10 @@
 """
 Sparkleframe
 """
+import os
 
-__version__ = "0.0.2"
+with open(
+    os.path.join(os.path.dirname(__file__), "version.txt"), "r", encoding="utf-8"
+) as f:
+    __version__ = f.read()
+
