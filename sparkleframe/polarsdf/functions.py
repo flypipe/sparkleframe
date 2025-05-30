@@ -195,3 +195,33 @@ def when(condition: Any, value) -> WhenBuilder:
     """
     condition = Column(condition) if not isinstance(condition, Column) else condition
     return WhenBuilder(condition, value)
+
+def asc(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.asc.
+
+    Specifies ascending sort order for the column.
+
+    Args:
+        col_name (str or Column): The column to sort in ascending order.
+
+    Returns:
+        Column: A Column object representing ascending order sort expression.
+    """
+    expr = _to_expr(col_name)
+    return Column(expr.sort(descending=False))
+
+def desc(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.desc.
+
+    Specifies descending sort order for the column.
+
+    Args:
+        col_name (str or Column): The column to sort in descending order.
+
+    Returns:
+        Column: A Column object representing descending order sort expression.
+    """
+    expr = _to_expr(col_name)
+    return Column(expr.sort(descending=True))

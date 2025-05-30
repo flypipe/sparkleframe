@@ -1,3 +1,7 @@
+import plistlib
+import polars as pl
+from sparkleframe.polarsdf import DataFrame
+
 def to_records(column_dict: dict) -> list[dict]:
     """
     Converts a column-based dictionary into a list of row-based dictionaries.
@@ -11,3 +15,6 @@ def to_records(column_dict: dict) -> list[dict]:
     keys = column_dict.keys()
     values = zip(*column_dict.values())
     return [dict(zip(keys, row)) for row in values]
+
+def create_spark_df(spark, df: pl.DataFrame):
+    return spark.createDataFrame(df.to_dicts())
