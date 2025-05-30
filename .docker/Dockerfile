@@ -17,6 +17,9 @@ ENV PYSPARK_PYTHON "/usr/local/bin/python3"
 ENV PYSPARK_DRIVER_PYTHON "${PYSPARK_PYTHON}"
 ENV PYTHONPATH "${PYTHONPATH}:/local:/:"
 
+COPY /sparkleframe /sparkleframe
+ENV PYTHONPATH "${PYTHONPATH}:/local:/sparkleframe:/:"
+
 # requirements
 COPY requirements-dev.txt .
 RUN pip install -r requirements-dev.txt

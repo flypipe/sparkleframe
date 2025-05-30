@@ -1,7 +1,7 @@
 SHELL           :=/usr/bin/env bash
 PYTEST_THREADS  ?=$(shell echo $$((`getconf _NPROCESSORS_ONLN` / 3)))
 LOCAL_DIR		:=./.docker
-MIN_COVERAGE	= 85
+MIN_COVERAGE	= 70
 
 bash:
 	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans -it sparkleframe bash

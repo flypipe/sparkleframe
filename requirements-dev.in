@@ -1,5 +1,6 @@
 -r requirements-pkg.txt
 black==24.10.0
+coverage==7.6.10
 chispa==0.11.1
 numpy==1.26.4
 pandas==2.2.3
