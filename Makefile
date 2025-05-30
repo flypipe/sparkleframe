@@ -8,11 +8,11 @@ bash:
 .PHONY: bash
 
 black:
-	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "black sparkleframe notebooks -l 119"
+	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "black sparkleframe -l 119"
 .PHONY: black
 
 black-check:
-	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "black sparkleframe notebooks -l 119 --check"
+	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "black sparkleframe -l 119 --check"
 .PHONY: black-check
 
 build:

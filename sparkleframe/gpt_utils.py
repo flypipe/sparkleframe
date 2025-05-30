@@ -1,5 +1,3 @@
-
-
 """
 this is my <file_name.py>
 
@@ -10,6 +8,7 @@ implement the pyspark <function> function like as defined in <function_url> into
 """
 
 import os
+
 
 def generate_pyspark_function_instruction(file_path: str, function_name: str, function_url: str) -> str:
     """
@@ -27,7 +26,7 @@ def generate_pyspark_function_instruction(file_path: str, function_name: str, fu
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         file_contents = file.read()
 
     file_name = os.path.basename(file_path)
@@ -40,6 +39,7 @@ this is the content of my {file_name}:
 implement the pyspark {function_name} function like as defined in {function_url} into my {file_name}
 """
     return message
+
 
 def generate_test_instruction(file_path: str, function_name: str, compare_output_spark=False) -> str:
     """
@@ -57,12 +57,16 @@ def generate_test_instruction(file_path: str, function_name: str, compare_output
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         file_contents = file.read()
 
     file_name = os.path.basename(file_path)
 
-    spark_msg_output = ", create a spark dataframe build from PolarDataframe and use another spark dataframe to compare them " if compare_output_spark else ""
+    spark_msg_output = (
+        ", create a spark dataframe build from PolarDataframe and use another spark dataframe to compare them "
+        if compare_output_spark
+        else ""
+    )
 
     message = f"""\
 this is the content of my test file {file_name}:
@@ -73,15 +77,14 @@ generate a pytest test case, using pytest.parametrize to test the logic `{functi
 """
     return message
 
+
 file_path = "./polarsdf/dataframe.py"
 function_name = "fillna"
-pyspark_function_url="https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.fillna.html"
-
-msg = generate_pyspark_function_instruction(
-    file_path,
-    function_name,
-    pyspark_function_url
+pyspark_function_url = (
+    "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.fillna.html"
 )
+
+msg = generate_pyspark_function_instruction(file_path, function_name, pyspark_function_url)
 
 msg = generate_test_instruction(file_path, function_name, compare_output_spark=True)
 

@@ -12,11 +12,9 @@ class DataFrame:
         """Mimics Pandas On Spark dataframe"""
         return self.toPandas()
 
-    def to_native_df(self) -> 'DataFrame':
+    def to_native_df(self) -> "DataFrame":
         """Return the underlying Polars DataFrame."""
         return self.df
 
-    def to_spark(self) -> 'DataFrame':
+    def to_spark(self) -> "DataFrame":
         return self
-
-

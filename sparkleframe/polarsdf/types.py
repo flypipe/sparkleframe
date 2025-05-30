@@ -1,56 +1,74 @@
 import polars as pl
 
+
 class DataType:
     def to_native(self):
         raise NotImplementedError
 
+
 class StringType(DataType):
     def __repr__(self):
         return "StringType()"
+
     def to_native(self):
         return pl.Utf8
+
 
 class IntegerType(DataType):
     def __repr__(self):
         return "IntegerType()"
+
     def to_native(self):
         return pl.Int32
+
 
 class LongType(DataType):
     def __repr__(self):
         return "LongType()"
+
     def to_native(self):
         return pl.Int64
+
 
 class FloatType(DataType):
     def __repr__(self):
         return "FloatType()"
+
     def to_native(self):
         return pl.Float32
+
 
 class DoubleType(DataType):
     def __repr__(self):
         return "DoubleType()"
+
     def to_native(self):
         return pl.Float64
+
 
 class BooleanType(DataType):
     def __repr__(self):
         return "BooleanType()"
+
     def to_native(self):
         return pl.Boolean
+
 
 class DateType(DataType):
     def __repr__(self):
         return "DateType()"
+
     def to_native(self):
         return pl.Date
+
 
 class TimestampType(DataType):
     def __repr__(self):
         return "TimestampType()"
+
     def to_native(self):
         return pl.Datetime
+
 
 class DecimalType(DataType):
     def __init__(self, precision: int, scale: int):
@@ -63,21 +81,27 @@ class DecimalType(DataType):
     def to_native(self):
         return pl.Decimal(self.precision, self.scale)
 
+
 class ByteType(DataType):
     def __repr__(self):
         return "ByteType()"
+
     def to_native(self):
         return pl.Int8
+
 
 class ShortType(DataType):
     def __repr__(self):
         return "ShortType()"
+
     def to_native(self):
         return pl.Int16
+
 
 class BinaryType(DataType):
     def __repr__(self):
         return "BinaryType()"
+
     def to_native(self):
         return pl.Binary
 

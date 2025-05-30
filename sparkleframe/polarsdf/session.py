@@ -31,14 +31,13 @@ class SparkSession:
             self.master_str = master_str
             return self
 
-        def getOrCreate(self) -> 'SparkSession':
+        def getOrCreate(self) -> "SparkSession":
             return SparkSession()
 
         def config(self, key, value):
             return self
 
     builder = Builder()
-
 
     class SparkContext:
 

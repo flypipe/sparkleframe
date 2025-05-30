@@ -1,6 +1,7 @@
 """
 Sparkleframe
 """
+
 from __future__ import annotations
 
 import importlib
@@ -52,7 +53,7 @@ def activate() -> None:
             "types",
             "Column",
             "DataFrame",
-            "SparkSession"
+            "SparkSession",
         ]:
 
             name_without_prefix = name.replace(prefix, "")

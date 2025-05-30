@@ -17,6 +17,7 @@ def col(name: str) -> Column:
     """
     return Column(name)
 
+
 def get_json_object(col: Union[str, Column], path: str) -> Column:
     """
     Mimics pyspark.sql.functions.get_json_object by extracting a JSON field.
@@ -35,6 +36,7 @@ def get_json_object(col: Union[str, Column], path: str) -> Column:
 
     return Column(col_expr.str.json_path_match(path))
 
+
 def lit(value) -> Column:
     """
     Mimics pyspark.sql.functions.lit.
@@ -51,6 +53,7 @@ def lit(value) -> Column:
         return Column(pl.lit(value).cast(pl.String).repeat_by(pl.len()).explode())
     return Column(pl.lit(value).repeat_by(pl.len()).explode())
 
+
 def coalesce(*cols: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.coalesce.
@@ -66,12 +69,10 @@ def coalesce(*cols: Union[str, Column]) -> Column:
     if not cols:
         raise ValueError("coalesce requires at least one column")
 
-    expressions = [
-        _to_expr(col) if isinstance(col, Column) else pl.col(col)
-        for col in cols
-    ]
+    expressions = [_to_expr(col) if isinstance(col, Column) else pl.col(col) for col in cols]
 
     return Column(pl.coalesce(*expressions))
+
 
 def count(col_name: Union[str, Column]) -> Column:
     """
@@ -88,6 +89,7 @@ def count(col_name: Union[str, Column]) -> Column:
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.count())
 
+
 def sum(col_name: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.sum.
@@ -102,6 +104,7 @@ def sum(col_name: Union[str, Column]) -> Column:
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.sum())
+
 
 def mean(col_name: Union[str, Column]) -> Column:
     """
@@ -118,6 +121,7 @@ def mean(col_name: Union[str, Column]) -> Column:
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.mean())
 
+
 def min(col_name: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.min.
@@ -133,6 +137,7 @@ def min(col_name: Union[str, Column]) -> Column:
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.min())
 
+
 def max(col_name: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.max.
@@ -147,6 +152,7 @@ def max(col_name: Union[str, Column]) -> Column:
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.max())
+
 
 def round(col_name: Union[str, Column], scale: int = 0) -> Column:
     """
@@ -169,7 +175,7 @@ class WhenBuilder:
     def __init__(self, condition: Column, value):
         self.branches = [(condition.to_native(), _to_expr(value))]
 
-    def when(self, condition: Any, value) -> 'WhenBuilder':
+    def when(self, condition: Any, value) -> "WhenBuilder":
         condition = Column(condition) if not isinstance(condition, Column) else condition
         self.branches.append((condition.to_native(), _to_expr(value)))
         return self
@@ -179,6 +185,7 @@ class WhenBuilder:
         for cond, val in self.branches[1:]:
             expr = expr.when(cond).then(val)
         return Column(expr.otherwise(_to_expr(value)))
+
 
 def when(condition: Any, value) -> WhenBuilder:
     """

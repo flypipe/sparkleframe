@@ -1,0 +1,60 @@
+name: verification
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "**" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  # Allow pipeline to be invoked from other pipelines
+  workflow_call:
+
+jobs:
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          # Fetch all tags/branches to run diff-cover properly
+          fetch-depth: 0
+      - name: Setup docker compose
+        run: |
+          curl -L https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          docker-compose version
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-dependencies
+      - name: Run unit tests for scripts (calculate wheel version and changelogs)
+        run: pytest scripts/*_test.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package version number (preview)
+        run: |
+          python scripts/calculate_version.py
+      - name: Changelog (preview)
+        run: python scripts/generate_changelog.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run formatter on backend (black)
+        run: make black-check
+      - name: Run formatter on frontend (prettier)
+        run: |
+          cd frontend
+          yarn prettier-check
+      - name: Run linter (ruff)
+        run: make lint
+      - name: Run unit tests using Spark Session
+        run: make coverage USE_SPARK_CONNECT=0
+      - name: Run unit tests using Spark Connect Session
+        run: make coverage USE_SPARK_CONNECT=1
