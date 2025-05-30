@@ -10,6 +10,16 @@ build==1.2.2.post1
     # via
     #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
     #   pip-tools
+certifi==2025.4.26
+    # via
+    #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+    #   requests
+charset-normalizer==3.4.2
+    # via
+    #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+    #   requests
+chispa==0.11.1
+    # via -r requirements-dev.in
 click==8.1.8
     # via
     #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
@@ -17,14 +27,43 @@ click==8.1.8
     #   pip-tools
 coverage[toml]==7.8.2
     # via pytest-cov
+docutils==0.21.2
+    # via
+    #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+    #   flit
+    #   readme-renderer
 execnet==2.1.1
     # via pytest-xdist
+flit==3.12.0
+    # via -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+flit-core==3.12.0
+    # via
+    #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+    #   flit
+id==1.5.0
+    # via twine
+idna==3.10
+    # via
+    #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+    #   requests
 importlib-metadata==4.6.4
     # via -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
 iniconfig==2.1.0
     # via pytest
+jaraco-classes==3.4.0
+    # via keyring
+keyring==23.9.3
+    # via twine
+markdown-it-py==3.0.0
+    # via rich
+mdurl==0.1.2
+    # via markdown-it-py
+more-itertools==10.7.0
+    # via jaraco-classes
 mypy-extensions==1.1.0
     # via black
+nh3==0.2.21
+    # via readme-renderer
 numpy==1.26.4
     # via
     #   -r requirements-dev.in
@@ -35,6 +74,7 @@ packaging==25.0
     #   black
     #   build
     #   pytest
+    #   twine
 pandas==2.2.3
     # via -r requirements-dev.in
 pathspec==0.12.1
@@ -47,10 +87,16 @@ pluggy==1.6.0
     # via pytest
 polars==1.30.0
     # via -r requirements-dev.in
+prettytable==3.16.0
+    # via chispa
 py4j==0.10.9.7
     # via pyspark
 pyarrow==20.0.0
     # via -r requirements-dev.in
+pygments==2.19.1
+    # via
+    #   readme-renderer
+    #   rich
 pyproject-hooks==1.2.0
     # via
     #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
@@ -74,12 +120,40 @@ python-dateutil==2.9.0.post0
     # via pandas
 pytz==2025.2
     # via pandas
+readme-renderer==44.0
+    # via twine
+requests==2.32.3
+    # via
+    #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+    #   flit
+    #   id
+    #   requests-toolbelt
+    #   twine
+requests-toolbelt==1.0.0
+    # via twine
+rfc3986==2.0.0
+    # via twine
+rich==14.0.0
+    # via twine
 ruff==0.9.3
     # via -r requirements-dev.in
 six==1.17.0
     # via python-dateutil
+tomli-w==1.2.0
+    # via
+    #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+    #   flit
+twine==6.1.0
+    # via -r requirements-dev.in
 tzdata==2025.2
     # via pandas
+urllib3==2.4.0
+    # via
+    #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt
+    #   requests
+    #   twine
+wcwidth==0.2.13
+    # via prettytable
 wheel==0.45.1
     # via
     #   -r /Users/jose.muller/repos/sparkleframe/requirements-pkg.txt

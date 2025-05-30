@@ -60,22 +60,17 @@ def activate() -> None:
             if name_without_prefix == "Session":
                 name_without_prefix = "SparkSession"
 
-            print("setattr(engine_module, name_without_prefix, obj)", engine_module, name_without_prefix, obj)
             setattr(engine_module, name_without_prefix, obj)
 
             file = NAME_TO_FILE_OVERRIDE.get(name_without_prefix, name_without_prefix).lower()
 
             engine_file = importlib.import_module(f"sparkleframe.{engine}.{file}")
-            # print("importing module:", f"sparkleframe.{engine}.{file}")
 
             if engine_file not in resolved_files:
-                print("engine_file:", f"pyspark.sql.{file}", "=>", engine_file)
                 sys.modules[f"pyspark.sql.{file}"] = engine_file
                 resolved_files.add(engine_file)
 
-            print("setattr(engine_file, name_without_prefix, obj)=>",engine_file, name_without_prefix, obj)
             setattr(engine_file, name_without_prefix, obj)
-            print()
 
 
 def deactivate() -> None:
