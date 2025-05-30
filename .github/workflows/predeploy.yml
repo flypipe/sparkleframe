@@ -1,0 +1,68 @@
+# Prepare for deployment:
+# - run verification to double check the code quality
+# - calculate the new prospective version
+# - calculate the new prospective changelog
+# By calculating the version/changelog here instead of in the deployment job we can double check these artifacts to
+# ensure they are looking fine prior to releasing.
+
+name: 'prepare-for-deployment'
+
+on:
+  push:
+    branches: [ "main" ]
+
+  # Allow for manual invocation
+  workflow_dispatch:
+
+  # Allow pipeline to be invoked from other pipelines
+  workflow_call:
+
+jobs:
+#  verification:
+#    uses: ./.github/workflows/verification.yml
+
+  build-wheel:
+    needs: verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          # We need the full history for calculation of the version number
+          fetch-depth: 0
+      - name: Fetch branches
+        run: git fetch
+      - name: Setup Dependencies
+        uses: './.github/actions/setup-dependencies'
+      - name: Calculate new version number
+        run: |
+          python scripts/calculate_version.py
+          echo "VERSION_NUMBER=$(cat flypipe/version.txt)" >> $GITHUB_ENV
+      - name: Upload version file
+        uses: actions/upload-artifact@v4
+        with:
+          name: version.txt
+          path: ./flypipe/version.txt
+      - name: Calculate changelog for new version
+        run: python scripts/generate_changelog.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload changelog file
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog.md
+          path: ./changelog.md
+      - name: Build frontend
+        run: |
+          cd frontend
+          yarn build
+      # Build and upload the wheel so we can access the wheel without having to upload it to pypi
+      - name: Build wheel
+        run: flit build
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: sparkleframe-${{ env.VERSION_NUMBER }}-py3-none-any.whl
+          path: ./dist/sparkleframe-${{ env.VERSION_NUMBER }}-py3-none-any.whl
