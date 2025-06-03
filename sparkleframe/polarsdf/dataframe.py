@@ -12,6 +12,23 @@ from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf.column import Column
 from sparkleframe.polarsdf.group import GroupedData
 
+from sparkleframe.polarsdf.types import (
+    StringType,
+    IntegerType,
+    LongType,
+    FloatType,
+    DoubleType,
+    BooleanType,
+    DateType,
+    TimestampType,
+    ByteType,
+    ShortType,
+    DecimalType,
+    BinaryType,
+    StructType,
+    StructField,
+)
+
 
 class DataFrame(BaseDataFrame):
 
@@ -383,3 +400,50 @@ class DataFrame(BaseDataFrame):
             return str(dtype)
 
         return [(col, map_dtype(dtype)) for col, dtype in self.df.schema.items()]
+
+    @property
+    def schema(self) -> StructType:
+        """
+        Mimics pyspark.sql.DataFrame.schema by returning the schema as a StructType.
+
+        Returns:
+            StructType: Spark-like schema derived from the Polars DataFrame schema.
+        """
+
+        def polars_dtype_to_spark_dtype(name: str, dtype: pl.DataType) -> StructField:
+
+            # Handle decimals
+            if isinstance(dtype, pl.Decimal):
+                return StructField(name, DecimalType(dtype.precision, dtype.scale))
+
+            # Handle structs (recursively)
+            if isinstance(dtype, pl.Struct):
+                nested_fields = [polars_dtype_to_spark_dtype(field.name, field.dtype) for field in dtype.fields]
+                return StructField(name, StructType(nested_fields))
+
+            # Basic type mappings
+            POLARS_TO_SPARK = {
+                pl.Utf8: StringType(),
+                pl.Int32: IntegerType(),
+                pl.UInt32: IntegerType(),
+                pl.Int64: LongType(),
+                pl.UInt64: LongType(),
+                pl.Float32: FloatType(),
+                pl.Float64: DoubleType(),
+                pl.Boolean: BooleanType(),
+                pl.Date: DateType(),
+                pl.Datetime: TimestampType(),
+                pl.Int8: ByteType(),
+                pl.UInt8: ByteType(),
+                pl.Int16: ShortType(),
+                pl.UInt16: ShortType(),
+                pl.Binary: BinaryType(),
+            }
+
+            for pl_type, spark_type in POLARS_TO_SPARK.items():
+                if isinstance(dtype, pl_type):
+                    return StructField(name, spark_type)
+
+            raise TypeError(f"Unsupported dtype '{dtype}' for column '{name}'")
+
+        return StructType([polars_dtype_to_spark_dtype(name, dtype) for name, dtype in self.df.schema.items()])
