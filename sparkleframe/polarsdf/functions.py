@@ -197,6 +197,38 @@ def when(condition: Any, value) -> WhenBuilder:
     return WhenBuilder(condition, value)
 
 
+def to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss") -> Column:
+    """
+    Mimics pyspark.sql.functions.to_timestamp.
+
+    Converts a string column to a timestamp using the specified format.
+
+    Args:
+        col_name (str or Column): Column with string values to convert to timestamps.
+        fmt (str): The timestamp format to parse the strings. Defaults to 'yyyy-MM-dd HH:mm:ss'.
+
+    Returns:
+        Column: A Column with values converted to Polars datetime type.
+    """
+    # Convert Spark-style format to strftime-style for Polars
+    format_map = {
+        "yyyy": "%Y",
+        "MM": "%m",
+        "dd": "%d",
+        "HH": "%H",
+        "mm": "%M",
+        "ss": "%S",
+        "SSSSSS": "%6f",  # microseconds
+        "SSS": "%3f",  # milliseconds
+    }
+
+    for spark_fmt, strftime_fmt in format_map.items():
+        fmt = fmt.replace(spark_fmt, strftime_fmt)
+
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.str.strptime(pl.Datetime, fmt))
+
+
 def regexp_replace(col_name: Union[str, Column], pattern: str, replacement: str) -> Column:
     """
     Mimics pyspark.sql.functions.regexp_replace.
