@@ -880,3 +880,48 @@ class TestDataFrame:
         assert json.dumps(sparkle_df.schema, sort_keys=True, default=str) == json.dumps(
             spark_df.schema, sort_keys=True, default=str
         )
+
+    def test_getitem_column_access(self):
+        # Step 1: Create sample Polars DataFrame
+        pl_df = pl.DataFrame({"name": ["Alice", "Bob"], "age": [30, 40]})
+        df = DataFrame(pl_df)
+
+        # Step 2: Access a column using df["name"]
+        col_expr = df["name"]
+
+        # Step 3: Verify the type and name
+        assert hasattr(col_expr, "alias")
+        assert col_expr.meta["name"] == "name"
+
+        # Step 4: Use it in a select to verify it evaluates correctly
+        result_df = df.select(col_expr).toPandas()
+        expected = pl_df.select("name").to_pandas()
+
+        pd.testing.assert_frame_equal(result_df, expected)
+
+    def test_schema_equivalence_with_spark(self, spark):
+        # Sample Pandas data
+        pdf = pd.DataFrame([[1, "Alice"], [2, "Bob"]])
+
+        # Sparkleframe schema
+        sf_schema = StructType(
+            [StructField("id", IntegerType(), nullable=False), StructField("name", StringType(), nullable=True)]
+        )
+
+        # Equivalent Spark schema
+        spark_schema = SparkStructType(
+            [
+                SparkStructField("id", SparkIntegerType(), nullable=False),
+                SparkStructField("name", SparkStringType(), nullable=True),
+            ]
+        )
+
+        # Create Sparkleframe DataFrame
+        sf_df = DataFrame(pdf, schema=sf_schema)
+
+        # Create Spark DataFrame
+        spark_df = spark.createDataFrame(pdf, schema=spark_schema)
+
+        assert json.dumps(sf_df._schema, sort_keys=True, default=str) == json.dumps(
+            spark_df._schema, sort_keys=True, default=str
+        )

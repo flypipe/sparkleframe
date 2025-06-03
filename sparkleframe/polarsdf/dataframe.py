@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Union, Any, List
+from typing import Union, Any, List, Optional
 from uuid import uuid4
 
 import pandas as pd
@@ -32,7 +32,7 @@ from sparkleframe.polarsdf.types import (
 
 class DataFrame(BaseDataFrame):
 
-    def __init__(self, df: Union[pl.DataFrame, pd.DataFrame, pa.Table]):
+    def __init__(self, df: Union[pl.DataFrame, pd.DataFrame, pa.Table], schema: Optional[StructType] = None):
         if isinstance(df, pl.DataFrame):
             self.df = df
         elif isinstance(df, pd.DataFrame):
@@ -41,8 +41,11 @@ class DataFrame(BaseDataFrame):
             self.df = pl.from_arrow(df)
         else:
             raise TypeError("DataFrame constructor accepts polars.DataFrame, pandas.DataFrame, or pyarrow.Table")
-
+        self._schema = schema
         super().__init__(self.df)
+
+    def __getitem__(self, key: str) -> Column:
+        return Column(pl.col(key))
 
     @property
     def columns(self) -> List[str]:
