@@ -195,3 +195,23 @@ def when(condition: Any, value) -> WhenBuilder:
     """
     condition = Column(condition) if not isinstance(condition, Column) else condition
     return WhenBuilder(condition, value)
+
+
+def regexp_replace(col_name: Union[str, Column], pattern: str, replacement: str) -> Column:
+    """
+    Mimics pyspark.sql.functions.regexp_replace.
+
+    Replaces all substrings of the specified string column that match the regular expression
+    with the given replacement.
+
+    Args:
+        col_name (str or Column): Column containing strings to operate on.
+        pattern (str): Regular expression pattern to match.
+        replacement (str): Replacement string.
+
+    Returns:
+        Column: A Column with the regex-replaced string results.
+    """
+    col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
+    expr = _to_expr(col_name)
+    return Column(expr.str.replace_all(pattern, replacement))
