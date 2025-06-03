@@ -10,9 +10,12 @@ from pyspark.sql.functions import (
     lit as spark_lit,
     coalesce as spark_coalesce,
     regexp_replace as spark_regexp_replace,
+    length as spark_length,
 )
+from pyspark.sql.types import IntegerType as SparkIntegerType
+
 from sparkleframe.polarsdf.dataframe import DataFrame
-from sparkleframe.polarsdf.functions import col, round, when, get_json_object, lit, coalesce, regexp_replace
+from sparkleframe.polarsdf.functions import col, round, when, get_json_object, lit, coalesce, regexp_replace, length
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records
 import json
@@ -218,3 +221,31 @@ class TestFunctions:
 
         # Validate against PySpark
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    @pytest.mark.parametrize(
+        "input_values",
+        [
+            ["abc", "de", ""],  # basic strings
+            ["你好", "世界", ""],  # unicode characters
+            [None, "x", "longer string"],  # includes None
+            ["😊", "👍🏽", "💯"],  # emojis with multiple bytes
+        ],
+    )
+    @pytest.mark.parametrize("col_input", ["txt", col("txt")])
+    def test_length_str_vs_column(self, spark, input_values, col_input):
+        # Prepare pandas and polars DataFrame
+        df_data = pd.DataFrame({"txt": input_values})
+        polars_df = DataFrame(pl.DataFrame(df_data))
+
+        # PySpark DataFrame for expected result
+        spark_df = spark.createDataFrame(df_data)
+        expected_df = spark_df.select(spark_length("txt").alias("result"))
+
+        # SparkleFrame/Polars result
+        result_df = polars_df.select(length(col_input).alias("result"))
+        result_spark_df = spark.createDataFrame(result_df.df.to_dicts()).withColumn(
+            "result", spark_col("result").cast(SparkIntegerType())
+        )
+
+        # Assert equality
+        assert_pyspark_df_equal(result_spark_df, expected_df)

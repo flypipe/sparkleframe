@@ -215,3 +215,20 @@ def regexp_replace(col_name: Union[str, Column], pattern: str, replacement: str)
     col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
     expr = _to_expr(col_name)
     return Column(expr.str.replace_all(pattern, replacement))
+
+
+def length(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.length.
+
+    Computes the length (number of characters) of the string in the column.
+
+    Args:
+        col_name (str or Column): The string column.
+
+    Returns:
+        Column: A Column representing the length of each string.
+    """
+    col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
+    expr = _to_expr(col_name)
+    return Column(expr.str.len_chars().cast(pl.Int32))
