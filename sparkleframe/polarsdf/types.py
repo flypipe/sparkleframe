@@ -161,6 +161,9 @@ class StructField(DataType):
             "metadata": self.metadata,
         }
 
+    def to_native(self):
+        return pl.Field(self.name, self.dataType.to_native())
+
 
 class StructType(DataType):
     def __init__(self, fields: Optional[List[StructField]] = None):
@@ -215,6 +218,9 @@ class StructType(DataType):
 
     def fieldNames(self) -> List[str]:
         return list(self.names)
+
+    def to_native(self):
+        return pl.Struct([field.to_native() for field in self.fields])
 
 
 class Row:

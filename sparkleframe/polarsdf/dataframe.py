@@ -332,3 +332,54 @@ class DataFrame(BaseDataFrame):
                 result = result.rename({col: col.replace(suffix, "") + "_right"})
 
         return DataFrame(result)
+
+    @property
+    def dtypes(self) -> List[tuple[str, str]]:
+        """
+        Mimics pyspark.pandas.DataFrame.dtypes.
+
+        Returns a list of tuples with (column name, string representation of data type).
+
+        Returns:
+            List[Tuple[str, str]]: List of (column name, data type) pairs.
+        """
+        POLARS_TO_PYSPARK_DTYPE_MAP = {
+            pl.Int8: "tinyint",
+            pl.Int16: "smallint",
+            pl.Int32: "int",
+            pl.Int64: "bigint",
+            pl.UInt8: "tinyint",
+            pl.UInt16: "smallint",
+            pl.UInt32: "int",
+            pl.UInt64: "bigint",
+            pl.Float32: "float",
+            pl.Float64: "double",
+            pl.Boolean: "boolean",
+            pl.Utf8: "string",
+            pl.Date: "date",
+            pl.Datetime: "timestamp",
+            pl.Time: "time",
+            pl.Duration: "interval",
+            pl.Object: "binary",
+            pl.List: "array",
+            pl.Struct: "struct",
+            pl.Decimal: "decimal",
+            pl.Binary: "binary",
+        }
+
+        def map_dtype(dtype: pl.DataType) -> str:
+            if isinstance(dtype, pl.Decimal):
+                return f"decimal({dtype.precision},{dtype.scale})"
+
+            if isinstance(dtype, pl.Struct):
+                # Recursively describe fields
+                fields_str = ",".join(f"{field.name}:{map_dtype(field.dtype)}" for field in dtype.fields)
+                return f"struct<{fields_str}>"
+
+            for polars_type, spark_type in POLARS_TO_PYSPARK_DTYPE_MAP.items():
+                if isinstance(dtype, polars_type):
+                    return spark_type
+
+            return str(dtype)
+
+        return [(col, map_dtype(dtype)) for col, dtype in self.df.schema.items()]
