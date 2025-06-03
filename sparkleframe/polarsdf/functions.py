@@ -236,13 +236,12 @@ def to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss")
     # appends zeros to fractional part (e.g., .993 -> .993000)
     if "%6f" in fmt:
         # Pad fractional seconds using a map function
-        def pad_microseconds(val: str | None) -> str | None:
+        def pad_microseconds(val):
             if val is None:
                 return None
             if "." in val:
                 prefix, suffix = val.split(".", 1)
                 suffix = (suffix + "000000")[:6]  # Ensure exactly 6 digits
-                print(f"=====>{prefix}.{suffix}")
                 return f"{prefix}.{suffix}"
             return val
 
