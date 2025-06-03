@@ -9,10 +9,10 @@ from pyspark.sql.functions import (
     get_json_object as spark_get_json_object,
     lit as spark_lit,
     coalesce as spark_coalesce,
+    regexp_replace as spark_regexp_replace,
 )
-
 from sparkleframe.polarsdf.dataframe import DataFrame
-from sparkleframe.polarsdf.functions import col, round, when, get_json_object, lit, coalesce
+from sparkleframe.polarsdf.functions import col, round, when, get_json_object, lit, coalesce, regexp_replace
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records
 import json
@@ -185,3 +185,36 @@ class TestFunctions:
             check_exact=False,
             rtol=1e-5,
         )
+
+    @pytest.mark.parametrize(
+        "col_input",
+        [
+            "txt",
+            col("txt"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "input_values, pattern, replacement, expected_values",
+        [
+            (["abc123", "xyz456"], r"\d+", "", ["abc", "xyz"]),  # Remove digits
+            (["hello world", "world hello"], "world", "earth", ["hello earth", "earth hello"]),  # Replace word
+            (["aaa", "aba", "aca"], "a", "x", ["xxx", "xbx", "xcx"]),  # Replace all a's
+            (["test123", "123test"], r"^\d+", "NUM", ["test123", "NUMtest"]),  # Match digits at start
+            (["test123", "123test"], r"\d+$", "END", ["testEND", "123test"]),  # Match digits at end
+        ],
+    )
+    def test_regexp_replace_str_vs_column(self, spark, col_input, pattern, replacement, input_values, expected_values):
+        # Prepare input as pandas DataFrame and convert to Spark
+        df_data = pd.DataFrame({"txt": input_values})
+        spark_input_df = spark.createDataFrame(df_data)
+
+        # Expected Spark result
+        expected_df = spark_input_df.select(spark_regexp_replace("txt", pattern, replacement).alias("replaced"))
+
+        # SparkleFrame Polars-based result
+        polars_df = DataFrame(pl.DataFrame(df_data))
+        result_df = polars_df.select(regexp_replace(col_input, pattern, replacement).alias("replaced"))
+        result_spark_df = spark.createDataFrame(result_df.df.to_dicts())
+
+        # Validate against PySpark
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
