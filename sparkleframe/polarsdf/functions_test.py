@@ -25,10 +25,10 @@ from sparkleframe.polarsdf.functions import (
     coalesce,
     regexp_replace,
     to_timestamp,
-    length
+    length,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import to_records
+from sparkleframe.tests.utils import to_records, create_spark_df
 import json
 
 sample_data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
@@ -265,17 +265,28 @@ class TestFunctions:
         "col_input",
         [
             "ts",
-            # col("ts"),
+            col("ts"),
         ],
     )
     @pytest.mark.parametrize(
         "datetime_strs, fmt",
         [
+            # Standard format
             (["2023-01-01 12:34:56", "2024-02-02 23:45:01"], "yyyy-MM-dd HH:mm:ss"),
+            # Day-first format
             (["01-03-2023 09:15:00", "31-12-2022 23:59:59"], "dd-MM-yyyy HH:mm:ss"),
+            # Compact format
             (["20230101 120000", "20240101 130000"], "yyyyMMdd HHmmss"),
+            # Millisecond precision (3 digits)
             (["2024-05-31 20:14:19.993", "2023-12-12 11:11:11.123"], "yyyy-MM-dd HH:mm:ss.SSS"),
+            # Microsecond precision (6 digits)
             (["2024-05-31 23:58:32.880000", "2023-12-12 11:11:11.123456"], "yyyy-MM-dd HH:mm:ss.SSSSSS"),
+            # Single-digit millisecond
+            (["2024-05-31 20:14:19.9", "2023-12-12 11:11:11.1"], "yyyy-MM-dd HH:mm:ss.S"),
+            # Two-digit millisecond
+            (["2024-05-31 20:14:19.99", "2023-12-12 11:11:11.12"], "yyyy-MM-dd HH:mm:ss.SS"),
+            # Five-digit fractional seconds (partial microseconds)
+            (["2024-05-31 20:14:19.12345", "2023-12-12 11:11:11.99999"], "yyyy-MM-dd HH:mm:ss.SSSSS"),
         ],
     )
     def test_to_timestamp_against_spark(self, spark, col_input, datetime_strs, fmt):
@@ -285,15 +296,9 @@ class TestFunctions:
 
         # Spark expected output
         spark_df = spark.createDataFrame(df)
-        expected_df = spark_df.select(spark_to_timestamp("ts", fmt).alias("result")).toPandas()
+        expected_df = spark_df.select(spark_to_timestamp("ts", fmt).alias("result"))
 
         # Sparkleframe / Polars output
-        result_df = polars_df.select(to_timestamp(col_input, fmt).alias("result")).toPandas()
+        result_df = create_spark_df(spark, polars_df.select(to_timestamp(col_input, fmt).alias("result")))
 
-        # Compare using pandas
-        pdt.assert_frame_equal(
-            result_df.reset_index(drop=True),
-            expected_df.reset_index(drop=True),
-            check_dtype=False,
-            check_exact=False,
-        )
+        assert_pyspark_df_equal(result_df, expected_df)
