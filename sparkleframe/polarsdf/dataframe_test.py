@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import polars as pl
 import pyarrow as pa
@@ -17,6 +19,8 @@ from pyspark.sql.types import (
     ByteType as SparkByteType,
     ShortType as SparkShortType,
     BinaryType as SparkBinaryType,
+    StructType as SparkStructType,
+    StructField as SparkStructField,
 )
 
 import sparkleframe.polarsdf.functions as PF
@@ -34,9 +38,11 @@ from sparkleframe.polarsdf.types import (
     ByteType,
     ShortType,
     BinaryType,
+    StructType,
+    StructField,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import to_records
+from sparkleframe.tests.utils import to_records, create_spark_df
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -722,12 +728,8 @@ class TestDataFrame:
 
         # Convert result to Pandas for assertion
         sparkle_as_spark = sparkle_as_spark.select(sorted(sparkle_as_spark.columns)).orderBy("name", "age")
-        print("result_df")
-        sparkle_as_spark.show()
 
         filled_spark = filled_spark.select(sorted(filled_spark.columns)).orderBy("name", "age")
-        print("expected_df")
-        filled_spark.show()
 
         # Assert equality
         assert_pyspark_df_equal(sparkle_as_spark, filled_spark, ignore_nullable=True)
@@ -752,13 +754,9 @@ class TestDataFrame:
         # Convert result to Pandas for assertion
         result_df = spark.createDataFrame(sparkle_df.df.to_dicts())
         result_df = result_df.select(sorted(result_df.columns)).orderBy("name", "age")
-        print("result_df")
-        result_df.show()
 
         expected_df = spark.createDataFrame(expected_dict)
         expected_df = expected_df.select(sorted(expected_df.columns)).orderBy("name", "age")
-        print("expected_df")
-        expected_df.show()
 
         assert_pyspark_df_equal(result_df, expected_df, ignore_nullable=True)
 
@@ -769,3 +767,59 @@ class TestDataFrame:
 
         # Validate the columns property
         assert df.columns == ["name", "age", "salary"]
+
+    @pytest.mark.parametrize(
+        "value, dtype_class, expected_spark_type",
+        [
+            ("foo", StringType(), SparkStringType()),
+            (42, IntegerType(), SparkIntegerType()),
+            (42, LongType(), SparkLongType()),
+            (3.14, FloatType(), SparkFloatType()),
+            (2.718281828, DoubleType(), SparkDoubleType()),
+            (True, BooleanType(), SparkBooleanType()),
+            (pd.to_datetime("2024-01-01").date(), DateType(), SparkDateType()),
+            (pd.to_datetime("2024-01-01 12:34:56"), TimestampType(), SparkTimestampType()),
+            (123.45, DecimalType(10, 2), SparkDecimalType(10, 2)),
+            (1, ByteType(), SparkByteType()),
+            (100, ShortType(), SparkShortType()),
+            (b"abc", BinaryType(), SparkBinaryType()),
+            # ✅ Nested StructType test case
+            (
+                {"field1": "hello", "field2": 999},
+                StructType([StructField("field1", StringType()), StructField("field2", IntegerType())]),
+                SparkStructType(
+                    [
+                        SparkStructField("field1", SparkStringType()),
+                        SparkStructField("field2", SparkIntegerType()),
+                    ]
+                ),
+            ),
+            # ✅ Struct with nested StructType inside
+            (
+                {"outer": {"inner": 123}},
+                StructType([StructField("outer", StructType([StructField("inner", IntegerType())]))]),
+                SparkStructType(
+                    [SparkStructField("outer", SparkStructType([SparkStructField("inner", SparkIntegerType())]))]
+                ),
+            ),
+        ],
+    )
+    def test_polars_to_spark_dtype_conversion(self, spark, value, dtype_class, expected_spark_type):
+        col_name = "col"
+        pl_df = pl.DataFrame({col_name: [value]})
+
+        # Wrap in Sparkleframe DataFrame
+        sparkle_df = DataFrame(pl_df).withColumn(col_name, PF.col(col_name).cast(dtype_class))
+
+        # Convert to Arrow → Pandas → Spark (actual logic for type preservation)
+        if isinstance(value, dict):
+            spark_df = spark.createDataFrame(data=[(json.dumps(value),)], schema=(col_name,)).withColumn(
+                col_name, F.from_json(F.col(col_name), expected_spark_type)
+            )
+
+        else:
+            spark_df = create_spark_df(spark, sparkle_df).withColumn(
+                col_name, F.col(col_name).cast(expected_spark_type)
+            )
+
+        assert spark_df.dtypes == sparkle_df.dtypes
