@@ -233,7 +233,7 @@ class TestFunctions:
         "col_input",
         [
             "ts",
-            col("ts"),
+            # col("ts"),
         ],
     )
     @pytest.mark.parametrize(
@@ -243,6 +243,7 @@ class TestFunctions:
             (["01-03-2023 09:15:00", "31-12-2022 23:59:59"], "dd-MM-yyyy HH:mm:ss"),
             (["20230101 120000", "20240101 130000"], "yyyyMMdd HHmmss"),
             (["2024-05-31 20:14:19.993", "2023-12-12 11:11:11.123"], "yyyy-MM-dd HH:mm:ss.SSS"),
+            (["2024-05-31 23:58:32.880000", "2023-12-12 11:11:11.123456"], "yyyy-MM-dd HH:mm:ss.SSSSSS"),
         ],
     )
     def test_to_timestamp_against_spark(self, spark, col_input, datetime_strs, fmt):

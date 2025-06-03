@@ -218,6 +218,7 @@ def to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss")
         "HH": "%H",
         "mm": "%M",
         "ss": "%S",
+        "SSSSSS": "%6f",  # microseconds
         "SSS": "%3f",  # milliseconds
     }
 
