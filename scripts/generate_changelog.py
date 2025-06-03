@@ -52,7 +52,7 @@ def generate_changelog(to_branch: str=None):
 
 def save_changelog(issues, version):
     lines = ["Changelog", "\n========="]
-    issue_ids = sorted(list(issues.keys()))
+    issue_ids = sorted(list(issues.keys()), reverse=True)
     version = '.'.join([str(v) for v in version])
     version = f'<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/{version}" target="_blank" rel="noopener noreferrer">release/{version}</a><h2>'
     lines += [f"\n\n{version}\n"] + [f'- {issues[issue_id]}\n' for issue_id in issue_ids]
