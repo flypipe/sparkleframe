@@ -12,9 +12,15 @@ from pyspark.sql.functions import (
     to_timestamp as spark_to_timestamp,
     regexp_replace as spark_regexp_replace,
     length as spark_length,
+    asc as spark_asc,
+    desc as spark_desc,
+    rank as spark_rank,
+    dense_rank as spark_dense_rank,
+    row_number as spark_row_number,
 )
 from pyspark.sql.types import IntegerType as SparkIntegerType
-
+from pyspark.sql.window import Window as SparkWindow
+from sparkleframe.polarsdf import Window
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.functions import (
     col,
@@ -26,6 +32,11 @@ from sparkleframe.polarsdf.functions import (
     regexp_replace,
     to_timestamp,
     length,
+    asc,
+    desc,
+    rank,
+    dense_rank,
+    row_number,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records, create_spark_df
@@ -201,6 +212,54 @@ class TestFunctions:
         )
 
     @pytest.mark.parametrize(
+        "data, column",
+        [
+            ({"x": [3, 1, 2]}, "x"),
+            ({"x": ["b", "c", "a"]}, "x"),
+            ({"x": [3.3, 1.1, 2.2]}, "x"),
+        ],
+    )
+    def test_asc_against_spark(self, spark, data, column):
+        data = to_records(data)
+        # Create input DataFrame
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(data)
+
+        # SparkleFrame: order by asc
+        result_df = polars_df.df.sort(asc(col(column)).to_native())
+        result_spark_df = create_spark_df(spark, result_df)
+
+        # PySpark: order by asc
+        expected_df = spark_df.orderBy(spark_asc(column))
+
+        # Compare using PySpark equality
+        assert_pyspark_df_equal(result_spark_df.orderBy("x"), expected_df.orderBy("x"), ignore_nullable=True)
+
+    @pytest.mark.parametrize(
+        "data, column",
+        [
+            ({"x": [3, 1, 2]}, "x"),
+            ({"x": ["b", "c", "a"]}, "x"),
+            ({"x": [3.3, 1.1, 2.2]}, "x"),
+        ],
+    )
+    def test_desc_against_spark(self, spark, data, column):
+        data = to_records(data)
+        # Create input DataFrame
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(data)
+
+        # SparkleFrame: order by desc
+        result_df = polars_df.df.sort(desc(col(column)).to_native())
+        result_spark_df = create_spark_df(spark, result_df)
+
+        # PySpark: order by desc
+        expected_df = spark_df.orderBy(spark_desc(column))
+
+        # Compare using PySpark equality
+        assert_pyspark_df_equal(result_spark_df.orderBy("x"), expected_df.orderBy("x"), ignore_nullable=True)
+
+    @pytest.mark.parametrize(
         "col_input",
         [
             "txt",
@@ -302,3 +361,94 @@ class TestFunctions:
         result_df = create_spark_df(spark, polars_df.select(to_timestamp(col_input, fmt).alias("result")))
 
         assert_pyspark_df_equal(result_df, expected_df)
+
+    @pytest.mark.parametrize(
+        "sparkle_col_type, spark_col_type",
+        [
+            (str, str),
+            (col, spark_col),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "sparkle_func, spark_func",
+        [
+            (rank, spark_rank),
+            (dense_rank, spark_dense_rank),
+            (row_number, spark_row_number),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "partition_cols, order_cols",
+        [
+            (["group"], [("category", "asc")]),
+            (["group"], [("value", "desc")]),
+            (["group", "subcategory"], [("value", "asc")]),
+            (["group", "subcategory"], [("value", "desc"), ("category", "asc")]),
+            (["group", "category"], [("subcategory", "asc"), ("value", "desc")]),
+        ],
+    )
+    def test_ranks_with_subcategory(
+        self, spark, sparkle_col_type, spark_col_type, sparkle_func, spark_func, partition_cols, order_cols
+    ):
+        # Extended sample data with `subcategory`
+        # Expanded dataset for more exhaustive testing
+        data = [
+            {"group": "A", "category": "A", "subcategory": "alpha", "value": 100},
+            {"group": "A", "category": "A", "subcategory": "alpha", "value": 100},
+            {"group": "A", "category": "A", "subcategory": "alpha", "value": 200},
+            {"group": "A", "category": "A", "subcategory": "beta", "value": 50},
+            {"group": "A", "category": "B", "subcategory": "alpha", "value": 120},
+            {"group": "A", "category": "B", "subcategory": "beta", "value": 180},
+            {"group": "B", "category": "A", "subcategory": "alpha", "value": 300},
+            {"group": "B", "category": "A", "subcategory": "beta", "value": 310},
+            {"group": "B", "category": "B", "subcategory": "alpha", "value": 150},
+            {"group": "B", "category": "B", "subcategory": "beta", "value": 160},
+            {"group": "B", "category": "B", "subcategory": "beta", "value": 170},
+            {"group": "C", "category": "A", "subcategory": "alpha", "value": 80},
+            {"group": "C", "category": "A", "subcategory": "alpha", "value": 85},
+            {"group": "C", "category": "A", "subcategory": "beta", "value": 70},
+            {"group": "C", "category": "B", "subcategory": "beta", "value": 60},
+            {"group": "C", "category": "B", "subcategory": "beta", "value": 100},
+        ]
+        pl_df = pl.DataFrame(data)
+
+        # Build Sparkle DataFrame
+        sparkle_df = DataFrame(pl_df)
+
+        # Convert to order expressions
+        order_exprs = [
+            asc(sparkle_col_type(col)) if direction == "asc" else desc(sparkle_col_type(col))
+            for col, direction in order_cols
+        ]
+
+        # Apply rank over window
+        sparkle_df = sparkle_df.withColumn(
+            "rank",
+            sparkle_func().over(
+                Window.partitionBy(*[sparkle_col_type(col) for col in partition_cols]).orderBy(*order_exprs)
+            ),
+        )
+
+        # Cast and sort for stable comparison
+        sparkle_df = (
+            create_spark_df(spark, sparkle_df)
+            .withColumn("rank", spark_col("rank").cast(SparkIntegerType()))
+            .orderBy("group", "category", "subcategory", "value")
+        )
+
+        # Build Spark reference DataFrame
+        spark_df = create_spark_df(spark, pl_df)
+
+        spark_order_exprs = [
+            spark_asc(spark_col_type(col)) if direction == "asc" else spark_desc(spark_col_type(col))
+            for col, direction in order_cols
+        ]
+
+        spark_df = spark_df.withColumn(
+            "rank",
+            spark_func().over(
+                SparkWindow.partitionBy(*[spark_col_type(col) for col in partition_cols]).orderBy(*spark_order_exprs)
+            ),
+        ).orderBy("group", "category", "subcategory", "value")
+
+        assert_pyspark_df_equal(sparkle_df, spark_df, ignore_nullable=True)

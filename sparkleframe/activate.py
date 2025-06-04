@@ -21,7 +21,7 @@ NAME_TO_FILE_OVERRIDE = {
     # "DataFrameWriter": "readwriter",
     # "GroupedData": "group",
     "SparkSession": "session",
-    # "WindowSpec": "window",
+    "WindowSpec": "window",
     # "UDFRegistration": "udf",
 }
 
@@ -45,7 +45,6 @@ def activate() -> None:
     types = engine_module.__dict__.copy()
     resolved_files = set()
     for name, obj in types.items():
-        # print("name, obj, name.startswith(prefix): ",name, obj, name.startswith(prefix))
         if name.startswith(prefix) or name in [
             "Column",
             "Window",
