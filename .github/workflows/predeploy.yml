@@ -51,7 +51,7 @@ jobs:
           name: version.txt
           path: ./sparkleframe/version.txt
       - name: Calculate changelog for new version
-        run: python scripts/generate_changelog.py  origin/${{ steps.extract_branch.outputs.branch }}
+        run: python scripts/generate_changelog.py origin/${{ steps.extract_branch.outputs.branch }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload changelog file
