@@ -67,7 +67,13 @@ def calculate_version(to_branch: str = None, re_commit_type: str = None) -> List
         # print(f'Checking msg {commit_message} (commit id {commit_id})')
         commit_message_summary = commit_message.split("\n", maxsplit=1)[0]
         # print(f'Check commit "{commit_message_summary}"')
-        is_breaking_change, is_feature_change = get_changes(re_commit_type, commit_message_summary)
+        is_breaking_change_, is_feature_change_ = get_changes(re_commit_type, commit_message_summary)
+        if is_breaking_change_:
+            is_breaking_change = True
+            break
+
+        if is_feature_change_:
+            is_feature_change = True
     # print('*** Finished checking through list of commits ***')
 
     if is_breaking_change:
