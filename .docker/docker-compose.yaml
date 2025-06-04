@@ -5,7 +5,7 @@ services:
       dockerfile: ./.docker/Dockerfile
     container_name: sparkleframe
     environment:
-      TIMEZONE: US/Eastern
+      TIMEZONE: UTC
     volumes:
       - ./../sparkleframe:/sparkleframe
       - ./../.coverage:/sparkleframe/.coverage

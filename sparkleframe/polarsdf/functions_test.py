@@ -9,12 +9,28 @@ from pyspark.sql.functions import (
     get_json_object as spark_get_json_object,
     lit as spark_lit,
     coalesce as spark_coalesce,
+    to_timestamp as spark_to_timestamp,
+    regexp_replace as spark_regexp_replace,
+    length as spark_length,
     asc as spark_asc,
     desc as spark_desc,
 )
+from pyspark.sql.types import IntegerType as SparkIntegerType
 
 from sparkleframe.polarsdf.dataframe import DataFrame
-from sparkleframe.polarsdf.functions import col, round, when, get_json_object, lit, coalesce, asc, desc
+from sparkleframe.polarsdf.functions import (
+    col,
+    round,
+    when,
+    get_json_object,
+    lit,
+    coalesce,
+    regexp_replace,
+    to_timestamp,
+    length,
+    asc,
+    desc
+)
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records, create_spark_df
 import json
@@ -163,9 +179,9 @@ class TestFunctions:
         "values, scale",
         [
             ([1.234, 2.345, 3.456], 0),  # round to integer
-            # ([1.234, 2.345, 3.456], 1),  # round to 1 decimal
-            # ([1.234, 2.345, 3.456], 2),  # round to 2 decimals
-            # ([None, 2.555, 3.666], 1),  # include None
+            ([1.234, 2.345, 3.456], 1),  # round to 1 decimal
+            ([1.234, 2.345, 3.456], 2),  # round to 2 decimals
+            ([None, 2.555, 3.666], 1),  # include None
         ],
     )
     def test_round_against_spark(self, spark, values, scale):
@@ -236,3 +252,105 @@ class TestFunctions:
         # Compare using PySpark equality
         assert_pyspark_df_equal(result_spark_df.orderBy("x"), expected_df.orderBy("x"), ignore_nullable=True)
 
+    @pytest.mark.parametrize(
+        "col_input",
+        [
+            "txt",
+            col("txt"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "input_values, pattern, replacement, expected_values",
+        [
+            (["abc123", "xyz456"], r"\d+", "", ["abc", "xyz"]),  # Remove digits
+            (["hello world", "world hello"], "world", "earth", ["hello earth", "earth hello"]),  # Replace word
+            (["aaa", "aba", "aca"], "a", "x", ["xxx", "xbx", "xcx"]),  # Replace all a's
+            (["test123", "123test"], r"^\d+", "NUM", ["test123", "NUMtest"]),  # Match digits at start
+            (["test123", "123test"], r"\d+$", "END", ["testEND", "123test"]),  # Match digits at end
+        ],
+    )
+    def test_regexp_replace_str_vs_column(self, spark, col_input, pattern, replacement, input_values, expected_values):
+        # Prepare input as pandas DataFrame and convert to Spark
+        df_data = pd.DataFrame({"txt": input_values})
+        spark_input_df = spark.createDataFrame(df_data)
+
+        # Expected Spark result
+        expected_df = spark_input_df.select(spark_regexp_replace("txt", pattern, replacement).alias("replaced"))
+
+        # SparkleFrame Polars-based result
+        polars_df = DataFrame(pl.DataFrame(df_data))
+        result_df = polars_df.select(regexp_replace(col_input, pattern, replacement).alias("replaced"))
+        result_spark_df = spark.createDataFrame(result_df.df.to_dicts())
+
+        # Validate against PySpark
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    @pytest.mark.parametrize(
+        "input_values",
+        [
+            ["abc", "de", ""],  # basic strings
+            ["你好", "世界", ""],  # unicode characters
+            [None, "x", "longer string"],  # includes None
+            ["😊", "👍🏽", "💯"],  # emojis with multiple bytes
+        ],
+    )
+    @pytest.mark.parametrize("col_input", ["txt", col("txt")])
+    def test_length_str_vs_column(self, spark, input_values, col_input):
+        # Prepare pandas and polars DataFrame
+        df_data = pd.DataFrame({"txt": input_values})
+        polars_df = DataFrame(pl.DataFrame(df_data))
+
+        # PySpark DataFrame for expected result
+        spark_df = spark.createDataFrame(df_data)
+        expected_df = spark_df.select(spark_length("txt").alias("result"))
+
+        # SparkleFrame/Polars result
+        result_df = polars_df.select(length(col_input).alias("result"))
+        result_spark_df = spark.createDataFrame(result_df.df.to_dicts()).withColumn(
+            "result", spark_col("result").cast(SparkIntegerType())
+        )
+
+        # Assert equality
+        assert_pyspark_df_equal(result_spark_df, expected_df)
+
+    @pytest.mark.parametrize(
+        "col_input",
+        [
+            "ts",
+            col("ts"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "datetime_strs, fmt",
+        [
+            # Standard format
+            (["2023-01-01 12:34:56", "2024-02-02 23:45:01"], "yyyy-MM-dd HH:mm:ss"),
+            # Day-first format
+            (["01-03-2023 09:15:00", "31-12-2022 23:59:59"], "dd-MM-yyyy HH:mm:ss"),
+            # Compact format
+            (["20230101 120000", "20240101 130000"], "yyyyMMdd HHmmss"),
+            # Millisecond precision (3 digits)
+            (["2024-05-31 20:14:19.993", "2023-12-12 11:11:11.123"], "yyyy-MM-dd HH:mm:ss.SSS"),
+            # Microsecond precision (6 digits)
+            (["2024-05-31 23:58:32.880000", "2023-12-12 11:11:11.123456"], "yyyy-MM-dd HH:mm:ss.SSSSSS"),
+            # Single-digit millisecond
+            (["2024-05-31 20:14:19.9", "2023-12-12 11:11:11.1"], "yyyy-MM-dd HH:mm:ss.S"),
+            # Two-digit millisecond
+            (["2024-05-31 20:14:19.99", "2023-12-12 11:11:11.12"], "yyyy-MM-dd HH:mm:ss.SS"),
+            # Five-digit fractional seconds (partial microseconds)
+            (["2024-05-31 20:14:19.12345", "2023-12-12 11:11:11.99999"], "yyyy-MM-dd HH:mm:ss.SSSSS"),
+        ],
+    )
+    def test_to_timestamp_against_spark(self, spark, col_input, datetime_strs, fmt):
+        # Create input DataFrame
+        df = pd.DataFrame({"ts": datetime_strs})
+        polars_df = DataFrame(pl.DataFrame(df))
+
+        # Spark expected output
+        spark_df = spark.createDataFrame(df)
+        expected_df = spark_df.select(spark_to_timestamp("ts", fmt).alias("result"))
+
+        # Sparkleframe / Polars output
+        result_df = create_spark_df(spark, polars_df.select(to_timestamp(col_input, fmt).alias("result")))
+
+        assert_pyspark_df_equal(result_df, expected_df)

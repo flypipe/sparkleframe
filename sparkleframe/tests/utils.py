@@ -1,6 +1,9 @@
-import plistlib
+from typing import Union
+
+import pandas as pd
 import polars as pl
 from sparkleframe.polarsdf import DataFrame
+
 
 def to_records(column_dict: dict) -> list[dict]:
     """
@@ -16,5 +19,7 @@ def to_records(column_dict: dict) -> list[dict]:
     values = zip(*column_dict.values())
     return [dict(zip(keys, row)) for row in values]
 
-def create_spark_df(spark, df: pl.DataFrame):
-    return spark.createDataFrame(df.to_dicts())
+
+def create_spark_df(spark, df: Union[pl.DataFrame, DataFrame]) -> DataFrame:
+    df = df.to_native_df() if isinstance(df, DataFrame) else df
+    return spark.createDataFrame(pd.DataFrame(df.to_arrow().to_pandas()))

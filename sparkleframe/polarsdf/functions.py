@@ -196,6 +196,96 @@ def when(condition: Any, value) -> WhenBuilder:
     condition = Column(condition) if not isinstance(condition, Column) else condition
     return WhenBuilder(condition, value)
 
+
+def to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss") -> Column:
+    """
+    Mimics pyspark.sql.functions.to_timestamp.
+
+    Converts a string column to a timestamp using the specified format.
+
+    Args:
+        col_name (str or Column): Column with string values to convert to timestamps.
+        fmt (str): The timestamp format to parse the strings. Defaults to 'yyyy-MM-dd HH:mm:ss'.
+
+    Returns:
+        Column: A Column with values converted to Polars datetime type.
+    """
+    # Convert Spark-style format to strftime-style for Polars
+
+    format_map = [
+        ("yyyy", "%Y"),
+        ("MM", "%m"),
+        ("dd", "%d"),
+        ("HH", "%H"),
+        ("mm", "%M"),
+        ("ss", "%S"),
+        (".SSSSSS", ".%6f"),  # microseconds
+        (".SSSSS", ".%6f"),
+        (".SSSS", ".%6f"),
+        (".SSS", ".%6f"),  # also treated as microseconds, will pad
+        (".SS", ".%6f"),
+        (".S", ".%6f"),
+    ]
+    # Pad fractional seconds to 6 digits (microseconds)
+    for spark_fmt, strftime_fmt in format_map:
+        fmt = fmt.replace(spark_fmt, strftime_fmt)
+
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+
+    # Normalize fractional seconds (pad with trailing zeros to make 6 digits)
+    # appends zeros to fractional part (e.g., .993 -> .993000)
+    if "%6f" in fmt:
+        # Pad fractional seconds using a map function
+        def pad_microseconds(val):
+            if val is None:
+                return None
+            if "." in val:
+                prefix, suffix = val.split(".", 1)
+                suffix = (suffix + "000000")[:6]  # Ensure exactly 6 digits
+                return f"{prefix}.{suffix}"
+            return val
+
+        expr = expr.map_elements(pad_microseconds, return_dtype=pl.String)
+
+    return Column(expr.str.strptime(pl.Datetime, fmt))
+
+
+def regexp_replace(col_name: Union[str, Column], pattern: str, replacement: str) -> Column:
+    """
+    Mimics pyspark.sql.functions.regexp_replace.
+
+    Replaces all substrings of the specified string column that match the regular expression
+    with the given replacement.
+
+    Args:
+        col_name (str or Column): Column containing strings to operate on.
+        pattern (str): Regular expression pattern to match.
+        replacement (str): Replacement string.
+
+    Returns:
+        Column: A Column with the regex-replaced string results.
+    """
+    col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
+    expr = _to_expr(col_name)
+    return Column(expr.str.replace_all(pattern, replacement))
+
+
+def length(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.length.
+
+    Computes the length (number of characters) of the string in the column.
+
+    Args:
+        col_name (str or Column): The string column.
+
+    Returns:
+        Column: A Column representing the length of each string.
+    """
+    col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
+    expr = _to_expr(col_name)
+    return Column(expr.str.len_chars().cast(pl.Int32))
+
 def asc(col_name: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.asc.

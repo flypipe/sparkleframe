@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import polars as pl
 import pyarrow as pa
@@ -17,9 +19,12 @@ from pyspark.sql.types import (
     ByteType as SparkByteType,
     ShortType as SparkShortType,
     BinaryType as SparkBinaryType,
+    StructType as SparkStructType,
+    StructField as SparkStructField,
 )
 
 import sparkleframe.polarsdf.functions as PF
+from sparkleframe.polarsdf import Column
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.types import (
     StringType,
@@ -34,9 +39,11 @@ from sparkleframe.polarsdf.types import (
     ByteType,
     ShortType,
     BinaryType,
+    StructType,
+    StructField,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import to_records
+from sparkleframe.tests.utils import to_records, create_spark_df
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -722,12 +729,8 @@ class TestDataFrame:
 
         # Convert result to Pandas for assertion
         sparkle_as_spark = sparkle_as_spark.select(sorted(sparkle_as_spark.columns)).orderBy("name", "age")
-        print("result_df")
-        sparkle_as_spark.show()
 
         filled_spark = filled_spark.select(sorted(filled_spark.columns)).orderBy("name", "age")
-        print("expected_df")
-        filled_spark.show()
 
         # Assert equality
         assert_pyspark_df_equal(sparkle_as_spark, filled_spark, ignore_nullable=True)
@@ -752,13 +755,9 @@ class TestDataFrame:
         # Convert result to Pandas for assertion
         result_df = spark.createDataFrame(sparkle_df.df.to_dicts())
         result_df = result_df.select(sorted(result_df.columns)).orderBy("name", "age")
-        print("result_df")
-        result_df.show()
 
         expected_df = spark.createDataFrame(expected_dict)
         expected_df = expected_df.select(sorted(expected_df.columns)).orderBy("name", "age")
-        print("expected_df")
-        expected_df.show()
 
         assert_pyspark_df_equal(result_df, expected_df, ignore_nullable=True)
 
@@ -769,3 +768,201 @@ class TestDataFrame:
 
         # Validate the columns property
         assert df.columns == ["name", "age", "salary"]
+
+    @pytest.mark.parametrize(
+        "value, dtype_class, expected_spark_type",
+        [
+            ("foo", StringType(), SparkStringType()),
+            (42, IntegerType(), SparkIntegerType()),
+            (42, LongType(), SparkLongType()),
+            (3.14, FloatType(), SparkFloatType()),
+            (2.718281828, DoubleType(), SparkDoubleType()),
+            (True, BooleanType(), SparkBooleanType()),
+            (pd.to_datetime("2024-01-01").date(), DateType(), SparkDateType()),
+            (pd.to_datetime("2024-01-01 12:34:56"), TimestampType(), SparkTimestampType()),
+            (123.45, DecimalType(10, 2), SparkDecimalType(10, 2)),
+            (1, ByteType(), SparkByteType()),
+            (100, ShortType(), SparkShortType()),
+            (b"abc", BinaryType(), SparkBinaryType()),
+            # ✅ Nested StructType test case
+            (
+                {"field1": "hello", "field2": 999},
+                StructType([StructField("field1", StringType()), StructField("field2", IntegerType())]),
+                SparkStructType(
+                    [
+                        SparkStructField("field1", SparkStringType()),
+                        SparkStructField("field2", SparkIntegerType()),
+                    ]
+                ),
+            ),
+            # ✅ Struct with nested StructType inside
+            (
+                {"outer": {"inner": 123}},
+                StructType([StructField("outer", StructType([StructField("inner", IntegerType())]))]),
+                SparkStructType(
+                    [SparkStructField("outer", SparkStructType([SparkStructField("inner", SparkIntegerType())]))]
+                ),
+            ),
+        ],
+    )
+    def test_polars_to_spark_dtype_conversion(self, spark, value, dtype_class, expected_spark_type):
+        col_name = "col"
+        pl_df = pl.DataFrame({col_name: [value]})
+
+        # Wrap in Sparkleframe DataFrame
+        sparkle_df = DataFrame(pl_df).withColumn(col_name, PF.col(col_name).cast(dtype_class))
+
+        # Convert to Arrow → Pandas → Spark (actual logic for type preservation)
+        if isinstance(value, dict):
+            spark_df = spark.createDataFrame(data=[(json.dumps(value),)], schema=(col_name,)).withColumn(
+                col_name, F.from_json(F.col(col_name), expected_spark_type)
+            )
+
+        else:
+            spark_df = create_spark_df(spark, sparkle_df).withColumn(
+                col_name, F.col(col_name).cast(expected_spark_type)
+            )
+
+        assert spark_df.dtypes == sparkle_df.dtypes
+
+    @pytest.mark.parametrize(
+        "col_name, value, dtype_class, expected_spark_type",
+        [
+            ("string_col", "foo", StringType(), SparkStringType()),
+            ("int_col", 42, IntegerType(), SparkIntegerType()),
+            ("long_col", 42, LongType(), SparkLongType()),
+            ("float_col", 3.14, FloatType(), SparkFloatType()),
+            ("double_col", 2.718281828, DoubleType(), SparkDoubleType()),
+            ("bool_col", True, BooleanType(), SparkBooleanType()),
+            ("date_col", pd.to_datetime("2024-01-01").date(), DateType(), SparkDateType()),
+            ("timestamp_col", pd.to_datetime("2024-01-01 12:34:56"), TimestampType(), SparkTimestampType()),
+            ("decimal_col", 123.45, DecimalType(10, 2), SparkDecimalType(10, 2)),
+            ("byte_col", 1, ByteType(), SparkByteType()),
+            ("short_col", 100, ShortType(), SparkShortType()),
+            ("binary_col", b"abc", BinaryType(), SparkBinaryType()),
+            (
+                "struct_col",
+                {"field1": "hello", "field2": 999},
+                StructType([StructField("field1", StringType()), StructField("field2", IntegerType())]),
+                SparkStructType(
+                    [
+                        SparkStructField("field1", SparkStringType()),
+                        SparkStructField("field2", SparkIntegerType()),
+                    ]
+                ),
+            ),
+            (
+                "nested_struct_col",
+                {"outer": {"inner": 123}},
+                StructType([StructField("outer", StructType([StructField("inner", IntegerType())]))]),
+                SparkStructType(
+                    [SparkStructField("outer", SparkStructType([SparkStructField("inner", SparkIntegerType())]))]
+                ),
+            ),
+        ],
+    )
+    def test_schema_conversion_to_spark_dtype(self, spark, col_name, value, dtype_class, expected_spark_type):
+        # Create Polars DataFrame and cast using Sparkleframe types
+        pl_df = pl.DataFrame({col_name: [value]})
+        sparkle_df = DataFrame(pl_df).withColumn(col_name, PF.col(col_name).cast(dtype_class))
+
+        # Convert to Spark DF for comparison
+        if isinstance(value, dict):
+            # Use JSON roundtrip for struct parsing
+            spark_df = spark.createDataFrame([(json.dumps(value),)], schema=(col_name,)).withColumn(
+                col_name, F.from_json(F.col(col_name), expected_spark_type)
+            )
+        else:
+            spark_df = spark.createDataFrame(sparkle_df.toPandas()).withColumn(
+                col_name, F.col(col_name).cast(expected_spark_type)
+            )
+
+        # Check schema equality
+        assert json.dumps(sparkle_df.schema, sort_keys=True, default=str) == json.dumps(
+            spark_df.schema, sort_keys=True, default=str
+        )
+
+    def test_schema_equivalence_with_spark(self, spark):
+        # Sample Pandas data
+        pdf = pd.DataFrame([[1, "Alice"], [2, "Bob"]])
+
+        # Sparkleframe schema
+        sf_schema = StructType(
+            [StructField("id", IntegerType(), nullable=False), StructField("name", StringType(), nullable=True)]
+        )
+
+        # Equivalent Spark schema
+        spark_schema = SparkStructType(
+            [
+                SparkStructField("id", SparkIntegerType(), nullable=False),
+                SparkStructField("name", SparkStringType(), nullable=True),
+            ]
+        )
+
+        # Create Sparkleframe DataFrame
+        sf_df = DataFrame(pdf, schema=sf_schema)
+
+        # Create Spark DataFrame
+        spark_df = spark.createDataFrame(pdf, schema=spark_schema)
+
+        assert json.dumps(sf_df._schema, sort_keys=True, default=str) == json.dumps(
+            spark_df._schema, sort_keys=True, default=str
+        )
+
+    def test_getitem_str(self, spark):
+        input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
+        pdf = pd.DataFrame(input_data)
+        sdf = spark.createDataFrame(pdf)
+        ps_result = sdf["age"]
+
+        sf_df = DataFrame(pl.DataFrame(pdf))
+        sf_result = sf_df["age"]
+
+        assert isinstance(sf_result, Column)
+        assert ps_result.__class__.__name__ == sf_result.__class__.__name__
+
+        sdf = sdf.select(ps_result)
+        sf_df = create_spark_df(spark, sf_df.select(sf_result))
+        assert_pyspark_df_equal(sdf, sf_df)
+
+    def test_getitem_int(self, spark):
+        input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
+        pdf = pd.DataFrame(input_data)
+        sdf = spark.createDataFrame(pdf)
+        ps_result = sdf[0]
+
+        sf_df = DataFrame(pl.DataFrame(pdf))
+        sf_result = sf_df[0]
+
+        assert isinstance(sf_result, Column)
+        assert ps_result.__class__.__name__ == sf_result.__class__.__name__
+
+        sdf = sdf.select(ps_result)
+        sf_df = create_spark_df(spark, sf_df.select(sf_result))
+        assert_pyspark_df_equal(sdf, sf_df)
+
+    def test_getitem_column(self, spark):
+        input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
+        pl_df = pl.DataFrame(input_data)
+
+        sdf = create_spark_df(spark, pl_df)
+        ps_result = sdf[sdf["age"] > 3]
+
+        sf_df = DataFrame(pl_df)
+        sf_result_df = sf_df[sf_df["age"] > 3]
+        sf_result_df = create_spark_df(spark, sf_result_df)
+
+        assert_pyspark_df_equal(ps_result, sf_result_df)
+
+    def test_getitem_list(self, spark):
+        input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
+        pl_df = pl.DataFrame(input_data)
+
+        sdf = create_spark_df(spark, pl_df)
+        ps_result = sdf[["name", "age"]].orderBy("name")
+
+        sf_df = DataFrame(pl_df)
+        sf_result_df = sf_df[["name", "age"]]
+        sf_result_df = create_spark_df(spark, sf_result_df).orderBy("name")
+
+        assert_pyspark_df_equal(ps_result, sf_result_df)
