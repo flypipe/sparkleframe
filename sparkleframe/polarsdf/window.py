@@ -3,12 +3,14 @@ from typing import List, Union
 
 from sparkleframe.polarsdf.column import Column
 
+
 class WindowSpec:
     """
     Mimics PySpark's WindowSpec object for defining windowing configurations.
 
     Supports partitioning, ordering, and frame specification for window functions.
     """
+
     def __init__(self):
         self._partition_by: List[str] = []
         self._order_by: List[Union[str, Column]] = []

@@ -140,6 +140,11 @@ class Column:
 
         return Column(self.expr.str.contains(pattern))
 
+    def _sort(self, col: str, descending: bool) -> Column:
+        self._sort_col = col
+        self._sort_descending = descending
+        return self
+
     def to_native(self) -> pl.Expr:
         return self.expr
 

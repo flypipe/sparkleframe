@@ -1,8 +1,11 @@
+from __future__ import annotations
 from typing import Union, Any
 
 import polars as pl
 
+from sparkleframe.polarsdf import WindowSpec
 from sparkleframe.polarsdf.column import Column, _to_expr
+from sparkleframe.polarsdf.functions_utils import _RankWrapper
 
 
 def col(name: str) -> Column:
@@ -286,32 +289,90 @@ def length(col_name: Union[str, Column]) -> Column:
     expr = _to_expr(col_name)
     return Column(expr.str.len_chars().cast(pl.Int32))
 
-def asc(col_name: Union[str, Column]) -> Column:
+
+def asc(column: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.asc.
 
     Specifies ascending sort order for the column.
 
     Args:
-        col_name (str or Column): The column to sort in ascending order.
+        column (str or Column): The column to sort in ascending order.
 
     Returns:
         Column: A Column object representing ascending order sort expression.
     """
-    expr = _to_expr(col_name)
-    return Column(expr.sort(descending=False))
+    col_expr = _to_expr(col(column)) if isinstance(column, str) else column.to_native()
+    column_ = Column(col_expr.sort(descending=False))
+    return column_._sort(col=col_expr, descending=False)
 
-def desc(col_name: Union[str, Column]) -> Column:
+
+def desc(column: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.desc.
 
     Specifies descending sort order for the column.
 
     Args:
-        col_name (str or Column): The column to sort in descending order.
+        column (str or Column): The column to sort in descending order.
 
     Returns:
         Column: A Column object representing descending order sort expression.
     """
-    expr = _to_expr(col_name)
-    return Column(expr.sort(descending=True))
+    col_expr = _to_expr(col(column)) if isinstance(column, str) else column.to_native()
+    column_ = Column(col_expr.sort(descending=True))
+    return column_._sort(col=col_expr, descending=True)
+
+
+def rank() -> Column:
+    """
+    Mimics pyspark.sql.functions.rank using Polars rank("dense").rank method.
+    Returns a Column that can be used with .withColumn().
+    """
+
+    def _rank_fn(window_spec: WindowSpec):
+        rank_expr = (
+            pl.struct([(col._sort_col).rank(descending=col._sort_descending) for col in window_spec.order_cols])
+            .rank(method="min")
+            .over(partition_by=window_spec.partition_cols)
+        )
+
+        return Column(rank_expr)
+
+    return _RankWrapper(_rank_fn)
+
+
+def dense_rank() -> Column:
+    """
+    Mimics pyspark.sql.functions.dense_rank.
+    Returns a Column that can be used with .withColumn().
+    """
+
+    def _dense_rank_fn(window_spec: WindowSpec):
+        rank_expr = (
+            pl.struct([(col._sort_col).rank(descending=col._sort_descending) for col in window_spec.order_cols])
+            .rank(method="dense")
+            .over(partition_by=window_spec.partition_cols)
+        )
+
+        return Column(rank_expr)
+
+    return _RankWrapper(_dense_rank_fn)
+
+
+def row_number() -> Column:
+    """
+    Mimics pyspark.sql.functions.row_number.
+    Returns a Column that can be used with .withColumn().
+    """
+
+    def _row_number_fn(window_spec: WindowSpec):
+        rank_expr = (
+            pl.struct([(col._sort_col).rank(descending=col._sort_descending) for col in window_spec.order_cols])
+            .rank(method="ordinal")
+            .over(partition_by=window_spec.partition_cols)
+        )
+
+        return Column(rank_expr)
+
+    return _RankWrapper(_row_number_fn)

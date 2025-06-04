@@ -1,6 +1,5 @@
 import pytest
 
-from sparkleframe.polarsdf.functions import col
 from sparkleframe.polarsdf.window import Window, WindowSpec
 
 
@@ -49,11 +48,14 @@ class TestWindowSpec:
         assert spec.frame_start == start
         assert spec.frame_end == end
 
-    @pytest.mark.parametrize("start, end", [
-        ("-1", 1),
-        (0, "5"),
-        ("a", "b"),
-    ])
+    @pytest.mark.parametrize(
+        "start, end",
+        [
+            ("-1", 1),
+            (0, "5"),
+            ("a", "b"),
+        ],
+    )
     def test_range_between_invalid_raises(self, start, end):
         with pytest.raises(TypeError):
             Window.orderBy("timestamp").rangeBetween(start, end)
