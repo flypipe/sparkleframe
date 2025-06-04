@@ -39,11 +39,15 @@ jobs:
         run: pytest scripts/*_test.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+        id: extract_branch
       - name: Package version number (preview)
         run: |
-          python scripts/calculate_version.py ${{ github.ref_name }}
+          python scripts/calculate_version.py ${{ steps.extract_branch.outputs.branch }}
       - name: Changelog (preview)
-        run: python scripts/generate_changelog.py ${{ github.ref_name }}
+        run: python scripts/generate_changelog.py ${{ steps.extract_branch.outputs.branch }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Run formatter on backend (black)
