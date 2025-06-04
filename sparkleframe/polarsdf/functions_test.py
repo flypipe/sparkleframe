@@ -13,7 +13,11 @@ from pyspark.sql.functions import (
     regexp_replace as spark_regexp_replace,
     length as spark_length,
     asc as spark_asc,
+    asc_nulls_first as spark_asc_nulls_first,
+    asc_nulls_last as spark_asc_nulls_last,
     desc as spark_desc,
+    desc_nulls_first as spark_desc_nulls_first,
+    desc_nulls_last as spark_desc_nulls_last,
     rank as spark_rank,
     dense_rank as spark_dense_rank,
     row_number as spark_row_number,
@@ -33,7 +37,11 @@ from sparkleframe.polarsdf.functions import (
     to_timestamp,
     length,
     asc,
+    asc_nulls_first,
+    asc_nulls_last,
     desc,
+    desc_nulls_first,
+    desc_nulls_last,
     rank,
     dense_rank,
     row_number,
@@ -381,6 +389,8 @@ class TestFunctions:
         "partition_cols, order_cols",
         [
             (["group"], [("category", "asc")]),
+            (["group"], [("category", "asc_nulls_first")]),
+            (["group"], [("category", "asc_nulls_last")]),
             (["group"], [("value", "desc")]),
             (["group", "subcategory"], [("value", "asc")]),
             (["group", "subcategory"], [("value", "desc"), ("category", "asc")]),
@@ -410,16 +420,23 @@ class TestFunctions:
             {"group": "C", "category": "B", "subcategory": "beta", "value": 60},
             {"group": "C", "category": "B", "subcategory": "beta", "value": 100},
         ]
+
+        order_func = {
+            "asc": (asc, spark_asc),
+            "asc_nulls_first": (asc_nulls_first, spark_asc_nulls_first),
+            "asc_nulls_last": (asc_nulls_last, spark_asc_nulls_last),
+            "desc": (desc, spark_desc),
+            "desc_nulls_first": (desc_nulls_first, spark_desc_nulls_first),
+            "desc_nulls_last": (desc_nulls_last, spark_desc_nulls_last),
+        }
+
         pl_df = pl.DataFrame(data)
 
         # Build Sparkle DataFrame
         sparkle_df = DataFrame(pl_df)
 
         # Convert to order expressions
-        order_exprs = [
-            asc(sparkle_col_type(col)) if direction == "asc" else desc(sparkle_col_type(col))
-            for col, direction in order_cols
-        ]
+        order_exprs = [order_func[direction][0](col) for col, direction in order_cols]
 
         # Apply rank over window
         sparkle_df = sparkle_df.withColumn(
@@ -439,10 +456,7 @@ class TestFunctions:
         # Build Spark reference DataFrame
         spark_df = create_spark_df(spark, pl_df)
 
-        spark_order_exprs = [
-            spark_asc(spark_col_type(col)) if direction == "asc" else spark_desc(spark_col_type(col))
-            for col, direction in order_cols
-        ]
+        spark_order_exprs = [order_func[direction][1](col) for col, direction in order_cols]
 
         spark_df = spark_df.withColumn(
             "rank",

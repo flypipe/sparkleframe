@@ -466,3 +466,45 @@ class DataFrame(BaseDataFrame):
             raise TypeError(f"Unsupported dtype '{dtype}' for column '{name}'")
 
         return StructType([polars_dtype_to_spark_dtype(name, dtype) for name, dtype in self.df.schema.items()])
+
+    def sort(self, *cols: Union[str, Column, List[Union[str, Column]]]) -> DataFrame:
+        """
+        Mimics PySpark's DataFrame.orderBy using Polars.
+
+        Args:
+            *cols: Columns or Column expressions to sort by.
+                Can be:
+                  - strings: "col1", "col2"
+                  - Column objects with sort metadata (e.g., from asc(), desc(), asc_nulls_first())
+                  - a single list of such elements
+
+        Returns:
+            DataFrame: A new DataFrame sorted by the specified columns.
+        """
+        if len(cols) == 1 and isinstance(cols[0], list):
+            cols = cols[0]
+
+        sort_cols = []
+        sort_descending = []
+        sort_nulls_last = []
+        for i, col in enumerate(cols):
+            if isinstance(col, int):
+                sort_cols.append(self.df.columns[i])
+                sort_descending.append(True if col < 0 else False)
+                sort_nulls_last.append(True)
+
+            if isinstance(col, str):
+                sort_cols.append(col)
+                sort_descending.append(False)
+                sort_nulls_last.append(True)
+            elif isinstance(col, Column):
+                sort_cols.append(col._sort_col)
+                sort_descending.append(col._sort_descending)
+                sort_nulls_last.append(col._sort_nulls_last)
+            else:
+                raise TypeError(f"orderBy received unsupported type: {type(col)}")
+
+        sorted_df = self.df.sort(by=sort_cols, descending=sort_descending, nulls_last=sort_nulls_last)
+        return DataFrame(sorted_df)
+
+    orderBy = sort
