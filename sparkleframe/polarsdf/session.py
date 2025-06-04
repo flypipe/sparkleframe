@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Union
+from typing import Union, Iterable, Any, Optional
 
 import pandas as pd
 import polars as pl
 
 from sparkleframe.polarsdf.dataframe import DataFrame
+from sparkleframe.polarsdf.types import StructType, DataType
 
 
 class SparkSession:
@@ -13,11 +14,15 @@ class SparkSession:
         self.appName_str = ""
         self.master_str = ""
 
-    def createDataFrame(self, df: Union[pl.DataFrame, pd.DataFrame]) -> DataFrame:
-        if isinstance(df, pd.DataFrame):
-            return DataFrame(pl.DataFrame(df))
-        elif isinstance(df, pl.DataFrame):
-            return DataFrame(df)
+    def createDataFrame(
+        self,
+        data: Union[Iterable[Any], pd.DataFrame, pl.DataFrame, list],
+        schema: Optional[Union[DataType, StructType, str]] = None,
+    ) -> DataFrame:
+        if isinstance(data, pd.DataFrame) or isinstance(data, list):
+            return DataFrame(pl.DataFrame(data), schema=schema)
+        elif isinstance(data, pl.DataFrame):
+            return DataFrame(data, schema=schema)
         else:
             raise TypeError("createDataFrame only supports polars.DataFrame or pandas.DataFrame")
 

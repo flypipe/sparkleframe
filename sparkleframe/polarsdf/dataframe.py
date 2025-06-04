@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Union, Any, List
+from typing import Union, Any, List, Optional, Tuple
 from uuid import uuid4
 
 import pandas as pd
@@ -12,10 +12,27 @@ from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf.column import Column
 from sparkleframe.polarsdf.group import GroupedData
 
+from sparkleframe.polarsdf.types import (
+    StringType,
+    IntegerType,
+    LongType,
+    FloatType,
+    DoubleType,
+    BooleanType,
+    DateType,
+    TimestampType,
+    ByteType,
+    ShortType,
+    DecimalType,
+    BinaryType,
+    StructType,
+    StructField,
+)
+
 
 class DataFrame(BaseDataFrame):
 
-    def __init__(self, df: Union[pl.DataFrame, pd.DataFrame, pa.Table]):
+    def __init__(self, df: Union[pl.DataFrame, pd.DataFrame, pa.Table], schema: Optional[StructType] = None):
         if isinstance(df, pl.DataFrame):
             self.df = df
         elif isinstance(df, pd.DataFrame):
@@ -24,8 +41,25 @@ class DataFrame(BaseDataFrame):
             self.df = pl.from_arrow(df)
         else:
             raise TypeError("DataFrame constructor accepts polars.DataFrame, pandas.DataFrame, or pyarrow.Table")
-
+        self._schema = schema
         super().__init__(self.df)
+
+    def __getitem__(self, item: Union[int, str, Column, List, Tuple]) -> Union[Column, "DataFrame"]:
+        if isinstance(item, str):
+            # Return a single column by name
+            return Column(self.df[item])
+        elif isinstance(item, int):
+            # Return a column by index
+            return Column(self.df[self.df.columns[item]])
+        elif isinstance(item, Column):
+            # Return a filtered DataFrame
+            return DataFrame(self.df.filter(item.to_native()))
+        elif isinstance(item, (list, tuple)):
+            # Return a DataFrame with selected columns
+            cols = [col.to_native() if isinstance(col, Column) else col for col in item]
+            return DataFrame(self.df.select(cols))
+        else:
+            raise TypeError(f"Unexpected type: {type(item)}")
 
     @property
     def columns(self) -> List[str]:
@@ -142,14 +176,14 @@ class DataFrame(BaseDataFrame):
         """
         return self.df.to_arrow()
 
-    def show(self, n: int = 20, truncate: int = 20, vertical: bool = False):
+    def show(self, n: int = 20, truncate: bool = True, vertical: bool = False):
         """
         Mimics PySpark's DataFrame.show() using Polars' native rendering.
 
         Args:
-            n (int): Number of rows to show.
-            truncate (int): Ignored — Polars handles column truncation.
-            vertical (bool): If True, displays rows in vertical layout.
+            n (int, optional, default 20): Number of rows to show.x
+            truncate (bool): Ignored — Polars handles column truncation.
+            vertical (bool or int, optional, default False): If True, displays rows in vertical layout.
         """
         if vertical:
             for i, row in enumerate(self.df.head(n).iter_rows(named=True)):
@@ -157,7 +191,9 @@ class DataFrame(BaseDataFrame):
                 for key, val in row.items():
                     print(f"{key}: {val}")
         else:
+            pl.Config.set_tbl_cols(len(self.df.columns))
             print(self.df.head(n))
+            pl.Config.restore_defaults()
 
     def fillna(self, value: Union[Any, dict], subset: Union[str, List[str], None] = None) -> DataFrame:
         """
@@ -383,3 +419,50 @@ class DataFrame(BaseDataFrame):
             return str(dtype)
 
         return [(col, map_dtype(dtype)) for col, dtype in self.df.schema.items()]
+
+    @property
+    def schema(self) -> StructType:
+        """
+        Mimics pyspark.sql.DataFrame.schema by returning the schema as a StructType.
+
+        Returns:
+            StructType: Spark-like schema derived from the Polars DataFrame schema.
+        """
+
+        def polars_dtype_to_spark_dtype(name: str, dtype: pl.DataType) -> StructField:
+
+            # Handle decimals
+            if isinstance(dtype, pl.Decimal):
+                return StructField(name, DecimalType(dtype.precision, dtype.scale))
+
+            # Handle structs (recursively)
+            if isinstance(dtype, pl.Struct):
+                nested_fields = [polars_dtype_to_spark_dtype(field.name, field.dtype) for field in dtype.fields]
+                return StructField(name, StructType(nested_fields))
+
+            # Basic type mappings
+            POLARS_TO_SPARK = {
+                pl.Utf8: StringType(),
+                pl.Int32: IntegerType(),
+                pl.UInt32: IntegerType(),
+                pl.Int64: LongType(),
+                pl.UInt64: LongType(),
+                pl.Float32: FloatType(),
+                pl.Float64: DoubleType(),
+                pl.Boolean: BooleanType(),
+                pl.Date: DateType(),
+                pl.Datetime: TimestampType(),
+                pl.Int8: ByteType(),
+                pl.UInt8: ByteType(),
+                pl.Int16: ShortType(),
+                pl.UInt16: ShortType(),
+                pl.Binary: BinaryType(),
+            }
+
+            for pl_type, spark_type in POLARS_TO_SPARK.items():
+                if isinstance(dtype, pl_type):
+                    return StructField(name, spark_type)
+
+            raise TypeError(f"Unsupported dtype '{dtype}' for column '{name}'")
+
+        return StructType([polars_dtype_to_spark_dtype(name, dtype) for name, dtype in self.df.schema.items()])
