@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Union, Any, List, Optional
+from typing import Union, Any, List, Optional, Tuple
 from uuid import uuid4
 
 import pandas as pd
@@ -44,8 +44,22 @@ class DataFrame(BaseDataFrame):
         self._schema = schema
         super().__init__(self.df)
 
-    def __getitem__(self, key: str) -> Column:
-        return Column(pl.col(key))
+    def __getitem__(self, item: Union[int, str, Column, List, Tuple]) -> Union[Column, "DataFrame"]:
+        if isinstance(item, str):
+            # Return a single column by name
+            return Column(self.df[item])
+        elif isinstance(item, int):
+            # Return a column by index
+            return Column(self.df[self.df.columns[item]])
+        elif isinstance(item, Column):
+            # Return a filtered DataFrame
+            return DataFrame(self.df.filter(item.to_native()))
+        elif isinstance(item, (list, tuple)):
+            # Return a DataFrame with selected columns
+            cols = [col.to_native() if isinstance(col, Column) else col for col in item]
+            return DataFrame(self.df.select(cols))
+        else:
+            raise TypeError(f"Unexpected type: {type(item)}")
 
     @property
     def columns(self) -> List[str]:
@@ -162,14 +176,14 @@ class DataFrame(BaseDataFrame):
         """
         return self.df.to_arrow()
 
-    def show(self, n: int = 20, truncate: int = 20, vertical: bool = False):
+    def show(self, n: int = 20, truncate: bool = True, vertical: bool = False):
         """
         Mimics PySpark's DataFrame.show() using Polars' native rendering.
 
         Args:
-            n (int): Number of rows to show.
-            truncate (int): Ignored — Polars handles column truncation.
-            vertical (bool): If True, displays rows in vertical layout.
+            n (int, optional, default 20): Number of rows to show.x
+            truncate (bool): Ignored — Polars handles column truncation.
+            vertical (bool or int, optional, default False): If True, displays rows in vertical layout.
         """
         if vertical:
             for i, row in enumerate(self.df.head(n).iter_rows(named=True)):
@@ -177,7 +191,9 @@ class DataFrame(BaseDataFrame):
                 for key, val in row.items():
                     print(f"{key}: {val}")
         else:
+            pl.Config.set_tbl_cols(len(self.df.columns))
             print(self.df.head(n))
+            pl.Config.restore_defaults()
 
     def fillna(self, value: Union[Any, dict], subset: Union[str, List[str], None] = None) -> DataFrame:
         """

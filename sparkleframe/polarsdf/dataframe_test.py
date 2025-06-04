@@ -24,6 +24,7 @@ from pyspark.sql.types import (
 )
 
 import sparkleframe.polarsdf.functions as PF
+from sparkleframe.polarsdf import Column
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.types import (
     StringType,
@@ -881,24 +882,6 @@ class TestDataFrame:
             spark_df.schema, sort_keys=True, default=str
         )
 
-    def test_getitem_column_access(self):
-        # Step 1: Create sample Polars DataFrame
-        pl_df = pl.DataFrame({"name": ["Alice", "Bob"], "age": [30, 40]})
-        df = DataFrame(pl_df)
-
-        # Step 2: Access a column using df["name"]
-        col_expr = df["name"]
-
-        # Step 3: Verify the type and name
-        assert hasattr(col_expr, "alias")
-        assert col_expr.meta["name"] == "name"
-
-        # Step 4: Use it in a select to verify it evaluates correctly
-        result_df = df.select(col_expr).toPandas()
-        expected = pl_df.select("name").to_pandas()
-
-        pd.testing.assert_frame_equal(result_df, expected)
-
     def test_schema_equivalence_with_spark(self, spark):
         # Sample Pandas data
         pdf = pd.DataFrame([[1, "Alice"], [2, "Bob"]])
@@ -925,3 +908,61 @@ class TestDataFrame:
         assert json.dumps(sf_df._schema, sort_keys=True, default=str) == json.dumps(
             spark_df._schema, sort_keys=True, default=str
         )
+
+    def test_getitem_str(self, spark):
+        input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
+        pdf = pd.DataFrame(input_data)
+        sdf = spark.createDataFrame(pdf)
+        ps_result = sdf["age"]
+
+        sf_df = DataFrame(pl.DataFrame(pdf))
+        sf_result = sf_df["age"]
+
+        assert isinstance(sf_result, Column)
+        assert ps_result.__class__.__name__ == sf_result.__class__.__name__
+
+        sdf = sdf.select(ps_result)
+        sf_df = create_spark_df(spark, sf_df.select(sf_result))
+        assert_pyspark_df_equal(sdf, sf_df)
+
+    def test_getitem_int(self, spark):
+        input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
+        pdf = pd.DataFrame(input_data)
+        sdf = spark.createDataFrame(pdf)
+        ps_result = sdf[0]
+
+        sf_df = DataFrame(pl.DataFrame(pdf))
+        sf_result = sf_df[0]
+
+        assert isinstance(sf_result, Column)
+        assert ps_result.__class__.__name__ == sf_result.__class__.__name__
+
+        sdf = sdf.select(ps_result)
+        sf_df = create_spark_df(spark, sf_df.select(sf_result))
+        assert_pyspark_df_equal(sdf, sf_df)
+
+    def test_getitem_column(self, spark):
+        input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
+        pl_df = pl.DataFrame(input_data)
+
+        sdf = create_spark_df(spark, pl_df)
+        ps_result = sdf[sdf["age"] > 3]
+
+        sf_df = DataFrame(pl_df)
+        sf_result_df = sf_df[sf_df["age"] > 3]
+        sf_result_df = create_spark_df(spark, sf_result_df)
+
+        assert_pyspark_df_equal(ps_result, sf_result_df)
+
+    def test_getitem_list(self, spark):
+        input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
+        pl_df = pl.DataFrame(input_data)
+
+        sdf = create_spark_df(spark, pl_df)
+        ps_result = sdf[["name", "age"]].orderBy("name")
+
+        sf_df = DataFrame(pl_df)
+        sf_result_df = sf_df[["name", "age"]]
+        sf_result_df = create_spark_df(spark, sf_result_df).orderBy("name")
+
+        assert_pyspark_df_equal(ps_result, sf_result_df)
