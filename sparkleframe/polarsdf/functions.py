@@ -302,9 +302,53 @@ def asc(column: Union[str, Column]) -> Column:
     Returns:
         Column: A Column object representing ascending order sort expression.
     """
+    descending = False
+    nulls_last = False
     col_expr = _to_expr(col(column)) if isinstance(column, str) else column.to_native()
-    column_ = Column(col_expr.sort(descending=False))
-    return column_._sort(col=col_expr, descending=False)
+    column_ = Column(col_expr.sort(descending=descending, nulls_last=nulls_last))
+    column_._sort_col = col_expr
+    column_._sort_descending = descending
+    column_._sort_nulls_last = nulls_last
+    return column_
+
+
+def asc_nulls_first(column: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.asc_nulls_first.
+
+    Specifies ascending sort order with nulls first for the column.
+
+    Args:
+        column (str or Column): The column to sort in ascending order.
+
+    Returns:
+        Column: A Column object representing ascending order sort expression with nulls first.
+    """
+
+    return asc(column)
+
+
+def asc_nulls_last(column: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.asc_nulls_last.
+
+    Specifies ascending sort order with nulls last for the column.
+
+    Args:
+        column (str or Column): The column to sort in ascending order.
+
+    Returns:
+        Column: A Column object representing ascending order sort expression with nulls last.
+    """
+
+    descending = False
+    nulls_last = True
+    col_expr = _to_expr(col(column)) if isinstance(column, str) else column.to_native()
+    column_ = Column(col_expr.sort(descending=descending, nulls_last=nulls_last))
+    column_._sort_col = col_expr
+    column_._sort_descending = descending
+    column_._sort_nulls_last = nulls_last
+    return column_
 
 
 def desc(column: Union[str, Column]) -> Column:
@@ -319,9 +363,53 @@ def desc(column: Union[str, Column]) -> Column:
     Returns:
         Column: A Column object representing descending order sort expression.
     """
+    descending = True
+    nulls_last = True
     col_expr = _to_expr(col(column)) if isinstance(column, str) else column.to_native()
-    column_ = Column(col_expr.sort(descending=True))
-    return column_._sort(col=col_expr, descending=True)
+    column_ = Column(col_expr.sort(descending=descending, nulls_last=nulls_last))
+    column_._sort_col = col_expr
+    column_._sort_descending = descending
+    column_._sort_nulls_last = nulls_last
+    return column_
+
+
+def desc_nulls_first(column: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.desc_nulls_first.
+
+    Specifies descending sort order with nulls first for the column.
+
+    Args:
+        column (str or Column): The column to sort in descending order.
+
+    Returns:
+        Column: A Column object representing descending order sort expression with nulls first.
+    """
+
+    descending = True
+    nulls_last = False
+    col_expr = _to_expr(col(column)) if isinstance(column, str) else column.to_native()
+    column_ = Column(col_expr.sort(descending=descending, nulls_last=nulls_last))
+    column_._sort_col = col_expr
+    column_._sort_descending = descending
+    column_._sort_nulls_last = nulls_last
+    return column_
+
+
+def desc_nulls_last(column: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.desc_nulls_last.
+
+    Specifies descending sort order with nulls last for the column.
+
+    Args:
+        column (str or Column): The column to sort in descending order.
+
+    Returns:
+        Column: A Column object representing descending order sort expression with nulls last.
+    """
+
+    return desc(column)
 
 
 def rank() -> Column:

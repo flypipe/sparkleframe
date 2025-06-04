@@ -965,3 +965,85 @@ class TestDataFrame:
         sf_result_df = create_spark_df(spark, sf_result_df).orderBy("name")
 
         assert_pyspark_df_equal(ps_result, sf_result_df)
+
+    @pytest.mark.parametrize("use_col", [False, True])
+    @pytest.mark.parametrize(
+        "columns_order",
+        [
+            [("id", "asc")],
+            [("id", "asc_nulls_first")],
+            [("id", "asc_nulls_last")],
+            [("name", "asc"), ("id", "asc")],
+            [("name", "asc_nulls_first"), ("id", "asc_nulls_first")],
+            [("name", "asc_nulls_last"), ("id", "asc_nulls_last")],
+            [("id", "desc")],
+            [("id", "desc_nulls_first")],
+            [("id", "desc_nulls_last")],
+            [("id", "desc")],
+            [("name", "desc"), ("id", "desc")],
+            [("name", "desc_nulls_first"), ("id", "desc_nulls_first")],
+            [("name", "desc_nulls_last"), ("id", "desc_nulls_last")],
+            [("name", "asc"), ("id", "desc")],
+            [("name", "asc_nulls_first"), ("id", "desc_nulls_first")],
+            [("name", "asc_nulls_last"), ("id", "desc_nulls_last")],
+            [("name", "desc"), ("id", "asc")],
+            [("name", "desc_nulls_first"), ("id", "asc_nulls_first")],
+            [("name", "desc_nulls_last"), ("id", "asc_nulls_last")],
+        ],
+    )
+    def test_order_by_comparison_with_spark(self, spark, use_col, columns_order):
+        data = {"id": [3, 1, 2, 0], "name": ["Charlie", "Alice", "Bob", None]}
+
+        order_func = {
+            "asc": (PF.asc, F.asc),
+            "asc_nulls_first": (PF.asc_nulls_first, F.asc_nulls_first),
+            "asc_nulls_last": (PF.asc_nulls_last, F.asc_nulls_last),
+            "desc": (PF.desc, F.desc),
+            "desc_nulls_first": (PF.desc_nulls_first, F.desc_nulls_first),
+            "desc_nulls_last": (PF.desc_nulls_last, F.desc_nulls_last),
+        }
+
+        sparkle_order = [
+            order_func[column_order[1]][0](column_order[0] if not use_col else PF.col(column_order[0]))
+            for column_order in columns_order
+        ]
+        spark_order = [
+            order_func[column_order[1]][1](column_order[0] if not use_col else F.col(column_order[0]))
+            for column_order in columns_order
+        ]
+
+        sf_df = DataFrame(pl.DataFrame(data))
+        sorted_sf_df = sf_df.orderBy(*sparkle_order)
+        result_spark_df = create_spark_df(spark, sorted_sf_df)
+
+        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        expected_df = spark_df.orderBy(*spark_order)
+
+        print("result_spark_df")
+        result_spark_df.show()
+
+        print("expected_df")
+        expected_df.show()
+
+        assert_pyspark_df_equal(result_spark_df, expected_df, allow_nan_equality=True)
+
+    def test_order_by_int_raises_error(self, spark):
+        data = {"age": [2, 5], "name": ["Alice", "Bob"]}
+
+        sf_df = DataFrame(pl.DataFrame(data))
+
+        spark_df = create_spark_df(spark, sf_df)
+
+        with pytest.raises(TypeError):
+            spark_df.orderBy(-1)
+
+        with pytest.raises(TypeError):
+            sf_df.orderBy(-1)
+
+    def test_order_by_ascending_kwarg_raises_error(self, spark):
+        data = {"age": [2, 5], "name": ["Alice", "Bob"]}
+
+        sf_df = DataFrame(pl.DataFrame(data))
+
+        with pytest.raises(TypeError):
+            sf_df.orderBy("age", ascending=True)
