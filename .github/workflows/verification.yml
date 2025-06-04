@@ -41,9 +41,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Package version number (preview)
         run: |
-          python scripts/calculate_version.py
+          python scripts/calculate_version.py ${{ github.ref_name }}
       - name: Changelog (preview)
-        run: python scripts/generate_changelog.py
+        run: python scripts/generate_changelog.py ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Run formatter on backend (black)
