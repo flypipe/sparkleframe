@@ -224,8 +224,7 @@ class TestDataFrame:
         )
         sparkle_df = DataFrame(pl_df)
 
-        arrow_table = sparkle_df.to_arrow()
-        pandas_df = arrow_table.to_pandas(types_mapper=pd.ArrowDtype)
+        pandas_df = sparkle_df.to_arrow().to_pandas(types_mapper=pd.ArrowDtype)
 
         result_spark_df = spark.createDataFrame(pandas_df)
 
