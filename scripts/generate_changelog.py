@@ -53,11 +53,13 @@ def generate_changelog(to_branch: str=None):
 def save_changelog(issues, version):
     lines = ["Changelog", "\n========="]
     issue_ids = sorted(list(issues.keys()), reverse=True)
-    version = '.'.join([str(v) for v in version])
-    version = f'<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/{version}" target="_blank" rel="noopener noreferrer">release/{version}</a><h2>'
-    lines += [f"\n\n{version}\n"] + [f'- {issues[issue_id]}\n' for issue_id in issue_ids]
+    if issue_ids:
+        version = '.'.join([str(v) for v in version])
+        version = f'<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/{version}" target="_blank" rel="noopener noreferrer">release/{version}</a><h2>'
+        lines += [f"\n\n{version}\n\n"] + [f'- {issues[issue_id]}\n' for issue_id in issue_ids]
 
-    lines = lines + (get_changelog_latest_branch_release() or [])
+    changelog_lines = get_changelog_latest_branch_release()
+    lines = lines + (changelog_lines or [])
 
     file_path = os.path.join(pathlib.Path(__file__).parent.parent.resolve(), "changelog.md")
 
@@ -70,7 +72,7 @@ if __name__ == '__main__':
     import sys
     commands = sys.argv[1:]
     to_branch = "HEAD" if not commands else commands[0]
-    issues = generate_changelog(to_branch,)
+    issues = generate_changelog(to_branch)
 
     version = calculate_version(to_branch=to_branch)
     contents = save_changelog(issues, version)
