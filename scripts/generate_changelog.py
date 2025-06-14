@@ -1,15 +1,13 @@
-import base64
 import os
 import pathlib
 
 import requests
 import re
-import subprocess
 
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from scripts.utils import get_github_file_content, get_changelog_latest_branch_release
+from scripts.utils import get_changelog_latest_branch_release
 from scripts.utils import get_release_branches, get_commit_list
 from scripts.calculate_version import get_commit_message, calculate_version
 
@@ -18,6 +16,8 @@ GITHUB_URL = 'https://api.github.com/repos/flypipe/sparkleframe'
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 github_connection = requests.session()
 
+def git_get(url):
+    return github_connection.get(url, headers={'Authorization': f'Bearer {GITHUB_TOKEN}'}).json()
 
 
 def generate_changelog(to_branch: str=None):
@@ -40,7 +40,7 @@ def generate_changelog(to_branch: str=None):
             # print(f'Found github issue {re_match.group(0)} in commit msg summary {commit_message_summary}')
             issue_id = re_match.group(0)[1:]
             url = f'{GITHUB_URL}/issues/{issue_id}'
-            issue = github_connection.get(url, headers={'Authorization': f'Bearer {GITHUB_TOKEN}'}).json()
+            issue = git_get(url)
             if 'title' not in issue:
                 # print(f'Unable to find title for issue {issue_id}')
                 continue

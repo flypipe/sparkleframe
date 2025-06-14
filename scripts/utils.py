@@ -1,7 +1,4 @@
-import os.path
 import subprocess
-
-
 import requests
 import base64
 
