@@ -14,6 +14,9 @@ SparkleFrame is great for:
 * Users who want to run PySpark DataFrame code without the complexity of using Spark for processing
 * Useful for unit testing, feature prototyping, or serving small pipelines in microservices.
 
+You can learn **more about the design motivation behind Sparkleframe** in this 
+    [discussion thread](https://github.com/eakmanrq/sqlframe/issues/409).
+
 ## Documentation
 
 Full documentation is available at [https://flypipe.github.io/sparkleframe/](https://flypipe.github.io/sparkleframe/).
@@ -103,10 +106,7 @@ shape: (1, 3)
 
 !!! note
 
-    - If you encounter any transformation that is not implemented, please open an [issue on GitHub](https://github.com/flypipe/sparkleframe/issues) so it can be prioritized. 
-    
-    You can learn more about the design motivation behind Sparkleframe in this 
-    [discussion thread](https://github.com/eakmanrq/sparkleframe/issues/409).
+    If you encounter any transformation that is not implemented, please open an [issue on GitHub](https://github.com/flypipe/sparkleframe/issues/new) so it can be prioritized.
 
 
 ## Source Code
