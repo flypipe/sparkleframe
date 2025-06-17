@@ -103,10 +103,10 @@ shape: (1, 3)
 
 !!! note
 
-    - If you encounter any transformation that is not implemented, please open an [issue on GitHub](https://github.com/flypipe/sparkleframe/issues) so it can be prioritized. 
+    - If you encounter any transformation that is not implemented, please open an [issue on GitHub](https://github.com/flypipe/sparkleframe/issues/new) so it can be prioritized. 
     
     You can learn more about the design motivation behind Sparkleframe in this 
-    [discussion thread](https://github.com/eakmanrq/sparkleframe/issues/409).
+    [discussion thread](https://github.com/eakmanrq/sqlframe/issues/409).
 
 
 ## Source Code
