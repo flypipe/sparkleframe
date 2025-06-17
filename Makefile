@@ -24,14 +24,9 @@ lint:
 	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "python -m ruff check --line-length 119 sparkleframe"
 .PHONY: lint
 
-pip-compile:
-	pip-compile requirements-pkg.in && pip-compile requirements-dev.in
-.PHONY: pip-compile
-
 coverage:
 	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "pytest -n $(PYTEST_THREADS) -k '_test.py' --cov-config=sparkleframe/.coverage --cov=sparkleframe --no-cov-on-fail --cov-fail-under=$(MIN_COVERAGE) -v sparkleframe"
 .PHONY: coverage
-
 
 test:
 	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "pytest -n $(PYTEST_THREADS) -k '_test.py' -vv $(f)"
