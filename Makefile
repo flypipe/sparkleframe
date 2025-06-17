@@ -70,6 +70,8 @@ setup:
 .PHONY: setup
 
 docs:
+	ls docs/changelog.md | python scripts/generate_changelog.py
+	ls docs/supported_api_doc.md | python docs/generate_supported_api.py
 	mike delete --all | true
 	mike deploy --update-aliases 0.0
 	mike deploy --alias-type=redirect --update-aliases 0.1 latest
