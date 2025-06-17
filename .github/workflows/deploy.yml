@@ -56,4 +56,5 @@ jobs:
         run: |
           git config --global user.email "flypipe@dummy.com"
           git config --global user.name "flypipe"
+          export PYTHONPATH=$PYTHONPATH:./sparkleframe
           make docs-deploy version=${{ env.VERSION_NUMBER }}
