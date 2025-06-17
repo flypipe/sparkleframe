@@ -61,20 +61,22 @@ setup: pip-compile
 .PHONY: setup
 
 docs:
-	@if [ ! -f docs/changelog.md ]; then \
-		echo "docs/changelog.md does not exist, running command..."; \
+	@if [ ! -f changelog.md ]; then \
+		echo "changelog.md does not exist, running command..."; \
 		python scripts/generate_changelog.py; \
 	fi
 	@if [ ! -f docs/supported_api_doc.md ]; then \
 		echo "docs/supported_api_doc.md does not exist, running command..."; \
 		python docs/generate_supported_api.py; \
 	fi
+	cp changelog.md ./docs
 	mkdocs serve
 .PHONY: docs
 
 
 docs-deploy:
 	@[ -n "$(version)" ] || (echo "ERROR: version is required"; exit 1)
+	cp changelog.md ./docs
 	mike deploy --allow-empty --push --update-aliases $(shell echo $(version) | awk -F. '{print $$1"."$$2}') latest
 	mike set-default --push latest
 .PHONY: docs-deploy

@@ -21,7 +21,7 @@ jobs:
   verification:
     uses: ./.github/workflows/verification.yml
 
-  build-wheel:
+  prepare-artifacts:
     needs: verification
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -60,7 +60,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: changelog.md
-          path: ./docs/changelog.md
+          path: ./changelog.md
 
       - name: Generate PySpark API Coverage
         run: |
