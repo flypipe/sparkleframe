@@ -1,15 +1,13 @@
-import base64
 import os
 import pathlib
 
 import requests
 import re
-import subprocess
 
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from scripts.utils import get_github_file_content, get_changelog_latest_branch_release
+from scripts.utils import get_changelog_latest_branch_release
 from scripts.utils import get_release_branches, get_commit_list
 from scripts.calculate_version import get_commit_message, calculate_version
 
@@ -18,6 +16,8 @@ GITHUB_URL = 'https://api.github.com/repos/flypipe/sparkleframe'
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 github_connection = requests.session()
 
+def git_get(url):
+    return github_connection.get(url, headers={'Authorization': f'Bearer {GITHUB_TOKEN}'}).json()
 
 
 def generate_changelog(to_branch: str=None):
@@ -40,7 +40,7 @@ def generate_changelog(to_branch: str=None):
             # print(f'Found github issue {re_match.group(0)} in commit msg summary {commit_message_summary}')
             issue_id = re_match.group(0)[1:]
             url = f'{GITHUB_URL}/issues/{issue_id}'
-            issue = github_connection.get(url, headers={'Authorization': f'Bearer {GITHUB_TOKEN}'}).json()
+            issue = git_get(url)
             if 'title' not in issue:
                 # print(f'Unable to find title for issue {issue_id}')
                 continue
@@ -53,13 +53,15 @@ def generate_changelog(to_branch: str=None):
 def save_changelog(issues, version):
     lines = ["Changelog", "\n========="]
     issue_ids = sorted(list(issues.keys()), reverse=True)
-    version = '.'.join([str(v) for v in version])
-    version = f'<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/{version}" target="_blank" rel="noopener noreferrer">release/{version}</a><h2>'
-    lines += [f"\n\n{version}\n"] + [f'- {issues[issue_id]}\n' for issue_id in issue_ids]
+    if issue_ids:
+        version = '.'.join([str(v) for v in version])
+        version = f'<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/{version}" target="_blank" rel="noopener noreferrer">release/{version}</a><h2>'
+        lines += [f"\n\n{version}\n\n"] + [f'<br/>- {issues[issue_id]}' for issue_id in issue_ids]
 
-    lines = lines + (get_changelog_latest_branch_release() or [])
+    changelog_lines = get_changelog_latest_branch_release()
+    lines = lines + (changelog_lines or [])
 
-    file_path = os.path.join(pathlib.Path(__file__).parent.parent.resolve(), "changelog.md")
+    file_path = os.path.join(pathlib.Path(__file__).parent.parent.resolve(), "docs/changelog.md")
 
     with open(file_path, 'w') as file:
         file.writelines(lines)
@@ -70,7 +72,7 @@ if __name__ == '__main__':
     import sys
     commands = sys.argv[1:]
     to_branch = "HEAD" if not commands else commands[0]
-    issues = generate_changelog(to_branch,)
+    issues = generate_changelog(to_branch)
 
     version = calculate_version(to_branch=to_branch)
     contents = save_changelog(issues, version)

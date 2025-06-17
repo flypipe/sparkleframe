@@ -6,7 +6,12 @@ services:
     container_name: sparkleframe
     environment:
       TIMEZONE: UTC
+    ports:
+      - "8000:8000"
     volumes:
+      - ./../README.md:/README.md
+      - ./../docs:/docs
+      - ./../mkdocs.yml:/mkdocs.yml
       - ./../sparkleframe:/sparkleframe
       - ./../.coverage:/sparkleframe/.coverage
       - ./../pyproject.toml:/pyproject.toml

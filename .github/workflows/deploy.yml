@@ -13,7 +13,7 @@ jobs:
   predeploy:
     uses: ./.github/workflows/predeploy.yml
 
-  deploy-pypi:
+  deploy:
     needs: predeploy
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -51,7 +51,11 @@ jobs:
           flit publish
         env:
           FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-
-#  build-docs:
-#    needs: deploy-pypi
-#    uses: ./.github/workflows/build-docs.yml
+      - name: Deploy docs
+        run: |
+          git config --global user.email "flypipe@dummy.com"
+          git config --global user.name "flypipe"
+          export PYTHONPATH=$PYTHONPATH:./sparkleframe
+          make docs-deploy version=${{ env.VERSION_NUMBER }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
