@@ -70,8 +70,6 @@ setup:
 .PHONY: setup
 
 docs:
-	git config user.name ci-bot
-	git config user.email ci-bot@example.com
 	mike delete --all | true
 	mike deploy --update-aliases 0.0
 	mike deploy --alias-type=redirect --update-aliases 0.1 latest
