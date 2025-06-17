@@ -37,12 +37,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: changelog.md
-          path: $GITHUB_WORKSPACE/docs
+          path: ./docs
       - name: Download PySpark API Coverage
         uses: actions/download-artifact@v4
         with:
           name: supported_api_doc.md
-          path: $GITHUB_WORKSPACE/docs
+          path: ./docs
       - name: Create new branch
         run: |
           git config --global user.email "flypipe@dummy.com"
