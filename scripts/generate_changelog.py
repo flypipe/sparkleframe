@@ -56,12 +56,12 @@ def save_changelog(issues, version):
     if issue_ids:
         version = '.'.join([str(v) for v in version])
         version = f'<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/{version}" target="_blank" rel="noopener noreferrer">release/{version}</a><h2>'
-        lines += [f"\n\n{version}\n\n"] + [f'- {issues[issue_id]}\n' for issue_id in issue_ids]
+        lines += [f"\n\n{version}\n\n"] + [f'<br/>- {issues[issue_id]}' for issue_id in issue_ids]
 
     changelog_lines = get_changelog_latest_branch_release()
     lines = lines + (changelog_lines or [])
 
-    file_path = os.path.join(pathlib.Path(__file__).parent.parent.resolve(), "changelog.md")
+    file_path = os.path.join(pathlib.Path(__file__).parent.parent.resolve(), "docs/changelog.md")
 
     with open(file_path, 'w') as file:
         file.writelines(lines)

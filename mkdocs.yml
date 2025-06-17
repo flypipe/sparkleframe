@@ -4,6 +4,7 @@ repo_name: flypipe/sparkleframe
 nav:
   - index.md
   - Supported Pyspark API Methods: supported_api.md
+  - Changelog: changelog.md
 theme:
   name: material
   logo: images/logo.png
