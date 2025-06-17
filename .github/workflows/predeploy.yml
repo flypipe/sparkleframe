@@ -58,7 +58,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: changelog.md
-          path: ./changelog.md
+          path: ./docs/changelog.md
       # Build and upload the wheel so we can access the wheel without having to upload it to pypi
       - name: Build wheel
         run: flit build --no-use-vcs
