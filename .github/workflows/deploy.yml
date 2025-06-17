@@ -37,6 +37,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: changelog.md
+          path: $GITHUB_WORKSPACE/docs
+      - name: Download PySpark API Coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: supported_api_doc.md
+          path: $GITHUB_WORKSPACE/docs
       - name: Create new branch
         run: |
           git config --global user.email "flypipe@dummy.com"
@@ -55,7 +61,6 @@ jobs:
         run: |
           git config --global user.email "flypipe@dummy.com"
           git config --global user.name "flypipe"
-          export PYTHONPATH=$PYTHONPATH:./sparkleframe
           make docs-deploy version=${{ env.VERSION_NUMBER }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
