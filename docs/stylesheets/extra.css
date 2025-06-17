@@ -1,22 +1,12 @@
-/*.md-typeset .admonition.question,*/
-/*.md-typeset details.question{*/
-/*    border-color: rgb(68, 138, 255);*/
-/*}*/
+[data-md-color-scheme="green"] img[src$="#only-dark"],
+[data-md-color-scheme="green"] img[src$="#gh-dark-mode-only"] {
+  display: none; /* Hide dark images in light mode */
+}
 
-/*.md-typeset .question > .admonition-title,*/
-/*.md-typeset .question > summary {*/
-/*    background-color: rgba(68, 138, 255, 0.1);*/
-
-/*    &::before {*/
-/*      background-color: rgb(68, 138, 255);*/
-/*    }*/
-
-/*    &::after {*/
-/*      color: rgb(68, 138, 255);*/
-/*    }*/
-/*  }*/
-
-
+[data-md-color-scheme="green"] img[src$="#only-light"],
+[data-md-color-scheme="green"] img[src$="#gh-light-mode-only"] {
+  display: none; /* Hide dark images in light mode */
+}
 
 :root  > * {
   --md-primary-fg-color:        #14151a;
