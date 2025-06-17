@@ -14,6 +14,10 @@ SparkleFrame is great for:
 * Users who want to run PySpark DataFrame code without the complexity of using Spark for processing
 * Useful for unit testing, feature prototyping, or serving small pipelines in microservices.
 
+## Documentation
+
+Full documentation is available at [https://flypipe.github.io/sparkleframe/](https://flypipe.github.io/sparkleframe/).
+
 ## Installation
 
 ```bash
@@ -103,3 +107,8 @@ shape: (1, 3)
     
     You can learn more about the design motivation behind Sparkleframe in this 
     [discussion thread](https://github.com/eakmanrq/sparkleframe/issues/409).
+
+
+## Source Code
+
+API code is available at [https://github.com/flypipe/sparkleframe](https://github.com/flypipe/sparkleframe).
