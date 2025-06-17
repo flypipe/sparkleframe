@@ -2,6 +2,13 @@
 black==24.10.0
 coverage==7.6.10
 chispa==0.11.1
+mike==2.1.3
+mkdocs-git-committers-plugin-2==2.5.0
+mkdocs-include-markdown-plugin==7.1.5
+mkdocs==1.6.1
+mkdocs-dracula-theme==1.0.7
+mkdocs-material==9.6.14
+mkdocstrings[python]==0.29.1
 numpy==1.26.4
 pandas==2.2.3
 polars==1.30.0

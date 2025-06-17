@@ -2,6 +2,7 @@ SHELL           :=/usr/bin/env bash
 PYTEST_THREADS  ?=$(shell echo $$((`getconf _NPROCESSORS_ONLN` / 3)))
 LOCAL_DIR		:=./.docker
 MIN_COVERAGE	= 79
+version			?=
 
 bash:
 	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans -it sparkleframe bash
@@ -59,6 +60,7 @@ pip-compile:
 .PHONY: pip-compile
 
 setup:
+	export PYTHONPATH=$PYTHONPATH:./sparkleframe
 	pip install -r requirements-pkg.in
 	pip-compile requirements-pkg.in
 	pip-compile requirements-dev.in
@@ -67,3 +69,23 @@ setup:
 	make githooks
 .PHONY: setup
 
+docs:
+	git config user.name ci-bot
+	git config user.email ci-bot@example.com
+	mike delete --all | true
+	mike deploy --update-aliases 0.0
+	mike deploy --alias-type=redirect --update-aliases 0.1 latest
+	mike set-default latest
+.PHONY: docs
+
+
+docs-deploy:
+	@[ -n "$(version)" ] || (echo "ERROR: version is required"; exit 1)
+	mike delete --all | true
+	mike deploy --allow-empty --push --update-aliases $(version) latest
+	mike set-default --push latest
+.PHONY: docs-deploy
+
+docs-serve:
+	mike serve -a 127.0.0.1:8000
+.PHONY: docs-serve
