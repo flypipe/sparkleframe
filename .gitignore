@@ -172,5 +172,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-/docs/supported_api_doc.md
-/docs/changelog.md
