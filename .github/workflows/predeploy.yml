@@ -63,7 +63,9 @@ jobs:
           path: ./docs/changelog.md
 
       - name: Generate PySpark API Coverage
-        run: python docs/generate_supported_api.py
+        run: |
+          export PYTHONPATH=$PYTHONPATH:./sparkleframe
+          python docs/generate_supported_api.py
       - name: Upload PySpark API Coverage
         uses: actions/upload-artifact@v4
         with:
