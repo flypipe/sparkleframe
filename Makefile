@@ -53,17 +53,13 @@ githooks:
 .PHONY: githooks
 
 pip-compile:
-	pip-compile requirements-pkg.in
-	pip-compile requirements-dev.in
-	make build
-	make githooks
+	pip install -r requirements-pkg.in
+	pip-compile requirements-pkg.in --no-annotate --no-header
+	pip-compile requirements-dev.in --no-annotate --no-header
 .PHONY: pip-compile
 
-setup:
+setup: pip-compile
 	export PYTHONPATH=$PYTHONPATH:./sparkleframe
-	pip install -r requirements-pkg.in
-	pip-compile requirements-pkg.in
-	pip-compile requirements-dev.in
 	pip install -r requirements-dev.txt
 	make build
 	make githooks
