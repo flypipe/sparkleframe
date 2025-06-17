@@ -82,7 +82,7 @@ docs:
 docs-deploy:
 	@[ -n "$(version)" ] || (echo "ERROR: version is required"; exit 1)
 	mike delete --all | true
-	mike deploy --allow-empty --push --update-aliases $(version) latest
+	mike deploy --allow-empty --push --update-aliases $(shell echo $(version) | awk -F. '{print $$1"."$$2}') latest
 	mike set-default --push latest
 .PHONY: docs-deploy
 
