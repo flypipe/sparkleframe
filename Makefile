@@ -61,8 +61,14 @@ setup: pip-compile
 .PHONY: setup
 
 docs:
-	ls docs/changelog.md | python scripts/generate_changelog.py
-	ls docs/supported_api_doc.md | python docs/generate_supported_api.py
+	@if [ ! -f docs/changelog.md ]; then \
+		echo "docs/changelog.md does not exist, running command..."; \
+		python scripts/generate_changelog.py; \
+	fi
+	@if [ ! -f docs/supported_api_doc.md ]; then \
+		echo "docs/supported_api_doc.md does not exist, running command..."; \
+		python docs/generate_supported_api.py; \
+	fi
 	mkdocs serve
 .PHONY: docs
 
@@ -74,7 +80,3 @@ docs-deploy:
 	mike deploy --allow-empty --push --update-aliases $(shell echo $(version) | awk -F. '{print $$1"."$$2}') latest
 	mike set-default --push latest
 .PHONY: docs-deploy
-
-docs-serve:
-	mike serve -a 127.0.0.1:8000
-.PHONY: docs-serve
