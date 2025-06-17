@@ -33,25 +33,24 @@ jobs:
           path: sparkleframe
       - name: Store version number
         run: echo "VERSION_NUMBER=$(cat sparkleframe/version.txt)" >> $GITHUB_ENV
-#      - name: Download changelog
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: changelog.md
-#      - name: Create new branch
-#        run: |
-#          git config --global user.email "flypipe@dummy.com"
-#          git config --global user.name "flypipe"
-#          git checkout -b "release/${{ env.VERSION_NUMBER }}"
-#          git add sparkleframe/version.txt
-#          git add changelog.md
-#          git commit -m 'chore: update version file'
-#          git push origin "release/${{ env.VERSION_NUMBER }}"
-#      - name: Upload to pypi
-#        run: |
-#          flit publish
-#        env:
-#          FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-
+      - name: Download changelog
+        uses: actions/download-artifact@v4
+        with:
+          name: changelog.md
+      - name: Create new branch
+        run: |
+          git config --global user.email "flypipe@dummy.com"
+          git config --global user.name "flypipe"
+          git checkout -b "release/${{ env.VERSION_NUMBER }}"
+          git add sparkleframe/version.txt
+          git add changelog.md
+          git commit -m 'chore: update version file'
+          git push origin "release/${{ env.VERSION_NUMBER }}"
+      - name: Upload to pypi
+        run: |
+          flit publish
+        env:
+          FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       - name: Deploy docs
         run: |
           git config --global user.email "flypipe@dummy.com"
