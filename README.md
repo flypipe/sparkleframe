@@ -1,4 +1,6 @@
-# SparkleFrame 
+# Welcome
+
+![Flypipe Graph Pipeline](./docs/images/logo_white.png)
 
 SparkleFrame implements the PySpark DataFrame API in order to enable running transformation pipelines
 directly on [Polars Dataframe](https://docs.pola.rs/api/python/stable/reference/index.html) - no Spark clusters or 
