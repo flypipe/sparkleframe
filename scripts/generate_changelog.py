@@ -61,7 +61,7 @@ def save_changelog(issues, version):
     changelog_lines = get_changelog_latest_branch_release()
     lines = lines + (changelog_lines or [])
 
-    file_path = os.path.join(pathlib.Path(__file__).parent.parent.resolve(), "docs/changelog.md")
+    file_path = os.path.join(pathlib.Path(__file__).parent.parent.resolve(), "changelog.md")
 
     with open(file_path, 'w') as file:
         file.writelines(lines)

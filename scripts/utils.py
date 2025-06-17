@@ -20,7 +20,6 @@ def get_github_file_content(branch, file_path, owner="flypipe", repo="sparklefra
     headers = {'Accept': 'application/vnd.github.v3+json'}
     params = {'ref': branch}
     response = requests.get(url, headers=headers, params=params)
-
     if response.status_code == 200:
         content = response.json().get('content')
         return base64.b64decode(content).decode('utf-8')

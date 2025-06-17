@@ -37,7 +37,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: changelog.md
-          path: ./docs
       - name: Download PySpark API Coverage
         uses: actions/download-artifact@v4
         with:
@@ -48,9 +47,10 @@ jobs:
           git config --global user.email "flypipe@dummy.com"
           git config --global user.name "flypipe"
           git checkout -b "release/${{ env.VERSION_NUMBER }}"
+          git add docs/supported_api_doc.md
           git add sparkleframe/version.txt
           git add changelog.md
-          git commit -m 'chore: update version file'
+          git commit -m 'chore: update version file, changlog and spark coverage api docs'
           git push origin "release/${{ env.VERSION_NUMBER }}"
       - name: Upload to pypi
         run: |
