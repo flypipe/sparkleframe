@@ -58,3 +58,5 @@ jobs:
           git config --global user.name "flypipe"
           export PYTHONPATH=$PYTHONPATH:./sparkleframe
           make docs-deploy version=${{ env.VERSION_NUMBER }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
