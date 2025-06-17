@@ -63,10 +63,7 @@ setup: pip-compile
 docs:
 	ls docs/changelog.md | python scripts/generate_changelog.py
 	ls docs/supported_api_doc.md | python docs/generate_supported_api.py
-	mike delete --all | true
-	mike deploy --update-aliases 0.0
-	mike deploy --alias-type=redirect --update-aliases 0.1 latest
-	mike set-default latest
+	mkdocs serve
 .PHONY: docs
 
 
@@ -74,7 +71,6 @@ docs-deploy:
 	@[ -n "$(version)" ] || (echo "ERROR: version is required"; exit 1)
 	python scripts/generate_changelog.py
 	python docs/generate_supported_api.py
-	mike delete --all | true
 	mike deploy --allow-empty --push --update-aliases $(shell echo $(version) | awk -F. '{print $$1"."$$2}') latest
 	mike set-default --push latest
 .PHONY: docs-deploy
