@@ -95,7 +95,7 @@ if __name__ == "__main__":
                     line = f'* ✅ ' + line
                 else:
                     params = {
-                        "title": f"[PYSPARK_API_REQUEST] Implement pyspark.sql.{modules['url_key']}.{pyspark_func_name}",
+                        "title": f"[PYSPARK_API_REQUEST] add support to pyspark.sql.{modules['url_key']}.{pyspark_func_name}",
                         "body": f"Please implement feature [pyspark.sql.{modules['url_key']}.{pyspark_func_name}]({url})"
                     }
 
