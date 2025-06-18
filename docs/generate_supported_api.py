@@ -66,7 +66,6 @@ if __name__ == "__main__":
         {"url_key": "GroupedData", "module_url_key": "grouping", "pyspark": PYSPARK_GROUPED_DATA, "sparkleframe": SPARKLE_GROUPED_DATA, "lambda": get_functions},
         {"url_key": "Window", "module_url_key": "window", "pyspark": PYSPARK_WINDOW, "sparkleframe": SPARKLE_WINDOW, "lambda": get_functions},
         {"url_key": "DataFrame", "module_url_key": "dataframe", "pyspark": PYSPARK_DATAFRAME, "sparkleframe": SPARKLE_DATAFRAME, "lambda": get_functions},
-        {"url_key": "Catalog", "module_url_key": "catalog", "pyspark": PYSPARK_CATALOG, "sparkleframe": SPARKLE_CATALOG, "lambda": get_functions},
         {"url_key": "SparkSession", "module_url_key": "spark_session", "pyspark": PYSPARK_SESSION, "sparkleframe": SPARKLE_SESSION, "lambda": get_functions},
         {"url_key": "Column", "module_url_key": "column", "pyspark": PYSPARK_COLUMN, "sparkleframe": SPARKLE_COLUMN, "lambda": get_functions},
         {"url_key": "functions", "module_url_key": "functions", "pyspark": PYSPARK_FUNCTIONS, "sparkleframe": SPARKLE_FUNCTIONS, "lambda": get_functions},
