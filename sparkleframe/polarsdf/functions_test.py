@@ -21,6 +21,7 @@ from pyspark.sql.functions import (
     rank as spark_rank,
     dense_rank as spark_dense_rank,
     row_number as spark_row_number,
+    abs as spark_abs,
 )
 from pyspark.sql.types import IntegerType as SparkIntegerType
 from pyspark.sql.window import Window as SparkWindow
@@ -45,6 +46,7 @@ from sparkleframe.polarsdf.functions import (
     rank,
     dense_rank,
     row_number,
+    abs,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records, create_spark_df
@@ -466,3 +468,34 @@ class TestFunctions:
         ).orderBy("group", "category", "subcategory", "value")
 
         assert_pyspark_df_equal(sparkle_df, spark_df, ignore_nullable=True)
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            [-5, -1, 0, 1, 5],  # integers
+            [-3.5, -0.1, 0.0, 0.1, 3.5],  # floats
+            [None, -2, 2, None],  # include None
+        ],
+    )
+    def test_abs_against_spark(self, spark, values):
+        data = to_records({"x": values})
+
+        # Sparkleframe Polars
+        sf_df = DataFrame(pd.DataFrame(data))
+        result_sf = sf_df.select(abs(col("x")).alias("abs_x"))
+        result_spark_df = create_spark_df(spark, result_sf)
+
+        # PySpark
+        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        expected_df = spark_df.select(spark_abs("x").alias("abs_x"))
+
+        print()
+        result_spark_df.show()
+        print(result_spark_df.schema)
+
+        print()
+        expected_df.show()
+        print(expected_df.schema)
+
+        # Compare
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True, allow_nan_equality=True)

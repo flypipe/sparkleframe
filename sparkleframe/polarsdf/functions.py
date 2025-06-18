@@ -464,3 +464,19 @@ def row_number() -> Column:
         return Column(rank_expr)
 
     return _RankWrapper(_row_number_fn)
+
+
+def abs(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.abs.
+
+    Computes the absolute value of a numeric column.
+
+    Args:
+        col_name (str or Column): The column for which to compute absolute values.
+
+    Returns:
+        Column: A Column representing the absolute value expression.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.abs())
