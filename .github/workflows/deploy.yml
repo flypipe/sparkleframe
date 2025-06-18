@@ -52,6 +52,11 @@ jobs:
           git add changelog.md
           git commit -m 'chore: update version file, changlog and spark coverage api docs'
           git push origin "release/${{ env.VERSION_NUMBER }}"
+      - name: Upload to pypi
+        run: |
+          flit publish
+        env:
+          FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       - name: Deploy docs
         run: |
           git config --global user.email "flypipe@dummy.com"
@@ -60,8 +65,3 @@ jobs:
           make docs-deploy version=${{ env.VERSION_NUMBER }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload to pypi
-        run: |
-          flit publish
-        env:
-          FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
