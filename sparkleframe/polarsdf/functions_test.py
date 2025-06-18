@@ -46,9 +46,8 @@ from sparkleframe.polarsdf.functions import (
     rank,
     dense_rank,
     row_number,
-    abs
+    abs,
 )
-from sparkleframe.polarsdf.types import LongType, DoubleType
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records, create_spark_df
 import json
