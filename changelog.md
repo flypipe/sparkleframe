@@ -3,29 +3,39 @@ Changelog
 
 <h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.3.1" target="_blank" rel="noopener noreferrer">release/0.3.1</a></h2>
 
-<br/>- <a href="https://github.com/flypipe/sparkleframe/issues/63" target="_blank" rel="noopener noreferrer">63 remove catalog from docs</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/63" target="_blank" rel="noopener noreferrer">63 remove catalog from docs</a>
 
 <h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.3.0" target="_blank" rel="noopener noreferrer">release/0.3.0</a></h2>
 
-<br/>- <a href="https://github.com/flypipe/sparkleframe/issues/61" target="_blank" rel="noopener noreferrer">61 [PYSPARK_API_REQUEST] Implement pyspark.sql.functions.abs</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/61" target="_blank" rel="noopener noreferrer">61 [PYSPARK_API_REQUEST] Implement pyspark.sql.functions.abs</a>
 
 <h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.2.5" target="_blank" rel="noopener noreferrer">release/0.2.5</a></h2>
 
-<br/>- <a href="https://github.com/flypipe/sparkleframe/issues/58" target="_blank" rel="noopener noreferrer">58 roll back to upload pypi</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/58" target="_blank" rel="noopener noreferrer">58 roll back to upload pypi</a>
 
 <h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.2.4" target="_blank" rel="noopener noreferrer">release/0.2.4</a></h2>
 
-<br/>- <a href="https://github.com/flypipe/sparkleframe/issues/56" target="_blank" rel="noopener noreferrer">56 fix git fetch</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/56" target="_blank" rel="noopener noreferrer">56 fix git fetch</a>
 
 <h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.2.3" target="_blank" rel="noopener noreferrer">release/0.2.3</a></h2>
 
-<br/>- <a href="https://github.com/flypipe/sparkleframe/issues/54" target="_blank" rel="noopener noreferrer">54 add changelog to git</a><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/52" target="_blank" rel="noopener noreferrer">52 error build spark doc coverage</a><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/50" target="_blank" rel="noopener noreferrer">50 error deploy docs</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/54" target="_blank" rel="noopener noreferrer">54 add changelog to git</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/52" target="_blank" rel="noopener noreferrer">52 error build spark doc coverage</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/50" target="_blank" rel="noopener noreferrer">50 error deploy docs</a>
 
 <h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.2.2" target="_blank" rel="noopener noreferrer">release/0.2.2</a></h2>
 
-<br/>- <a href="https://github.com/flypipe/sparkleframe/issues/48" target="_blank" rel="noopener noreferrer">48 small fixes</a><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/46" target="_blank" rel="noopener noreferrer">46 fix mkdocs serve</a><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/44" target="_blank" rel="noopener noreferrer">44 do not run verification workflow on push</a><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/42" target="_blank" rel="noopener noreferrer">42 remove header from pip compile</a><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/39" target="_blank" rel="noopener noreferrer">39 GitAction upload changelog.md as artifact</a><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/38" target="_blank" rel="noopener noreferrer">38 fix change log artifact</a><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/31" target="_blank" rel="noopener noreferrer">31 Build Docs</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/48" target="_blank" rel="noopener noreferrer">48 small fixes</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/46" target="_blank" rel="noopener noreferrer">46 fix mkdocs serve</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/44" target="_blank" rel="noopener noreferrer">44 do not run verification workflow on push</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/42" target="_blank" rel="noopener noreferrer">42 remove header from pip compile</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/39" target="_blank" rel="noopener noreferrer">39 GitAction upload changelog.md as artifact</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/38" target="_blank" rel="noopener noreferrer">38 fix change log artifact</a>
+* <a href="https://github.com/flypipe/sparkleframe/issues/31" target="_blank" rel="noopener noreferrer">31 Build Docs</a>
 
-<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.2.1" target="_blank" rel="noopener noreferrer">release/0.2.1</a></h2><br/>- <a href="https://github.com/flypipe/sparkleframe/issues/33" target="_blank" rel="noopener noreferrer">33 Fix import error of functions</a>
+<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.2.1" target="_blank" rel="noopener noreferrer">release/0.2.1</a></h2>
+
+* <a href="https://github.com/flypipe/sparkleframe/issues/33" target="_blank" rel="noopener noreferrer">33 Fix import error of functions</a>
 
 
 
