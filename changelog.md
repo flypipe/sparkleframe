@@ -38,6 +38,7 @@ Changelog
 * <a href="https://github.com/flypipe/sparkleframe/issues/31" target="_blank" rel="noopener noreferrer">31 Build Docs</a>
 
 <h2><a href="https://github.com/flypipe/sparkleframe/tree/release/0.2.1" target="_blank" rel="noopener noreferrer">release/0.2.1</a></h2>
+
 * <a href="https://github.com/flypipe/sparkleframe/issues/33" target="_blank" rel="noopener noreferrer">33 Fix import error of functions</a>
 
 
