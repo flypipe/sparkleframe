@@ -59,7 +59,9 @@ jobs:
           git add sparkleframe/version.txt
           git add changelog.md
           git commit -m 'chore: update version file, changlog and spark coverage api docs'
-          git push origin "release/${{ env.VERSION_NUMBER }}"        
+          git push origin "release/${{ env.VERSION_NUMBER }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.FLYPIPE_GITHUB_TOKEN }}
 
       - name: Upload to pypi
         run: |
@@ -72,4 +74,4 @@ jobs:
           git fetch
           make docs-deploy version=${{ env.VERSION_NUMBER }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.FLYPIPE_GITHUB_TOKEN }}
