@@ -49,8 +49,6 @@ jobs:
 
       - name: Create and Push new release branch
         run: |
-          git config --global user.email "flypipe@dummy.com"
-          git config --global user.name "flypipe"
           git checkout -b "release/${{ env.VERSION_NUMBER }}"
           git add docs/supported_api_doc.md
           git add sparkleframe/version.txt
@@ -68,8 +66,6 @@ jobs:
 
       - name: Deploy docs
         run: |
-          git config --global user.email "flypipe@dummy.com"
-          git config --global user.name "flypipe"
           git fetch
           make docs-deploy version=${{ env.VERSION_NUMBER }}
         env:
