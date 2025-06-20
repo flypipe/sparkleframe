@@ -46,20 +46,32 @@ def generate_changelog(to_branch: str=None):
                 continue
             issues[issue_id] = f'<a href="https://github.com/flypipe/sparkleframe/issues/{issue_id}" target="_blank" rel="noopener noreferrer">{issue_id} {issue["title"]}</a>'
 
+            print(issue_id, issues[issue_id])
+
 
     return issues
 
 
 def save_changelog(issues, version):
-    lines = ["Changelog", "\n========="]
+    lines = ["Changelog\n=========\n"]
     issue_ids = sorted(list(issues.keys()), reverse=True)
     if issue_ids:
         version = '.'.join([str(v) for v in version])
         version = f'<h2><a href="https://github.com/flypipe/sparkleframe/tree/release/{version}" target="_blank" rel="noopener noreferrer">release/{version}</a></h2>'
-        lines += [f"\n\n{version}\n\n"] + [f'<br/>- {issues[issue_id]}' for issue_id in issue_ids]
+        lines += [version] + [f'* {issues[issue_id]}' for issue_id in issue_ids]
 
     changelog_lines = get_changelog_latest_branch_release()
     lines = lines + (changelog_lines or [])
+
+    for i, line in enumerate(lines):
+        if line.startswith('<h2>'):
+            lines[i] = "\n\n" + line
+
+        if line.startswith('*'):
+            lines[i] = "\n" + line
+
+        if line.endswith('</h2>'):
+            lines[i] += "\n"
 
     file_path = os.path.join(pathlib.Path(__file__).parent.parent.resolve(), "changelog.md")
 

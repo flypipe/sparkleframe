@@ -5,7 +5,6 @@
 name: 'deploy'
 
 on:
-
   # Allow for manual invocation
   workflow_dispatch:
 
@@ -24,24 +23,30 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+
       - name: Setup Dependencies
         uses: './.github/actions/setup-dependencies'
+
       - name: Download version file
         uses: actions/download-artifact@v4
         with:
           name: version.txt
           path: sparkleframe
+
       - name: Store version number
         run: echo "VERSION_NUMBER=$(cat sparkleframe/version.txt)" >> $GITHUB_ENV
+
       - name: Download changelog
         uses: actions/download-artifact@v4
         with:
           name: changelog.md
+
       - name: Download PySpark API Coverage
         uses: actions/download-artifact@v4
         with:
           name: supported_api_doc.md
           path: ./docs
+
       - name: Create new branch
         run: |
           git config --global user.email "flypipe@dummy.com"
@@ -52,11 +57,13 @@ jobs:
           git add changelog.md
           git commit -m 'chore: update version file, changlog and spark coverage api docs'
           git push origin "release/${{ env.VERSION_NUMBER }}"
+
       - name: Upload to pypi
         run: |
           flit publish
         env:
           FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
       - name: Deploy docs
         run: |
           git config --global user.email "flypipe@dummy.com"
