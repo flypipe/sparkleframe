@@ -4,6 +4,14 @@ LOCAL_DIR		:=./.docker
 MIN_COVERAGE	= 79
 version			?=
 
+export PYTHONPATH := $(PYTHONPATH):./sparkleframe
+
+# This block checks for .env and exports it for all recipes
+ifneq (,$(wildcard .env))
+  include .env
+  export $(shell sed 's/=.*//' .env)
+endif
+
 bash:
 	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans -it sparkleframe bash
 .PHONY: bash
@@ -54,7 +62,6 @@ pip-compile:
 .PHONY: pip-compile
 
 setup: pip-compile
-	export PYTHONPATH=$PYTHONPATH:./sparkleframe
 	pip install -r requirements-dev.txt
 	make build
 	make githooks
