@@ -46,9 +46,6 @@ def generate_changelog(to_branch: str=None):
                 continue
             issues[issue_id] = f'<a href="https://github.com/flypipe/sparkleframe/issues/{issue_id}" target="_blank" rel="noopener noreferrer">{issue_id} {issue["title"]}</a>'
 
-            print(issue_id, issues[issue_id])
-
-
     return issues
 
 
