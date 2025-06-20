@@ -49,9 +49,8 @@ jobs:
 
       - name: Set git user email and name
         run: |
-          echo "Pusher is ${{ github.triggering_actor }} (${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com)"
-          git config --global user.name "${{ github.triggering_actor }}"
-          git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git config --global user.email "flypipe@dummy.com"
+          git config --global user.name "flypipe"
 
       - name: Create and Push new release branch
         run: |          
@@ -60,9 +59,7 @@ jobs:
           git add sparkleframe/version.txt
           git add changelog.md
           git commit -m 'chore: update version file, changlog and spark coverage api docs'
-          git push origin "release/${{ env.VERSION_NUMBER }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          git push origin "release/${{ env.VERSION_NUMBER }}"        
 
       - name: Upload to pypi
         run: |
