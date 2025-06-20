@@ -15,11 +15,11 @@ on:
   workflow_call:
 
 jobs:
-#  verification:
-#    uses: ./.github/workflows/verification.yml
+  verification:
+    uses: ./.github/workflows/verification.yml
 
   prepare-deployment:
-#    needs: verification
+    needs: verification
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
