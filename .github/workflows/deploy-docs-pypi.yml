@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  contents: write
   workflows: write
 
 jobs:
@@ -62,9 +63,7 @@ jobs:
           git add sparkleframe/version.txt
           git add changelog.md
           git commit -m 'chore: update version file, changlog and spark coverage api docs'
-          git push origin "release/${{ env.VERSION_NUMBER }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          git push origin "release/${{ env.VERSION_NUMBER }}"        
 
 #      - name: Upload to pypi
 #        run: |
