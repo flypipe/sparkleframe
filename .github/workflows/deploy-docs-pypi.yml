@@ -64,15 +64,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload to pypi
-        run: |
-          flit publish
-        env:
-          FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+#      - name: Upload to pypi
+#        run: |
+#          flit publish
+#        env:
+#          FLIT_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
 
-      - name: Deploy docs
-        run: |
-          git fetch
-          make docs-deploy version=${{ env.VERSION_NUMBER }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#      - name: Deploy docs
+#        run: |
+#          git fetch
+#          make docs-deploy version=${{ env.VERSION_NUMBER }}
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
