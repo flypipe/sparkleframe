@@ -8,6 +8,9 @@ on:
   # Allow for manual invocation
   workflow_dispatch:
 
+permissions:
+  workflows: write
+
 jobs:
   prepare-deployment:
     uses: ./.github/workflows/prepare-deployment.yml
