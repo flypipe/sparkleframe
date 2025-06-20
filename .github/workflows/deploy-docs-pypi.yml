@@ -49,9 +49,8 @@ jobs:
 
       - name: Set git user email and name
         run: |
-          echo "Pusher is ${{ github.triggering_actor }} (joseheliomuller@gmail.com)"
-          git config --global user.name "${{ github.triggering_actor }}"
-          git config --global user.email "joseheliomuller@gmail.com"
+          git config --global user.email "flypipe@dummy.com"
+          git config --global user.name "flypipe"
 
       - name: Create and Push new release branch
         run: |          
