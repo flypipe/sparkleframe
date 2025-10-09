@@ -7,7 +7,6 @@ from sparkleframe.polarsdf import WindowSpec
 from sparkleframe.polarsdf.column import Column, _to_expr
 from sparkleframe.polarsdf.functions_utils import _RankWrapper
 
-
 def col(name: str) -> Column:
     """
     Mimics pyspark.sql.functions.col by returning a Column object.

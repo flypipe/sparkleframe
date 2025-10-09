@@ -78,10 +78,10 @@ generate a pytest test case, using pytest.parametrize to test the logic `{functi
     return message
 
 
-file_path = "./polarsdf/dataframe_test.py"
-function_name = "orderBy"
+file_path = "./sparkleframe/polarsdf/types_test.py"
+function_name = "MapType"
 pyspark_function_url = (
-    "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.orderBy.html"
+    "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.types.MapType.html"
 )
 
 # msg = generate_pyspark_function_instruction(file_path, function_name, pyspark_function_url)

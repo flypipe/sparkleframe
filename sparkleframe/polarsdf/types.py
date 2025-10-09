@@ -227,3 +227,54 @@ class Row:
     def __init__(self, *args, **kwargs):
         # FIXME: IMPLEMENT IT
         raise NotImplementedError("Row is not implemented in Polars backend.")
+
+
+class MapType(DataType):
+    """
+    Mirror of pyspark.sql.types.MapType
+
+    Parameters
+    ----------
+    keyType : DataType
+        The type of the map keys. (In Spark, keys are non-nullable by definition.)
+    valueType : DataType
+        The type of the map values.
+    valueContainsNull : bool, default True
+        Whether map values can be null (Spark semantics).
+    """
+
+    def __init__(self, keyType: DataType, valueType: DataType, valueContainsNull: bool = True):
+        assert isinstance(keyType, DataType), "keyType %s should be an instance of %s" % (keyType, DataType)
+        assert isinstance(valueType, DataType), "valueType %s should be an instance of %s" % (valueType, DataType)
+        assert isinstance(valueContainsNull, bool), "valueContainsNull should be a bool"
+        # Spark guarantees keys are non-nullable. We mirror that invariant here.
+        self.keyType = keyType
+        self.valueType = valueType
+        self.valueContainsNull = valueContainsNull
+
+    def simpleString(self) -> str:
+        # Matches Spark's 'map<keyType,valueType>' format (does not encode valueContainsNull here)
+        return "map<%s,%s>" % (self.keyType.simpleString(), self.valueType.simpleString())
+
+    def __repr__(self) -> str:
+        return "MapType(%s, %s, %s)" % (self.keyType, self.valueType, str(self.valueContainsNull))
+
+    def jsonValue(self) -> Dict[str, Any]:
+        # Matches Spark's JSON shape:
+        # {"type":"map","keyType":<...>,"valueType":<...>,"valueContainsNull":true/false}
+        return {
+            "type": self.typeName(),
+            "keyType": self.keyType.jsonValue(),
+            "valueType": self.valueType.jsonValue(),
+            "valueContainsNull": self.valueContainsNull,
+        }
+
+    def to_native(self):
+        """
+        Polars representation:
+        - Encode a map as a List of Structs with two fields: "key" and "value".
+        - This layout is stable across Polars versions and interoperates well.
+        """
+        key_field = pl.Field("key", self.keyType.to_native())
+        value_field = pl.Field("value", self.valueType.to_native())
+        return pl.List(pl.Struct([key_field, value_field]))
