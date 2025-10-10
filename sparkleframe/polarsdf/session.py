@@ -8,6 +8,7 @@ import polars as pl
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.types import StructType, DataType
 
+
 class SparkSession:
     def __init__(self):
         self.appName_str = ""

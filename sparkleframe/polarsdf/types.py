@@ -242,7 +242,10 @@ class ArrayType(DataType):
     """
 
     def __init__(self, elementType: DataType, containsNull: bool = True):
-        assert isinstance(elementType, DataType), "elementType %s should be an instance of %s" % (elementType, DataType)
+        assert isinstance(elementType, DataType), "elementType %s should be an instance of %s" % (
+            elementType,
+            DataType,
+        )
         assert isinstance(containsNull, bool), "containsNull should be a bool"
         self.elementType = elementType
         self.containsNull = containsNull

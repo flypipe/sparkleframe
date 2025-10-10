@@ -26,7 +26,7 @@ class TestTypes:
         assert spark_type.typeName() == sf_type.typeName()
         assert spark_type.simpleString() == sf_type.simpleString()
         assert spark_type.jsonValue() == sf_type.jsonValue()
-    
+
     @pytest.mark.parametrize("precision, scale", [(10, 2), (5, 0), (20, 10)])
     def test_decimal_type_equivalence(self, precision, scale):
         spark_type = pst.DecimalType(precision, scale)
@@ -145,7 +145,9 @@ class TestTypes:
         map_obj = {
             "type": "map",
             "keyType": key_ps().jsonValue() if callable(getattr(key_ps, "__call__", None)) else key_ps.jsonValue(),
-            "valueType": value_ps().jsonValue() if callable(getattr(value_ps, "__call__", None)) else value_ps.jsonValue(),
+            "valueType": (
+                value_ps().jsonValue() if callable(getattr(value_ps, "__call__", None)) else value_ps.jsonValue()
+            ),
             "valueContainsNull": value_contains_null,
         }
         assert sf_map.jsonValue() == ps_map.jsonValue() == map_obj
@@ -183,6 +185,7 @@ class TestTypes:
         Build a Polars DF using the MapType native representation (List[Struct{key,value}]),
         convert to pandas -> Spark DF with a MapType schema, and compare against an expected Spark DF.
         """
+
         # Infer value type from first non-empty/non-None value
         def infer_value_dtype(data):
             for r in data:
@@ -250,7 +253,7 @@ class TestTypes:
         lhs = spark_df_from_polars.orderBy("id").collect()
         rhs = expected_spark_df.orderBy("id").collect()
         assert lhs == rhs
-    
+
     # Tests for ArrayType
     @pytest.mark.parametrize(
         "element_type_sf, element_type_ps, contains_null",
@@ -269,28 +272,32 @@ class TestTypes:
         """Test ArrayType basic equivalence with PySpark ArrayType"""
         sf_array = sft.ArrayType(element_type_sf, containsNull=contains_null)
         ps_array = pst.ArrayType(element_type_ps, containsNull=contains_null)
-        
+
         # Basic type properties
         assert sf_array.typeName() == ps_array.typeName() == "array"
         assert sf_array.simpleString() == ps_array.simpleString()
         assert sf_array.containsNull == ps_array.containsNull == contains_null
-        
+
         # Element type equivalence
         assert sf_array.elementType.typeName() == ps_array.elementType.typeName()
-        
+
         # JSON representation
         expected_json = {
             "type": "array",
-            "elementType": element_type_ps().jsonValue() if callable(getattr(element_type_ps, "__call__", None)) else element_type_ps.jsonValue(),
+            "elementType": (
+                element_type_ps().jsonValue()
+                if callable(getattr(element_type_ps, "__call__", None))
+                else element_type_ps.jsonValue()
+            ),
             "containsNull": contains_null,
         }
         assert sf_array.jsonValue() == ps_array.jsonValue() == expected_json
-        
+
         # Native polars representation
         native = sf_array.to_native()
         assert isinstance(native, pl.List)
         assert native.inner == element_type_sf.to_native()
-    
+
     @pytest.mark.parametrize(
         "elem_sf, elem_ps, contains_null, rows",
         [
@@ -400,7 +407,7 @@ class TestTypes:
             if isinstance(value, list):
                 return [normalize(v, leaf_type) for v in value]
             # Handle numpy arrays (from Polars->pandas conversion)
-            if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+            if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
                 try:
                     # Convert numpy array to list and normalize each element
                     return [normalize(v, leaf_type) for v in value]
@@ -450,4 +457,3 @@ class TestTypes:
         lhs = spark_df_from_polars.orderBy("id").collect()
         rhs = expected_spark_df.orderBy("id").collect()
         assert lhs == rhs
-    
