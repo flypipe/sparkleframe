@@ -79,9 +79,9 @@ generate a pytest test case, using pytest.parametrize to test the logic `{functi
 
 
 file_path = "./sparkleframe/polarsdf/types_test.py"
-function_name = "MapType"
+function_name = "ArrayType"
 pyspark_function_url = (
-    "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.types.MapType.html"
+    "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.types.ArrayType.html"
 )
 
 # msg = generate_pyspark_function_instruction(file_path, function_name, pyspark_function_url)
