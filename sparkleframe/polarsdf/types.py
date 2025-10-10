@@ -229,6 +229,49 @@ class Row:
         raise NotImplementedError("Row is not implemented in Polars backend.")
 
 
+class ArrayType(DataType):
+    """
+    Mirror of pyspark.sql.types.ArrayType
+
+    Parameters
+    ----------
+    elementType : DataType
+        The type of elements in the array.
+    containsNull : bool, default True
+        Whether the array can contain null values.
+    """
+
+    def __init__(self, elementType: DataType, containsNull: bool = True):
+        assert isinstance(elementType, DataType), "elementType %s should be an instance of %s" % (elementType, DataType)
+        assert isinstance(containsNull, bool), "containsNull should be a bool"
+        self.elementType = elementType
+        self.containsNull = containsNull
+
+    def simpleString(self) -> str:
+        # Matches Spark's 'array<elementType>' format (does not encode containsNull here)
+        return "array<%s>" % self.elementType.simpleString()
+
+    def __repr__(self) -> str:
+        return "ArrayType(%s, %s)" % (self.elementType, str(self.containsNull))
+
+    def jsonValue(self) -> Dict[str, Any]:
+        # Matches Spark's JSON shape:
+        # {"type":"array","elementType":<...>,"containsNull":true/false}
+        return {
+            "type": self.typeName(),
+            "elementType": self.elementType.jsonValue(),
+            "containsNull": self.containsNull,
+        }
+
+    def to_native(self):
+        """
+        Polars representation:
+        - Encode an array as a List of the element type.
+        - Polars List type naturally handles nullable elements.
+        """
+        return pl.List(self.elementType.to_native())
+
+
 class MapType(DataType):
     """
     Mirror of pyspark.sql.types.MapType
