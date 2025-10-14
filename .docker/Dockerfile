@@ -14,3 +14,5 @@ ENV PYTHONPATH "${PYTHONPATH}:/local:/sparkleframe:/:"
 # requirements
 COPY requirements-dev.txt .
 RUN pip install -r requirements-dev.txt
+
+WORKDIR /
