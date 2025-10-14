@@ -7,9 +7,11 @@ from sparkleframe.polarsdf import WindowSpec
 from sparkleframe.polarsdf.column import Column, _to_expr
 from sparkleframe.polarsdf.functions_utils import _RankWrapper
 
+
 def col(name: str) -> Column:
     """
     Mimics pyspark.sql.functions.col by returning a Column object.
+    Supports dotted paths for nested struct access, e.g. "col.a.b".
 
     Args:
         name (str): Name of the column.
@@ -17,7 +19,13 @@ def col(name: str) -> Column:
     Returns:
         Column: A Column object for building expressions.
     """
-    return Column(name)
+    if "." in name:
+        parts = name.split(".")
+        expr = pl.col(parts[0])
+        for seg in parts[1:]:
+            expr = expr.struct.field(seg)
+        return Column(expr)  # pass a Polars Expr directly
+    return Column(pl.col(name))
 
 
 def get_json_object(col: Union[str, Column], path: str) -> Column:
