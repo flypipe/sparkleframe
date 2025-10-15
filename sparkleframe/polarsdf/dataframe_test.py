@@ -41,9 +41,11 @@ from sparkleframe.polarsdf.types import (
     BinaryType,
     StructType,
     StructField,
+    MapType,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records, create_spark_df, assert_sparkle_spark_frame_are_equal
+from sparkleframe.polarsdf.types_utils import _MapTypeUtils
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -62,6 +64,16 @@ def sparkle_df():
 @pytest.fixture
 def spark_df(spark):
     return spark.createDataFrame(pd.DataFrame(sample_data))
+
+
+def _polars_native_map_series(name: str, dict_rows: list[dict[str, int]]) -> pl.Series:
+    """
+    Build a Polars-native 'map' layout column:
+      List[Struct{key: Utf8, value: Int32}]
+    from python dict rows.
+    """
+    kv_rows = [[{"key": k, "value": v} for k, v in d.items()] for d in dict_rows]
+    return pl.Series(name, kv_rows)
 
 
 class TestDataFrame:
@@ -1093,3 +1105,79 @@ class TestDataFrame:
     def test_count(self):
         df = DataFrame(pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]}))
         assert df.count() == 3
+
+    def test_auto_materialize_maptype_single_level_select(self, spark, sparkle):
+        # Polars-native map layout in the input DF
+        native = pl.DataFrame([_polars_native_map_series("col", [{"id": 1, "m": 1}])])
+
+        # Sparkle schema declares a MapType so the constructor should auto-materialize to a Struct
+        sf_schema = StructType([StructField("col", MapType(StringType(), IntegerType()))])
+        df_sparkle = sparkle.createDataFrame(native, schema=sf_schema)
+
+        # Column becomes a Struct with fields ["id", "m"]
+        struct_dtype = df_sparkle.to_native_df().schema["col"]
+        assert isinstance(struct_dtype, pl.Struct)
+        assert [f.name for f in struct_dtype.fields] == ["id", "m"]
+
+        # Dot access selection should work and alias to leaf name
+        sel_sf = df_sparkle.select("col.id")  # -> Column named "id"
+        result_spark_df = create_spark_df(spark, sel_sf)
+
+        # Note: simper & robust — just build the same result frame from Polars’ pandas output
+        expected_spark_df = spark.createDataFrame(sel_sf.toPandas())
+
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_auto_materialize_is_noop_for_plain_struct(self, spark, sparkle):
+        # A plain struct column should NOT go through map auto-materialization
+        native = pl.DataFrame({"s": [{"a": 10}]})
+        sf_schema = StructType([StructField("s", StructType([StructField("a", IntegerType())]))])
+
+        df_sparkle = sparkle.createDataFrame(native, schema=sf_schema)
+
+        s_dtype = df_sparkle.to_native_df().schema["s"]
+        assert isinstance(s_dtype, pl.Struct)
+        assert [f.name for f in s_dtype.fields] == ["a"]
+
+        # And dot access works as usual
+        result_spark_df = create_spark_df(spark, df_sparkle.select("s.a"))
+        expected_spark_df = spark.createDataFrame(df_sparkle.select("s.a").toPandas())
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_auto_materialize_warns_but_does_not_crash(self, monkeypatch, spark, sparkle):
+        # Prepare a DF that would normally auto-materialize
+        native = pl.DataFrame([_polars_native_map_series("col", [{"x": 5}])])
+        sf_schema = StructType([StructField("col", MapType(StringType(), IntegerType()))])
+
+        # Force the internal converter to throw so we take the warning branch
+        monkeypatch.setattr(_MapTypeUtils, "is_map_dtype", lambda dt: True)
+
+        def boom(df, col, *, keys=None, new_name=None):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(_MapTypeUtils, "map_to_struct", boom)
+
+        with pytest.warns(RuntimeWarning, match="MapType materialization skipped"):
+            df_sparkle = sparkle.createDataFrame(native, schema=sf_schema)
+
+        # Still a valid DataFrame; and since conversion failed, col is NOT a Struct
+        assert isinstance(df_sparkle, DataFrame)
+        assert not isinstance(df_sparkle.to_native_df().schema["col"], pl.Struct)
+
+    def test_auto_materialize_union_keys_order_and_nulls(self, spark, sparkle):
+        # Two rows with different keys; union keeps first-seen order ("a" then "b")
+        native = pl.DataFrame([_polars_native_map_series("col", [{"a": 1}, {"b": 2}])])
+        sf_schema = StructType([StructField("col", MapType(StringType(), IntegerType()))])
+
+        df_sparkle = sparkle.createDataFrame(native, schema=sf_schema)
+
+        struct_dtype = df_sparkle.to_native_df().schema["col"]
+        assert isinstance(struct_dtype, pl.Struct)
+        assert [f.name for f in struct_dtype.fields] == ["a", "b"]
+
+        # Values line up with nulls where key missing
+        result_spark_df = create_spark_df(spark, df_sparkle)
+        expected_pd = pl.DataFrame([{"col": {"a": 1, "b": None}}, {"col": {"a": None, "b": 2}}]).to_pandas()
+        expected_spark_df = spark.createDataFrame(expected_pd)
+
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
