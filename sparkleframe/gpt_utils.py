@@ -8,6 +8,7 @@ implement the pyspark <function> function like as defined in <function_url> into
 """
 
 import os
+import pathlib
 
 
 def generate_pyspark_function_instruction(file_path: str, function_name: str, function_url: str) -> str:
@@ -23,6 +24,7 @@ def generate_pyspark_function_instruction(file_path: str, function_name: str, fu
     Returns:
         str: Formatted message.
     """
+    file_path = str(pathlib.Path(__file__).parent.parent.resolve()) + file_path
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -54,6 +56,7 @@ def generate_test_instruction(file_path: str, function_name: str, compare_output
     Returns:
         str: Formatted message.
     """
+    file_path = str(pathlib.Path(__file__).parent.parent.resolve()) + file_path
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -78,14 +81,14 @@ generate a pytest test case, using pytest.parametrize to test the logic `{functi
     return message
 
 
-file_path = "./sparkleframe/polarsdf/types_test.py"
-function_name = "MapType"
+file_path = "/sparkleframe/polarsdf/dataframe.py"
+function_name = "count"
 pyspark_function_url = (
-    "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.types.MapType.html"
+    "https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.count.html"
 )
 
-# msg = generate_pyspark_function_instruction(file_path, function_name, pyspark_function_url)
+msg = generate_pyspark_function_instruction(file_path, function_name, pyspark_function_url)
 
-msg = generate_test_instruction(file_path, function_name, compare_output_spark=True)
+# msg = generate_test_instruction(file_path, function_name, compare_output_spark=True)
 
 print(msg)

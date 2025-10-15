@@ -11,3 +11,6 @@ omit=
     sparkleframe/tests/spark.py
     sparkleframe/tests/utils.py
     sparkleframe/polarsdf/types.py
+    sparkleframe/context.py
+    sparkleframe/engine.py
+    sparkleframe/tests/sparkle.py

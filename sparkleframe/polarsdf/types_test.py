@@ -1,130 +1,139 @@
+import json
+
 import pytest
 import pyspark.sql.types as pst
 from sparkleframe.polarsdf import types as sft
 import polars as pl
-from pyspark.sql import Row
+from sparkleframe.polarsdf.session import SparkSession as SparkleSession
+
+from pyspark.sql.functions import col as spark_col
+from sparkleframe.polarsdf.functions import col as sparkle_col
 
 
 class TestTypes:
-    # @pytest.mark.parametrize(
-    #     "spark_type, sf_type",
-    #     [
-    #         (pst.StringType(), sft.StringType()),
-    #         (pst.IntegerType(), sft.IntegerType()),
-    #         (pst.LongType(), sft.LongType()),
-    #         (pst.FloatType(), sft.FloatType()),
-    #         (pst.DoubleType(), sft.DoubleType()),
-    #         (pst.BooleanType(), sft.BooleanType()),
-    #         (pst.DateType(), sft.DateType()),
-    #         (pst.TimestampType(), sft.TimestampType()),
-    #         (pst.ByteType(), sft.ByteType()),
-    #         (pst.ShortType(), sft.ShortType()),
-    #         (pst.BinaryType(), sft.BinaryType()),
-    #     ],
-    # )
-    # def test_simple_type_equivalence(self, spark_type, sf_type):
-    #     assert spark_type.typeName() == sf_type.typeName()
-    #     assert spark_type.simpleString() == sf_type.simpleString()
-    #     assert spark_type.jsonValue() == sf_type.jsonValue()
-    #
-    # @pytest.mark.parametrize("precision, scale", [(10, 2), (5, 0), (20, 10)])
-    # def test_decimal_type_equivalence(self, precision, scale):
-    #     spark_type = pst.DecimalType(precision, scale)
-    #     sf_type = sft.DecimalType(precision, scale)
+    @pytest.fixture
+    def sparkleframe_spark(self):
+        return SparkleSession()
 
-    #     assert spark_type.typeName() == sf_type.typeName()
-    #     assert spark_type.simpleString() == sf_type.simpleString()
-    #     assert spark_type.jsonValue() == sf_type.jsonValue()
-    #     assert sf_type.precision == spark_type.precision
-    #     assert sf_type.scale == spark_type.scale
+    @pytest.mark.parametrize(
+        "spark_type, sf_type",
+        [
+            (pst.StringType(), sft.StringType()),
+            (pst.IntegerType(), sft.IntegerType()),
+            (pst.LongType(), sft.LongType()),
+            (pst.FloatType(), sft.FloatType()),
+            (pst.DoubleType(), sft.DoubleType()),
+            (pst.BooleanType(), sft.BooleanType()),
+            (pst.DateType(), sft.DateType()),
+            (pst.TimestampType(), sft.TimestampType()),
+            (pst.ByteType(), sft.ByteType()),
+            (pst.ShortType(), sft.ShortType()),
+            (pst.BinaryType(), sft.BinaryType()),
+        ],
+    )
+    def test_simple_type_equivalence(self, spark_type, sf_type):
+        assert spark_type.typeName() == sf_type.typeName()
+        assert spark_type.simpleString() == sf_type.simpleString()
+        assert spark_type.jsonValue() == sf_type.jsonValue()
 
-    # def test_struct_type_equivalence(self):
-    #     sf_struct = sft.StructType(
-    #         [
-    #             sft.StructField("id", sft.IntegerType(), True),
-    #             sft.StructField("name", sft.StringType(), False),
-    #         ]
-    #     )
+    @pytest.mark.parametrize("precision, scale", [(10, 2), (5, 0), (20, 10)])
+    def test_decimal_type_equivalence(self, precision, scale):
+        spark_type = pst.DecimalType(precision, scale)
+        sf_type = sft.DecimalType(precision, scale)
 
-    #     ps_struct = pst.StructType(
-    #         [
-    #             pst.StructField("id", pst.IntegerType(), True),
-    #             pst.StructField("name", pst.StringType(), False),
-    #         ]
-    #     )
+        assert spark_type.typeName() == sf_type.typeName()
+        assert spark_type.simpleString() == sf_type.simpleString()
+        assert spark_type.jsonValue() == sf_type.jsonValue()
+        assert sf_type.precision == spark_type.precision
+        assert sf_type.scale == spark_type.scale
 
-    #     assert sf_struct.typeName() == ps_struct.typeName()
-    #     assert isinstance(sf_struct.fields[0].dataType, sft.IntegerType)
-    #     assert sf_struct.fields[0].name == ps_struct.fields[0].name
-    #     assert sf_struct.fields[1].nullable == ps_struct.fields[1].nullable
+    def test_struct_type_equivalence(self):
+        sf_struct = sft.StructType(
+            [
+                sft.StructField("id", sft.IntegerType(), True),
+                sft.StructField("name", sft.StringType(), False),
+            ]
+        )
 
-    # def test_struct_field_methods(self):
-    #     sf = sft.StructField("name", sft.StringType(), False, {"meta": 1})
-    #     psf = pst.StructField("name", pst.StringType(), False, {"meta": 1})
+        ps_struct = pst.StructType(
+            [
+                pst.StructField("id", pst.IntegerType(), True),
+                pst.StructField("name", pst.StringType(), False),
+            ]
+        )
 
-    #     assert sf.name == psf.name
-    #     assert sf.nullable == psf.nullable
-    #     assert sf.dataType.typeName() == psf.dataType.typeName()
-    #     assert sf.simpleString() == psf.simpleString()
-    #     assert sf.__repr__() == psf.__repr__()
-    #     assert sf.jsonValue() == psf.jsonValue()
+        assert sf_struct.typeName() == ps_struct.typeName()
+        assert isinstance(sf_struct.fields[0].dataType, sft.IntegerType)
+        assert sf_struct.fields[0].name == ps_struct.fields[0].name
+        assert sf_struct.fields[1].nullable == ps_struct.fields[1].nullable
 
-    # def test_struct_type_methods(self):
-    #     sf1 = sft.StructField("id", sft.IntegerType(), True)
-    #     sf2 = sft.StructField("name", sft.StringType(), False)
-    #     sftype = sft.StructType([sf1, sf2])
+    def test_struct_field_methods(self):
+        sf = sft.StructField("name", sft.StringType(), False, {"meta": 1})
+        psf = pst.StructField("name", pst.StringType(), False, {"meta": 1})
 
-    #     psf1 = pst.StructField("id", pst.IntegerType(), True)
-    #     psf2 = pst.StructField("name", pst.StringType(), False)
-    #     pstype = pst.StructType([psf1, psf2])
+        assert sf.name == psf.name
+        assert sf.nullable == psf.nullable
+        assert sf.dataType.typeName() == psf.dataType.typeName()
+        assert sf.simpleString() == psf.simpleString()
+        assert sf.__repr__() == psf.__repr__()
+        assert sf.jsonValue() == psf.jsonValue()
 
-    #     # simpleString
-    #     assert sftype.simpleString() == pstype.simpleString()
+    def test_struct_type_methods(self):
+        sf1 = sft.StructField("id", sft.IntegerType(), True)
+        sf2 = sft.StructField("name", sft.StringType(), False)
+        sftype = sft.StructType([sf1, sf2])
 
-    #     # repr
-    #     assert repr(sftype) == repr(pstype)
+        psf1 = pst.StructField("id", pst.IntegerType(), True)
+        psf2 = pst.StructField("name", pst.StringType(), False)
+        pstype = pst.StructType([psf1, psf2])
 
-    #     # jsonValue
-    #     assert sftype.jsonValue() == pstype.jsonValue()
+        # simpleString
+        assert sftype.simpleString() == pstype.simpleString()
 
-    #     # __len__
-    #     assert len(sftype) == 2
+        # repr
+        assert repr(sftype) == repr(pstype)
 
-    #     # __getitem__ by index
-    #     assert isinstance(sftype[0], sft.StructField)
-    #     assert sftype[0].name == pstype[0].name
+        # jsonValue
+        assert sftype.jsonValue() == pstype.jsonValue()
 
-    #     # __getitem__ by name
-    #     assert sftype["name"].dataType.typeName() == pstype["name"].dataType.typeName()
+        # __len__
+        assert len(sftype) == 2
 
-    #     # __getitem__ slice
-    #     sliced = sftype[0:1]
-    #     assert isinstance(sliced, sft.StructType)
-    #     assert len(sliced) == 1
-    #     assert sliced[0].name == "id"
+        # __getitem__ by index
+        assert isinstance(sftype[0], sft.StructField)
+        assert sftype[0].name == pstype[0].name
 
-    #     sliced = pstype[0:1]
-    #     assert isinstance(sliced, pst.StructType)
-    #     assert len(sliced) == 1
-    #     assert sliced[0].name == "id"
+        # __getitem__ by name
+        assert sftype["name"].dataType.typeName() == pstype["name"].dataType.typeName()
 
-    #     # __iter__
-    #     assert [f.name for f in sftype] == [f.name for f in pstype]
+        # __getitem__ slice
+        sliced = sftype[0:1]
+        assert isinstance(sliced, sft.StructType)
+        assert len(sliced) == 1
+        assert sliced[0].name == "id"
 
-    #     # fieldNames
-    #     assert sftype.fieldNames() == pstype.fieldNames()
+        sliced = pstype[0:1]
+        assert isinstance(sliced, pst.StructType)
+        assert len(sliced) == 1
+        assert sliced[0].name == "id"
 
-    # def test_struct_type_getitem_errors(self):
-    #     sftype = sft.StructType([sft.StructField("a", sft.StringType())])
+        # __iter__
+        assert [f.name for f in sftype] == [f.name for f in pstype]
 
-    #     with pytest.raises(KeyError):
-    #         _ = sftype["missing"]
+        # fieldNames
+        assert sftype.fieldNames() == pstype.fieldNames()
 
-    #     with pytest.raises(IndexError):
-    #         _ = sftype[99]
+    def test_struct_type_getitem_errors(self):
+        sftype = sft.StructType([sft.StructField("a", sft.StringType())])
 
-    #     with pytest.raises(ValueError):
-    #         _ = sftype[{"bad": "key"}]
+        with pytest.raises(KeyError):
+            _ = sftype["missing"]
+
+        with pytest.raises(IndexError):
+            _ = sftype[99]
+
+        with pytest.raises(ValueError):
+            _ = sftype[{"bad": "key"}]
 
     @pytest.mark.parametrize(
         "key_sf,value_sf,key_ps,value_ps,value_contains_null",
@@ -145,7 +154,9 @@ class TestTypes:
         map_obj = {
             "type": "map",
             "keyType": key_ps().jsonValue() if callable(getattr(key_ps, "__call__", None)) else key_ps.jsonValue(),
-            "valueType": value_ps().jsonValue() if callable(getattr(value_ps, "__call__", None)) else value_ps.jsonValue(),
+            "valueType": (
+                value_ps().jsonValue() if callable(getattr(value_ps, "__call__", None)) else value_ps.jsonValue()
+            ),
             "valueContainsNull": value_contains_null,
         }
         assert sf_map.jsonValue() == ps_map.jsonValue() == map_obj
@@ -163,90 +174,182 @@ class TestTypes:
         assert fields[1].dtype == value_sf.to_native()
 
     @pytest.mark.parametrize(
-        "rows",
+        "rows, spark_schema, sparkle_schema, pointer_select",
         [
-            # integer values
-            [
-                {"id": 1, "m": [{"key": "a", "value": 1}, {"key": "b", "value": 2}]},
-                {"id": 2, "m": [{"key": "x", "value": 3}]},
-                {"id": 3, "m": []},  # empty map
-            ],
-            # string values + a None (to exercise valueContainsNull=True)
-            [
-                {"id": 1, "m": [{"key": "a", "value": "foo"}, {"key": "b", "value": None}]},
-                {"id": 2, "m": [{"key": "x", "value": "bar"}]},
-            ],
+            (
+                [
+                    ({"id": 1, "m": 1},),
+                    ({"id": 1, "m": 1},),
+                ],
+                pst.StructType([pst.StructField("col", pst.MapType(pst.StringType(), pst.IntegerType()))]),
+                sft.StructType([sft.StructField("col", sft.MapType(sft.StringType(), sft.IntegerType()))]),
+                "col.id",
+            ),
+            (
+                [
+                    ({"id": {"id2": 1, "m2": 1}},),
+                ],
+                pst.StructType(
+                    [
+                        pst.StructField(
+                            "col", pst.MapType(pst.StringType(), pst.MapType(pst.StringType(), pst.IntegerType()))
+                        )
+                    ]
+                ),
+                sft.StructType(
+                    [
+                        sft.StructField(
+                            "col", sft.MapType(sft.StringType(), sft.MapType(sft.StringType(), sft.IntegerType()))
+                        )
+                    ]
+                ),
+                "col.id.id2",
+            ),
         ],
     )
-    def test_roundtrip_polars_to_spark_map_column(self, spark, rows):
+    def test_roundtrip_polars_to_spark_map_column(
+        self, spark, sparkleframe_spark, rows, spark_schema, sparkle_schema, pointer_select
+    ):
         """
         Build a Polars DF using the MapType native representation (List[Struct{key,value}]),
         convert to pandas -> Spark DF with a MapType schema, and compare against an expected Spark DF.
         """
-        # Infer value type from first non-empty/non-None value
-        def infer_value_dtype(data):
-            for r in data:
-                for kv in r["m"]:
-                    if kv["value"] is not None:
-                        return kv["value"].__class__
-            return int  # default to int if we never find one
 
-        py_type = infer_value_dtype(rows)
-        if py_type is int:
-            sf_map = sft.MapType(sft.StringType(), sft.IntegerType(), valueContainsNull=True)
-            ps_map = pst.MapType(pst.StringType(), pst.IntegerType(), valueContainsNull=True)
-        else:
-            sf_map = sft.MapType(sft.StringType(), sft.StringType(), valueContainsNull=True)
-            ps_map = pst.MapType(pst.StringType(), pst.StringType(), valueContainsNull=True)
+        df_spark = spark.createDataFrame(rows, schema=spark_schema)
+        df_spark.select(pointer_select).show(truncate=False)
 
-        # Build Polars DataFrame with native MapType: List(Struct([key, value]))
-        m_dtype = sf_map.to_native()
-        df_pl = pl.DataFrame(
-            {
-                "id": [r["id"] for r in rows],
-                "m": [r["m"] for r in rows],  # each is a list of {"key":..., "value": ...}
-            },
-            schema=[("id", pl.Int32), ("m", m_dtype)],
+        df_pl = sparkleframe_spark.createDataFrame(rows, schema=sparkle_schema)
+
+        json_df_spark = json.dumps(df_spark.toPandas().to_dict(orient="records"), sort_keys=True)
+        json_df_pl = json.dumps(df_pl.toPandas().to_dict(orient="records"), sort_keys=True)
+        assert json_df_spark == json_df_pl
+
+        json_df_spark = json.dumps(
+            df_spark.select(pointer_select).toPandas().to_dict(orient="records"), sort_keys=True
         )
+        json_df_pl = json.dumps(df_pl.select(pointer_select).toPandas().to_dict(orient="records"), sort_keys=True)
+        assert json_df_spark == json_df_pl
 
-        # Convert Polars -> pandas
-        df_pd = df_pl.to_pandas()
-
-        # Convert list-of-struct [{"key":k, "value":v}, ...] -> real Python dicts {k: v, ...}
-        def list_struct_to_dict(lst):
-            if lst is None:
-                return None
-            return {d.get("key"): d.get("value") for d in lst}
-
-        df_pd["m"] = df_pd["m"].apply(list_struct_to_dict)
-
-        # Spark DF from the Polars-built data
-        spark_df_from_polars = spark.createDataFrame(
-            df_pd,
-            schema=pst.StructType(
+    @pytest.mark.parametrize(
+        "rows, spark_schema, sparkle_schema, pointer_select",
+        [
+            # 1) empty map
+            (
                 [
-                    pst.StructField("id", pst.IntegerType(), nullable=False),
-                    pst.StructField("m", ps_map, nullable=True),
-                ]
+                    ({},),
+                ],
+                # Spark: single map column named 'value' -> {} ; but we use StructType below for parity with "col"
+                pst.StructType([pst.StructField("col", pst.MapType(pst.StringType(), pst.IntegerType()))]),
+                sft.StructType([sft.StructField("col", sft.MapType(sft.StringType(), sft.IntegerType()))]),
+                None,
             ),
-        )
-
-        # Expected Spark DF built directly from Python dicts
-        expected_python_rows = [Row(id=r["id"], m=list_struct_to_dict(r["m"])) for r in rows]
-        expected_spark_df = spark.createDataFrame(
-            expected_python_rows,
-            schema=pst.StructType(
+            # 2) native [{key,value}] input instead of dict
+            (
                 [
-                    pst.StructField("id", pst.IntegerType(), nullable=False),
-                    pst.StructField("m", ps_map, nullable=True),
-                ]
+                    ({"key": 2, "value": 5},),
+                    ({"key": 3, "value": 7},),
+                ],
+                pst.StructType([pst.StructField("col", pst.MapType(pst.StringType(), pst.IntegerType()))]),
+                sft.StructType([sft.StructField("col", sft.MapType(sft.StringType(), sft.IntegerType()))]),
+                "col.key",
             ),
+        ],
+    )
+    def test_maptype_misc_inputs(self, spark, sparkleframe_spark, rows, spark_schema, sparkle_schema, pointer_select):
+        df_spark = spark.createDataFrame(rows, schema=spark_schema)
+        df_pl = sparkleframe_spark.createDataFrame(rows, schema=sparkle_schema)
+
+        # Data equality
+        assert json.dumps(df_spark.toPandas().to_dict(orient="records"), sort_keys=True) == json.dumps(
+            df_pl.toPandas().to_dict(orient="records"), sort_keys=True
         )
 
-        # Compare: schema and data (order-insensitive)
-        assert spark_df_from_polars.schema == expected_spark_df.schema
+        # Optional pointer select (if provided)
+        if pointer_select:
+            # selected column names should be the LAST segment (aliasing behavior)
+            pl_sel = df_pl.select(pointer_select)
 
-        # Sort by id for deterministic comparison
-        lhs = spark_df_from_polars.orderBy("id").collect()
-        rhs = expected_spark_df.orderBy("id").collect()
-        assert lhs == rhs
+            assert json.dumps(df_spark.toPandas().to_dict(orient="records"), sort_keys=True) == json.dumps(
+                df_pl.toPandas().to_dict(orient="records"), sort_keys=True
+            )
+            # alias = last segment
+            last = pointer_select.split(".")[-1]
+            assert list(pl_sel.toPandas().columns) == [last]
+
+    @pytest.mark.parametrize(
+        "rows, spark_schema, sparkle_schema",
+        [
+            (
+                [
+                    ({"key": "2", "value": 5},),
+                ],
+                pst.StructType([pst.StructField("col", pst.MapType(pst.StringType(), pst.IntegerType()))]),
+                sft.StructType([sft.StructField("col", sft.MapType(sft.StringType(), sft.IntegerType()))]),
+            ),
+        ],
+    )
+    def test_maptype_mix_types_fails_spark_passes_polars(
+        self, spark, sparkleframe_spark, rows, spark_schema, sparkle_schema
+    ):
+        with pytest.raises(TypeError):
+            spark.createDataFrame(rows, schema=spark_schema)
+
+        df_pl = sparkleframe_spark.createDataFrame(rows, schema=sparkle_schema)
+        assert json.dumps(df_pl.toPandas().to_dict(orient="records"), sort_keys=True) == json.dumps(
+            [{"col": {"key": 2, "value": 5}}], sort_keys=True
+        )
+
+    def test_maptype_column_manipulation(self, spark, sparkleframe_spark):
+        data = [({"key": {"key2": "a"}},)]
+        schema_spark = pst.StructType(
+            [pst.StructField("col", pst.MapType(pst.StringType(), pst.MapType(pst.StringType(), pst.StringType())))]
+        )
+        schema_sparkle = sft.StructType(
+            [sft.StructField("col", sft.MapType(sft.StringType(), sft.MapType(sft.StringType(), sft.StringType())))]
+        )
+
+        df_spark = spark.createDataFrame(data, schema=schema_spark)
+        df_sparkle = sparkleframe_spark.createDataFrame(data, schema=schema_sparkle)
+
+        json_spark = json.dumps(
+            df_spark.withColumn("test", spark_col("col.key.key2")).select("test").toPandas().to_dict(orient="records"),
+            sort_keys=True,
+        )
+        json_sparkle = json.dumps(
+            df_sparkle.withColumn("test", sparkle_col("col.key.key2"))
+            .select("test")
+            .toPandas()
+            .to_dict(orient="records"),
+            sort_keys=True,
+        )
+
+        assert json_spark == json_sparkle
+
+    def test_maptype_column_getitem(self, spark, sparkleframe_spark):
+        data = [({"key": {"key2": "a"}},)]
+        schema_spark = pst.StructType(
+            [pst.StructField("col", pst.MapType(pst.StringType(), pst.MapType(pst.StringType(), pst.StringType())))]
+        )
+        df_spark = spark.createDataFrame(data, schema=schema_spark)
+
+        schema_sparkle = sft.StructType(
+            [sft.StructField("col", sft.MapType(sft.StringType(), sft.MapType(sft.StringType(), sft.StringType())))]
+        )
+        df_sparkle = sparkleframe_spark.createDataFrame(data, schema=schema_sparkle)
+
+        json_spark = json.dumps(
+            df_spark.withColumn("test", spark_col("col").getItem("key").getItem("key2"))
+            .select("test")
+            .toPandas()
+            .to_dict(orient="records"),
+            sort_keys=True,
+        )
+        json_sparkle = json.dumps(
+            df_sparkle.withColumn("test", sparkle_col("col").getItem("key").getItem("key2"))
+            .select("test")
+            .toPandas()
+            .to_dict(orient="records"),
+            sort_keys=True,
+        )
+
+        assert json_spark == json_sparkle

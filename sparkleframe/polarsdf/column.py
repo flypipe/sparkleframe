@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Union
 
 import polars as pl
 
@@ -139,6 +140,26 @@ class Column:
             raise TypeError(f"rlike() expects a string pattern, got {type(pattern)}")
 
         return Column(self.expr.str.contains(pattern))
+
+    def getItem(self, key: Union[str, int]) -> "Column":
+        """
+        Spark-like Column.getItem:
+          - If `key` is a string, select a field from a Struct (also works for MapType materialized as Struct).
+          - If `key` is an int, select an element from a List/Array column at that index.
+
+        Examples:
+            col("s").getItem("a")        # struct field 'a'
+            col("arr").getItem(0)        # list element at index 0
+            col("col").getItem("key").getItem("key2")  # nested map-as-struct
+        """
+        if isinstance(key, str):
+            # struct field access (our MapType columns are Structs, so this covers maps too)
+            return Column(self.expr.struct.field(key))
+        elif isinstance(key, int):
+            # list/array index access
+            return Column(self.expr.list.get(key))
+        else:
+            raise TypeError(f"getItem expects str or int, got {type(key).__name__}")
 
     def to_native(self) -> pl.Expr:
         return self.expr

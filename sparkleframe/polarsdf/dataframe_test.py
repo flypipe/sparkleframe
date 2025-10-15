@@ -43,7 +43,7 @@ from sparkleframe.polarsdf.types import (
     StructField,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import to_records, create_spark_df
+from sparkleframe.tests.utils import to_records, create_spark_df, assert_sparkle_spark_frame_are_equal
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -65,6 +65,55 @@ def spark_df(spark):
 
 
 class TestDataFrame:
+
+    @pytest.mark.parametrize(
+        "data, schema_sparkle, schema_spark",
+        [
+            (
+                [{"a": 1}, {"a": 2}],
+                StructType([StructField("a", IntegerType())]),
+                SparkStructType([SparkStructField("a", SparkIntegerType())]),
+            ),
+            (
+                pd.DataFrame([{"a": 1}, {"a": 2}]),
+                StructType([StructField("a", IntegerType())]),
+                SparkStructType([SparkStructField("a", SparkIntegerType())]),
+            ),
+            (
+                [1, 2, 3, 4],
+                IntegerType(),
+                SparkIntegerType(),
+            ),
+            (
+                pd.DataFrame([{"a": 1}, {"a": 2}]),
+                None,
+                None,
+            ),
+            (
+                pl.DataFrame([{"a": 1}, {"a": 2}]),
+                None,
+                None,
+            ),
+            (
+                pa.table({"a": [1, 2]}),
+                None,
+                None,
+            ),
+            ([{"a": 1}, {"a": 2}], None, None),
+        ],
+    )
+    def test_dataframe_creation(self, spark, sparkle, data, schema_sparkle, schema_spark):
+
+        df_sparkle = sparkle.createDataFrame(data, schema=schema_sparkle)
+
+        if isinstance(data, pl.DataFrame):
+            data = data.to_pandas().to_dict(orient="records")
+
+        if isinstance(data, pa.Table):
+            data = data.to_pylist()
+
+        df_spark = spark.createDataFrame(data, schema=schema_spark)
+        assert assert_sparkle_spark_frame_are_equal(df_sparkle, df_spark)
 
     @pytest.mark.parametrize(
         "cols",
@@ -1047,3 +1096,7 @@ class TestDataFrame:
 
         with pytest.raises(TypeError):
             sf_df.orderBy("age", ascending=True)
+
+    def test_count(self):
+        df = DataFrame(pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]}))
+        assert df.count() == 3
