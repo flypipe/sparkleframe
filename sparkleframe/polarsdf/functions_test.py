@@ -489,13 +489,5 @@ class TestFunctions:
         spark_df = spark.createDataFrame(pd.DataFrame(data))
         expected_df = spark_df.select(spark_abs("x").alias("abs_x"))
 
-        print()
-        result_spark_df.show()
-        print(result_spark_df.schema)
-
-        print()
-        expected_df.show()
-        print(expected_df.schema)
-
         # Compare
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True, allow_nan_equality=True)

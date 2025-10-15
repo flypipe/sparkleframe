@@ -1067,13 +1067,6 @@ class TestDataFrame:
 
         spark_df = spark.createDataFrame(pd.DataFrame(data))
         expected_df = spark_df.orderBy(*spark_order)
-
-        print("result_spark_df")
-        result_spark_df.show()
-
-        print("expected_df")
-        expected_df.show()
-
         assert_pyspark_df_equal(result_spark_df, expected_df, allow_nan_equality=True)
 
     def test_order_by_int_raises_error(self, spark):
