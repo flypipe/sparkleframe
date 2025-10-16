@@ -10,7 +10,7 @@ from sparkleframe.polarsdf.functions import col as sparkle_col
 
 
 class TestTypes:
-    
+
     @pytest.mark.parametrize(
         "spark_type, sf_type",
         [
@@ -284,9 +284,7 @@ class TestTypes:
             ),
         ],
     )
-    def test_maptype_mix_types_fails_spark_passes_polars(
-        self, spark, sparkle, rows, spark_schema, sparkle_schema
-    ):
+    def test_maptype_mix_types_fails_spark_passes_polars(self, spark, sparkle, rows, spark_schema, sparkle_schema):
         with pytest.raises(TypeError):
             spark.createDataFrame(rows, schema=spark_schema)
 

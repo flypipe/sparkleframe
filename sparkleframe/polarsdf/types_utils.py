@@ -63,9 +63,7 @@ class _MapTypeUtils:
         return keys
 
     @staticmethod
-    def map_to_struct(
-        df: pl.DataFrame, col: str, *, keys: Optional[List[str]] = None
-    ) -> pl.DataFrame:
+    def map_to_struct(df: pl.DataFrame, col: str, *, keys: Optional[List[str]] = None) -> pl.DataFrame:
         """
         Materialize a Struct column from a map-like column so that dot access works.
         Overwrites the same column by default.

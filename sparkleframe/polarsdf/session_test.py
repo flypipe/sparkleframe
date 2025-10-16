@@ -9,7 +9,6 @@ from sparkleframe.polarsdf.types import StructType, StructField, IntegerType, St
 
 class TestSparkSession:
 
-
     def test_create_dataframe_from_polars(self, sparkle):
         pl_df = pl.DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]})
         result = sparkle.createDataFrame(pl_df)

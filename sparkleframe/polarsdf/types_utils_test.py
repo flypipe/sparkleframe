@@ -188,3 +188,17 @@ class TestMapTypeUtils:
         df = pl.DataFrame({"col": [[1, 2], [3, 4]]})
         with pytest.raises(TypeError):
             _MapTypeUtils.map_to_struct(df, "col")
+
+    def test_build_df_from_struct_rows_dict_rows_with_nulls(self):
+        """Ensure MapType with a None value is preserved in the materialized struct."""
+        rows = [{"col": {"a": 1, "b": None}}]
+        schema = StructType([StructField("col", MapType(StringType(), IntegerType()))])
+
+        df = _MapTypeUtils.build_df_from_struct_rows(rows, schema)
+
+        # Underlying column should be a Struct with the inferred keys in order of first appearance
+        assert isinstance(df.schema["col"], pl.Struct)
+        assert [f.name for f in df.schema["col"].fields] == ["a", "b"]
+
+        # Data should round-trip exactly, preserving None
+        assert df.to_dicts() == [{"col": {"a": 1, "b": None}}]
