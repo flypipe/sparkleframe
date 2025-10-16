@@ -80,22 +80,6 @@ class TestMapTypeUtils:
         assert [f.name for f in out.schema["col"].fields] == ["id", "m"]
         assert out.select("col").to_dicts() == [{"col": {"id": 1, "m": 10}}, {"col": {"id": 2, "m": 20}}]
 
-    def test_map_to_struct_new_name(self):
-        """Test map to struct conversion with new column name.
-        Ensures that conversion works when creating a new column while preserving the original."""
-        df = pl.DataFrame(
-            {
-                "raw": [
-                    [{"key": "x", "value": 1}],
-                    [{"key": "x", "value": 2}],
-                ]
-            }
-        )
-        out = _MapTypeUtils.map_to_struct(df, "raw", new_name="col")
-        assert "col" in out.columns and "raw" in out.columns
-        assert isinstance(out.schema["col"], pl.Struct)
-        assert out.select("col").to_dicts() == [{"col": {"x": 1}}, {"col": {"x": 2}}]
-
     # ---------- collect_map_keys_for_fields ----------
     @pytest.mark.parametrize(
         "rows",

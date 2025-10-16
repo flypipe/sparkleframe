@@ -93,7 +93,7 @@ class DataFrame(BaseDataFrame):
                         dtype = self.df.schema.get(f.name)
                         if dtype is not None and _MapTypeUtils.is_map_dtype(dtype):
                             # Convert the map column to a Struct (overwrite same name)
-                            self.df = _MapTypeUtils.map_to_struct(self.df, f.name, new_name=f.name)
+                            self.df = _MapTypeUtils.map_to_struct(self.df, f.name)
                     # StructType fields are already Structs — no action needed
         except Exception as e:
             # Never break construction on auto-materialization errors

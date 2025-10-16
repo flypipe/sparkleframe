@@ -64,7 +64,7 @@ class _MapTypeUtils:
 
     @staticmethod
     def map_to_struct(
-        df: pl.DataFrame, col: str, *, keys: Optional[List[str]] = None, new_name: Optional[str] = None
+        df: pl.DataFrame, col: str, *, keys: Optional[List[str]] = None
     ) -> pl.DataFrame:
         """
         Materialize a Struct column from a map-like column so that dot access works.
@@ -73,13 +73,11 @@ class _MapTypeUtils:
         if col not in df.columns:
             raise pl.ColumnNotFoundError(col)
 
-        target_name = new_name or col  # <— overwrite the original column
-
         # Determine the field keys (infer if not provided)
         keys = keys or _MapTypeUtils.infer_map_keys(df, col)
         if not keys:
             # create an empty struct if no keys are present
-            df = df.with_columns(pl.struct([]).alias(target_name))
+            df = df.with_columns(pl.struct([]).alias(col))
             return df
 
         field_exprs = []
@@ -95,7 +93,7 @@ class _MapTypeUtils:
             )
             field_exprs.append(val_expr)
 
-        struct_expr = pl.struct(field_exprs).alias(target_name)
+        struct_expr = pl.struct(field_exprs).alias(col)
         df = df.with_columns(struct_expr)
         return df
 
