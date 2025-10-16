@@ -19,12 +19,7 @@ class SparkSession:
         data: Union[Iterable[Any], pd.DataFrame, pl.DataFrame, list],
         schema: Optional[Union[DataType, StructType, str]] = None,
     ) -> DataFrame:
-        if isinstance(data, pd.DataFrame) or isinstance(data, list):
-            return DataFrame(pl.DataFrame(data), schema=schema)
-        elif isinstance(data, pl.DataFrame):
-            return DataFrame(data, schema=schema)
-        else:
-            raise TypeError("createDataFrame only supports polars.DataFrame or pandas.DataFrame")
+        return DataFrame(data, schema=schema)
 
     class Builder:
 

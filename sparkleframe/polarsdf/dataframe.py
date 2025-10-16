@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Union, Any, List, Optional, Tuple
+from typing import Union, Any, Iterable, Tuple
 from uuid import uuid4
-
+from sparkleframe.polarsdf import types as sft
 import pandas as pd
 import polars as pl
 import pyarrow as pa
@@ -13,6 +13,7 @@ from sparkleframe.polarsdf.column import Column
 from sparkleframe.polarsdf.group import GroupedData
 
 from sparkleframe.polarsdf.types import (
+    DataType,
     StringType,
     IntegerType,
     LongType,
@@ -29,20 +30,89 @@ from sparkleframe.polarsdf.types import (
     StructField,
 )
 
+from typing import List, Optional
+
+from sparkleframe.polarsdf.types_utils import _MapTypeUtils
+
 
 class DataFrame(BaseDataFrame):
 
-    def __init__(self, df: Union[pl.DataFrame, pd.DataFrame, pa.Table], schema: Optional[StructType] = None):
-        if isinstance(df, pl.DataFrame):
-            self.df = df
-        elif isinstance(df, pd.DataFrame):
-            self.df = pl.DataFrame(df)
-        elif isinstance(df, pa.Table):
-            self.df = pl.from_arrow(df)
-        else:
-            raise TypeError("DataFrame constructor accepts polars.DataFrame, pandas.DataFrame, or pyarrow.Table")
+    def __init__(
+        self,
+        data: Union[Iterable[Any], pd.DataFrame, pl.DataFrame, pa.Table, list],
+        schema: Optional[Union[DataType, StructType, str]] = None,
+    ):
+        """
+        Schema-aware constructor:
+        - If schema is StructType and data is list/tuple/records -> build with exact names/dtypes.
+        - If schema is a single DataType -> wrap as StructType([StructField("value", ...)]).
+        - MapType fields are automatically materialized as Polars Structs with fields equal
+          to the ordered union of keys observed in the provided rows.
+        - StructType fields remain Structs (dot access works natively).
+        """
         self._schema = schema
+
+        # --- Build the Polars DataFrame according to schema and data types ---
+        if isinstance(schema, StructType) and isinstance(data, (list, tuple)):
+            self.df = _MapTypeUtils.build_df_from_struct_rows(data, schema)
+
+        elif isinstance(schema, StructType) and isinstance(data, pd.DataFrame):
+            rows = data.to_dict(orient="records")
+            self.df = _MapTypeUtils.build_df_from_struct_rows(rows, schema)
+
+        elif isinstance(schema, DataType) and isinstance(data, (list, tuple)):
+            # Wrap single logical type as a single-field StructType named "value" (Spark-like)
+            wrapped = StructType([StructField("value", schema)])
+            self.df = _MapTypeUtils.build_df_from_struct_rows(data, wrapped)
+
+        elif isinstance(data, pd.DataFrame):
+            # No (or non-StructType) schema: let Polars infer
+            self.df = pl.DataFrame(data)
+
+        elif isinstance(data, pl.DataFrame):
+            self.df = data
+
+        elif isinstance(data, pa.Table):
+            self.df = pl.from_arrow(data)
+
+        elif isinstance(data, list):
+            # No schema provided: let Polars infer
+            self.df = pl.DataFrame(data)
+
+        else:
+            raise TypeError(
+                "createDataFrame only supports polars.DataFrame, pandas.DataFrame, pyarrow.Table, or row iterables"
+            )
+
+        # --- Automatically materialize MapType columns into Structs for dot access ---
+        try:
+            if isinstance(self._schema, StructType):
+                for f in self._schema:
+                    # Only apply to MapType fields
+                    if isinstance(f.dataType, sft.MapType):
+                        dtype = self.df.schema.get(f.name)
+                        if dtype is not None and _MapTypeUtils.is_map_dtype(dtype):
+                            # Convert the map column to a Struct (overwrite same name)
+                            self.df = _MapTypeUtils.map_to_struct(self.df, f.name)
+                    # StructType fields are already Structs — no action needed
+        except Exception as e:
+            # Never break construction on auto-materialization errors
+            import warnings
+
+            warnings.warn(f"MapType materialization skipped due to error: {e}", RuntimeWarning)
+
+        # >>> NEW: enforce primitive casts per provided schema
+        if isinstance(self._schema, StructType):
+            self.df = _MapTypeUtils.apply_schema_casts(self.df, self._schema)
+
+        # --- Call parent constructor (BaseDataFrame) ---
         super().__init__(self.df)
+
+    # -------------------- Helpers for schema-aware construction --------------------
+
+    # inside your DataFrame class
+
+    # -------------------- Selection / projection --------------------
 
     def __getitem__(self, item: Union[int, str, Column, List, Tuple]) -> Union[Column, "DataFrame"]:
         if isinstance(item, str):
@@ -114,6 +184,12 @@ class DataFrame(BaseDataFrame):
     def select(self, *cols: Union[str, Column, List[str], List[Column]]) -> "DataFrame":
         """
         Mimics PySpark's select method using Polars.
+        Select columns or expressions.
+        Supports:
+          - "colname"
+          - "col.field" and deeper paths like "col.a.b.c" (struct/map-derived structs)
+          - Column or list of Columns
+        For dotted paths, the resulting column is aliased to the last path segment.
 
         Args:
             *cols: Column names or Column wrapper objects.
@@ -122,8 +198,31 @@ class DataFrame(BaseDataFrame):
             A new DataFrame with selected columns.
         """
         cols = list(cols)
-        cols = cols[0] if isinstance(cols[0], list) else cols
-        pl_expressions = [col.to_native() if isinstance(col, Column) else col for col in cols]
+        cols = cols[0] if cols and isinstance(cols[0], list) else cols
+        pl_expressions = []
+
+        for c in cols:
+            if isinstance(c, Column):
+                pl_expressions.append(c.to_native())
+                continue
+
+            if isinstance(c, str):
+                if "." in c:
+                    parts = c.split(".")
+                    base, tail = parts[0], parts[1:]
+                    expr = pl.col(base)
+                    for seg in tail:
+                        expr = expr.struct.field(seg)
+                    # Alias to the last segment ("id2" for "col.id.id2")
+                    expr = expr.alias(tail[-1])
+                    pl_expressions.append(expr)
+                else:
+                    pl_expressions.append(pl.col(c))
+                continue
+
+            # fallback: assume it's already a polars expr or valid selector
+            pl_expressions.append(c)
+
         selected_df = self.df.select(*pl_expressions)
         return DataFrame(selected_df)
 
@@ -424,6 +523,9 @@ class DataFrame(BaseDataFrame):
     def schema(self) -> StructType:
         """
         Mimics pyspark.sql.DataFrame.schema by returning the schema as a StructType.
+        Reconstruct a Spark-like StructType from the Polars DataFrame schema.
+        NOTE: Since we materialize MapType columns as Polars Structs, they will be
+        presented here as StructType(...) (with fields inferred from observed keys).
 
         Returns:
             StructType: Spark-like schema derived from the Polars DataFrame schema.
@@ -506,5 +608,15 @@ class DataFrame(BaseDataFrame):
 
         sorted_df = self.df.sort(by=sort_cols, descending=sort_descending, nulls_last=sort_nulls_last)
         return DataFrame(sorted_df)
+
+    def count(self) -> int:
+        """
+        Mimics PySpark's DataFrame.count().
+
+        Returns:
+            int: Number of rows in the DataFrame.
+        """
+        # Polars exposes the row count as a cheap .height property.
+        return int(self.df.height)
 
     orderBy = sort
