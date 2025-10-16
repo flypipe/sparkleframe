@@ -3,19 +3,16 @@ import polars as pl
 import pytest
 
 from sparkleframe.polarsdf.dataframe import DataFrame
-from sparkleframe.polarsdf.session import SparkSession
+
 from sparkleframe.polarsdf.types import StructType, StructField, IntegerType, StringType, LongType, MapType
 
 
 class TestSparkSession:
 
-    @pytest.fixture
-    def spark(self):
-        return SparkSession()
 
-    def test_create_dataframe_from_polars(self, spark):
+    def test_create_dataframe_from_polars(self, sparkle):
         pl_df = pl.DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]})
-        result = spark.createDataFrame(pl_df)
+        result = sparkle.createDataFrame(pl_df)
 
         assert isinstance(result, DataFrame)
 
@@ -24,9 +21,9 @@ class TestSparkSession:
         assert result_native.columns == pl_df.columns
         assert result_native.to_dicts() == pl_df.to_dicts()
 
-    def test_create_dataframe_from_pandas(self, spark):
+    def test_create_dataframe_from_pandas(self, sparkle):
         pd_df = pd.DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]})
-        result = spark.createDataFrame(pd_df)
+        result = sparkle.createDataFrame(pd_df)
 
         assert isinstance(result, DataFrame)
 
@@ -57,15 +54,14 @@ class TestSparkSession:
             ),
         ],
     )
-    def test_create_dataframe_various_inputs_and_schemas(self, input_data, schema):
-        sparkle_session = SparkSession()
+    def test_create_dataframe_various_inputs_and_schemas(self, sparkle, input_data, schema):
 
         expected = pl.DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]})
         if schema:
             expected = expected.with_columns(pl.col("x").cast(pl.Int32))
 
         # Create SparkleFrame DataFrame
-        result = sparkle_session.createDataFrame(input_data, schema=schema)
+        result = sparkle.createDataFrame(input_data, schema=schema)
 
         assert isinstance(result, DataFrame)
 
@@ -77,8 +73,7 @@ class TestSparkSession:
         # Compare schema representation
         assert result.schema.json() == DataFrame(expected).schema.json()
 
-    def test_create_dataframe_nested_struct_map_schema(self):
-        sparkle_session = SparkSession()
+    def test_create_dataframe_nested_struct_map_schema(self, sparkle):
 
         schema = StructType(
             [
@@ -115,7 +110,7 @@ class TestSparkSession:
         )
 
         # Create SparkleFrame DataFrame
-        result = sparkle_session.createDataFrame(input_data, schema=schema)
+        result = sparkle.createDataFrame(input_data, schema=schema)
 
         assert isinstance(result, DataFrame)
 

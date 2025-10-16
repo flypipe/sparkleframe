@@ -4,17 +4,13 @@ import pytest
 import pyspark.sql.types as pst
 from sparkleframe.polarsdf import types as sft
 import polars as pl
-from sparkleframe.polarsdf.session import SparkSession as SparkleSession
 
 from pyspark.sql.functions import col as spark_col
 from sparkleframe.polarsdf.functions import col as sparkle_col
 
 
 class TestTypes:
-    @pytest.fixture
-    def sparkleframe_spark(self):
-        return SparkleSession()
-
+    
     @pytest.mark.parametrize(
         "spark_type, sf_type",
         [
@@ -208,7 +204,7 @@ class TestTypes:
         ],
     )
     def test_roundtrip_polars_to_spark_map_column(
-        self, spark, sparkleframe_spark, rows, spark_schema, sparkle_schema, pointer_select
+        self, spark, sparkle, rows, spark_schema, sparkle_schema, pointer_select
     ):
         """
         Build a Polars DF using the MapType native representation (List[Struct{key,value}]),
@@ -218,7 +214,7 @@ class TestTypes:
         df_spark = spark.createDataFrame(rows, schema=spark_schema)
         df_spark.select(pointer_select).show(truncate=False)
 
-        df_pl = sparkleframe_spark.createDataFrame(rows, schema=sparkle_schema)
+        df_pl = sparkle.createDataFrame(rows, schema=sparkle_schema)
 
         json_df_spark = json.dumps(df_spark.toPandas().to_dict(orient="records"), sort_keys=True)
         json_df_pl = json.dumps(df_pl.toPandas().to_dict(orient="records"), sort_keys=True)
@@ -255,9 +251,9 @@ class TestTypes:
             ),
         ],
     )
-    def test_maptype_misc_inputs(self, spark, sparkleframe_spark, rows, spark_schema, sparkle_schema, pointer_select):
+    def test_maptype_misc_inputs(self, spark, sparkle, rows, spark_schema, sparkle_schema, pointer_select):
         df_spark = spark.createDataFrame(rows, schema=spark_schema)
-        df_pl = sparkleframe_spark.createDataFrame(rows, schema=sparkle_schema)
+        df_pl = sparkle.createDataFrame(rows, schema=sparkle_schema)
 
         # Data equality
         assert json.dumps(df_spark.toPandas().to_dict(orient="records"), sort_keys=True) == json.dumps(
@@ -289,17 +285,17 @@ class TestTypes:
         ],
     )
     def test_maptype_mix_types_fails_spark_passes_polars(
-        self, spark, sparkleframe_spark, rows, spark_schema, sparkle_schema
+        self, spark, sparkle, rows, spark_schema, sparkle_schema
     ):
         with pytest.raises(TypeError):
             spark.createDataFrame(rows, schema=spark_schema)
 
-        df_pl = sparkleframe_spark.createDataFrame(rows, schema=sparkle_schema)
+        df_pl = sparkle.createDataFrame(rows, schema=sparkle_schema)
         assert json.dumps(df_pl.toPandas().to_dict(orient="records"), sort_keys=True) == json.dumps(
             [{"col": {"key": 2, "value": 5}}], sort_keys=True
         )
 
-    def test_maptype_column_manipulation(self, spark, sparkleframe_spark):
+    def test_maptype_column_manipulation(self, spark, sparkle):
         data = [({"key": {"key2": "a"}},)]
         schema_spark = pst.StructType(
             [pst.StructField("col", pst.MapType(pst.StringType(), pst.MapType(pst.StringType(), pst.StringType())))]
@@ -309,7 +305,7 @@ class TestTypes:
         )
 
         df_spark = spark.createDataFrame(data, schema=schema_spark)
-        df_sparkle = sparkleframe_spark.createDataFrame(data, schema=schema_sparkle)
+        df_sparkle = sparkle.createDataFrame(data, schema=schema_sparkle)
 
         json_spark = json.dumps(
             df_spark.withColumn("test", spark_col("col.key.key2")).select("test").toPandas().to_dict(orient="records"),
@@ -325,7 +321,7 @@ class TestTypes:
 
         assert json_spark == json_sparkle
 
-    def test_maptype_column_getitem(self, spark, sparkleframe_spark):
+    def test_maptype_column_getitem(self, spark, sparkle):
         data = [({"key": {"key2": "a"}},)]
         schema_spark = pst.StructType(
             [pst.StructField("col", pst.MapType(pst.StringType(), pst.MapType(pst.StringType(), pst.StringType())))]
@@ -335,7 +331,7 @@ class TestTypes:
         schema_sparkle = sft.StructType(
             [sft.StructField("col", sft.MapType(sft.StringType(), sft.MapType(sft.StringType(), sft.StringType())))]
         )
-        df_sparkle = sparkleframe_spark.createDataFrame(data, schema=schema_sparkle)
+        df_sparkle = sparkle.createDataFrame(data, schema=schema_sparkle)
 
         json_spark = json.dumps(
             df_spark.withColumn("test", spark_col("col").getItem("key").getItem("key2"))
