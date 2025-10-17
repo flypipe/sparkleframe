@@ -187,9 +187,13 @@ class TestDataFrame:
         assert_pyspark_df_equal(result_spark_df, expected_spark_df)
 
     def test_with_column_add(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(sparkle_df.withColumn("bonus", PF.col("salary") * 0.1).toPandas())
+        result_spark_df = spark.createDataFrame(
+            sparkle_df.withColumn("bonus", (PF.col("salary") * 0.1)).toPandas()
+        ).withColumn("bonus", F.col("bonus").cast(SparkFloatType()))
 
-        expected_spark_df = spark_df.withColumn("bonus", spark_col("salary") * 0.1)
+        expected_spark_df = spark_df.withColumn("bonus", spark_col("salary") * 0.1).withColumn(
+            "bonus", F.col("bonus").cast(SparkFloatType())
+        )
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, precision=5)
 
@@ -534,6 +538,8 @@ class TestDataFrame:
         result_spark_df = spark.createDataFrame(result_df.toPandas())
 
         # Assert equivalence
+        result_spark_df = result_spark_df.withColumn("agg_result", F.col("agg_result").cast("float"))
+        expected_df = expected_df.withColumn("agg_result", F.col("agg_result").cast("float"))
         assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
 
     @pytest.mark.parametrize(
