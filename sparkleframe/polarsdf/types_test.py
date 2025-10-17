@@ -5,8 +5,9 @@ import pyspark.sql.types as pst
 from sparkleframe.polarsdf import types as sft
 import polars as pl
 
-from pyspark.sql.functions import col as spark_col
-from sparkleframe.polarsdf.functions import col as sparkle_col
+import pyspark.sql.functions as F
+import sparkleframe.polarsdf.functions as SF
+from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal, _get_json_from_dataframe
 
 
 class TestTypes:
@@ -306,14 +307,11 @@ class TestTypes:
         df_sparkle = sparkle.createDataFrame(data, schema=schema_sparkle)
 
         json_spark = json.dumps(
-            df_spark.withColumn("test", spark_col("col.key.key2")).select("test").toPandas().to_dict(orient="records"),
+            df_spark.withColumn("test", F.col("col.key.key2")).select("test").toPandas().to_dict(orient="records"),
             sort_keys=True,
         )
         json_sparkle = json.dumps(
-            df_sparkle.withColumn("test", sparkle_col("col.key.key2"))
-            .select("test")
-            .toPandas()
-            .to_dict(orient="records"),
+            df_sparkle.withColumn("test", SF.col("col.key.key2")).select("test").toPandas().to_dict(orient="records"),
             sort_keys=True,
         )
 
@@ -332,14 +330,14 @@ class TestTypes:
         df_sparkle = sparkle.createDataFrame(data, schema=schema_sparkle)
 
         json_spark = json.dumps(
-            df_spark.withColumn("test", spark_col("col").getItem("key").getItem("key2"))
+            df_spark.withColumn("test", F.col("col").getItem("key").getItem("key2"))
             .select("test")
             .toPandas()
             .to_dict(orient="records"),
             sort_keys=True,
         )
         json_sparkle = json.dumps(
-            df_sparkle.withColumn("test", sparkle_col("col").getItem("key").getItem("key2"))
+            df_sparkle.withColumn("test", SF.col("col").getItem("key").getItem("key2"))
             .select("test")
             .toPandas()
             .to_dict(orient="records"),
@@ -347,3 +345,256 @@ class TestTypes:
         )
 
         assert json_spark == json_sparkle
+
+    @pytest.mark.parametrize(
+        "elem_sf, elem_ps, contains_null",
+        [
+            (sft.IntegerType(), pst.IntegerType(), True),
+            (sft.StringType(), pst.StringType(), False),
+            (sft.DoubleType(), pst.DoubleType(), True),
+        ],
+    )
+    def test_arraytype_equivalence_api(self, elem_sf, elem_ps, contains_null):
+        sf_arr = sft.ArrayType(elem_sf, containsNull=contains_null)
+        ps_arr = pst.ArrayType(elem_ps, containsNull=contains_null)
+
+        # API parity with pyspark
+        assert sf_arr.typeName() == ps_arr.typeName() == "array"
+        assert sf_arr.simpleString() == ps_arr.simpleString()
+
+        arr_json = {
+            "type": "array",
+            "elementType": elem_ps.jsonValue(),
+            "containsNull": contains_null,
+        }
+        assert sf_arr.jsonValue() == ps_arr.jsonValue() == arr_json
+
+        # __repr__ shape (not byte-for-byte identical classes, but structure should match)
+        assert "ArrayType(" in repr(sf_arr)
+        assert sf_arr.containsNull == contains_null
+
+    @pytest.mark.parametrize(
+        "elem_sf, expected_inner",
+        [
+            (sft.IntegerType(), pl.Int32),
+            (sft.LongType(), pl.Int64),
+            (sft.StringType(), pl.Utf8),
+        ],
+    )
+    def test_arraytype_to_native_dtype(self, elem_sf, expected_inner):
+        native = sft.ArrayType(elem_sf).to_native()
+        assert isinstance(native, pl.List)
+        assert native.inner == expected_inner
+
+    @pytest.mark.parametrize(
+        "rows, spark_schema, sparkle_schema",
+        [
+            # 1) array<int> with containsNull=False
+            (
+                [
+                    ([1, 2, 3],),
+                    ([4, 5, 6],),
+                ],
+                pst.StructType([pst.StructField("col", pst.ArrayType(pst.IntegerType(), containsNull=False))]),
+                sft.StructType([sft.StructField("col", sft.ArrayType(sft.IntegerType(), containsNull=False))]),
+            ),
+            # 2) array<int> with null elements allowed
+            (
+                [
+                    ([1, 2, 3],),
+                    ([4, None, 6],),
+                ],
+                pst.StructType([pst.StructField("col", pst.ArrayType(pst.IntegerType(), containsNull=True))]),
+                sft.StructType([sft.StructField("col", sft.ArrayType(sft.IntegerType(), containsNull=True))]),
+            ),
+            # 3) array<array<int>>
+            (
+                [
+                    ([[1, 2], [3]],),
+                    ([[4], []],),
+                ],
+                pst.StructType(
+                    [
+                        pst.StructField(
+                            "col",
+                            pst.ArrayType(pst.ArrayType(pst.IntegerType(), containsNull=True), containsNull=True),
+                        )
+                    ]
+                ),
+                sft.StructType(
+                    [
+                        sft.StructField(
+                            "col",
+                            sft.ArrayType(sft.ArrayType(sft.IntegerType(), containsNull=True), containsNull=True),
+                        )
+                    ]
+                ),
+            ),
+            # 4) array<struct<id:int,name:string>>
+            (
+                [
+                    ([{"id": 1, "name": "a"}, {"id": 2, "name": "b"}],),
+                    ([{"id": 3, "name": None}],),
+                ],
+                pst.StructType(
+                    [
+                        pst.StructField(
+                            "col",
+                            pst.ArrayType(
+                                pst.StructType(
+                                    [
+                                        pst.StructField("id", pst.IntegerType()),
+                                        pst.StructField("name", pst.StringType()),
+                                    ]
+                                ),
+                                containsNull=True,
+                            ),
+                        )
+                    ]
+                ),
+                sft.StructType(
+                    [
+                        sft.StructField(
+                            "col",
+                            sft.ArrayType(
+                                sft.StructType(
+                                    [
+                                        sft.StructField("id", sft.IntegerType()),
+                                        sft.StructField("name", sft.StringType()),
+                                    ]
+                                ),
+                                containsNull=True,
+                            ),
+                        )
+                    ]
+                ),
+            ),
+            # 5) array<map<string,int>>
+            (
+                [
+                    ([{"a": 1, "b": 2}],),
+                ],
+                pst.StructType(
+                    [pst.StructField("col", pst.ArrayType(pst.MapType(pst.StringType(), pst.IntegerType()), True))]
+                ),
+                sft.StructType(
+                    [sft.StructField("col", sft.ArrayType(sft.MapType(sft.StringType(), sft.IntegerType()), True))]
+                ),
+            ),
+            (
+                [({"a": 1, "b": 2},)],
+                pst.StructType([pst.StructField("col", pst.MapType(pst.StringType(), pst.IntegerType(), True))]),
+                sft.StructType([sft.StructField("col", sft.MapType(sft.StringType(), sft.IntegerType(), True))]),
+            ),
+        ],
+    )
+    def test_roundtrip_polars_to_spark_array_column(self, spark, sparkle, rows, spark_schema, sparkle_schema):
+        """
+        Build both Spark and Sparkle DataFrames with ArrayType schemas and ensure
+        data round-trips to identical pandas JSON for easy deep-equality.
+        """
+
+        # Spark DF from Python rows
+        df_spark = spark.createDataFrame(rows, schema=spark_schema)
+
+        # Sparkle DF (Polars backend) with equivalent schema
+        df_pl = sparkle.createDataFrame(rows, schema=sparkle_schema)
+
+        assert assert_sparkle_spark_frame_are_equal(df_spark, df_pl)
+
+    def test_getItem_mixed_array_map_struct(self, spark, sparkle):
+        # ---------- Data ----------
+        # 3 columns:
+        #   m:       map<string,int>                    -> {"a":1,"b":2}
+        #   arr_m:   array<map<string,int>>             -> [{"a":1,"b":2}, {"a":3}]
+        #   st:      struct<inner_m:map<string,int>,    -> {"inner_m":{"k":5}, "arr":[9,8]}
+        #                   arr:array<int>>
+        rows = [
+            (
+                {"a": 1, "b": 2},
+                [{"a": 1, "b": 2}, {"a": 3}],
+                {"inner_m": {"k": 5}, "arr": [9, 8]},
+            )
+        ]
+
+        # ---------- Schemas ----------
+        spark_schema = pst.StructType(
+            [
+                pst.StructField("m", pst.MapType(pst.StringType(), pst.IntegerType()), True),
+                pst.StructField("arr_m", pst.ArrayType(pst.MapType(pst.StringType(), pst.IntegerType()), True), True),
+                pst.StructField(
+                    "st",
+                    pst.StructType(
+                        [
+                            pst.StructField("inner_m", pst.MapType(pst.StringType(), pst.IntegerType()), True),
+                            pst.StructField("arr", pst.ArrayType(pst.IntegerType(), True), True),
+                        ]
+                    ),
+                    True,
+                ),
+            ]
+        )
+
+        sparkle_schema = sft.StructType(
+            [
+                sft.StructField("m", sft.MapType(sft.StringType(), sft.IntegerType()), True),
+                sft.StructField("arr_m", sft.ArrayType(sft.MapType(sft.StringType(), sft.IntegerType()), True), True),
+                sft.StructField(
+                    "st",
+                    sft.StructType(
+                        [
+                            sft.StructField("inner_m", sft.MapType(sft.StringType(), sft.IntegerType()), True),
+                            sft.StructField("arr", sft.ArrayType(sft.IntegerType(), True), True),
+                        ]
+                    ),
+                    True,
+                ),
+            ]
+        )
+
+        # ---------- DataFrames ----------
+        df_spark = spark.createDataFrame(rows, schema=spark_schema)
+        df_sparkle = sparkle.createDataFrame(rows, schema=sparkle_schema)
+
+        # ---------- Selections using getItem ----------
+        # What we check:
+        #   m["a"]                        -> 1
+        #   arr_m[0]["b"]                 -> 2
+        #   arr_m[1]["a"]                 -> 3
+        #   arr_m[1]["b"]                 -> NULL (missing key)
+        #   st["inner_m"]["k"]            -> 5
+        #   st["arr"][1]                  -> 8
+        sel_spark = df_spark.select(
+            F.col("m").getItem("a").alias("m_a"),
+            F.col("arr_m").getItem(0).getItem("b").alias("arrm0_b"),
+            F.col("arr_m").getItem(1).getItem("a").alias("arrm1_a"),
+            F.col("arr_m").getItem(1).getItem("b").alias("arrm1_b_missing"),
+            F.col("st").getItem("inner_m").getItem("k").alias("st_k"),
+            F.col("st").getItem("arr").getItem(1).alias("st_arr1"),
+        )
+
+        sel_sparkle = df_sparkle.select(
+            SF.col("m").getItem("a").alias("m_a"),
+            SF.col("arr_m").getItem(0).getItem("b").alias("arrm0_b"),
+            SF.col("arr_m").getItem(1).getItem("a").alias("arrm1_a"),
+            SF.col("arr_m").getItem(1).getItem("b").alias("arrm1_b_missing"),
+            SF.col("st").getItem("inner_m").getItem("k").alias("st_k"),
+            SF.col("st").getItem("arr").getItem(1).alias("st_arr1"),
+        )
+        sel_spark.show(truncate=False)
+        sel_sparkle.show(truncate=False)
+
+        def _to_sorted_json(df):
+            """Utility: collect a single-row DF to stable JSON for easy equality asserts."""
+            pdf = df.toPandas()
+            return json.dumps(pdf.to_dict(orient="records"), sort_keys=True)
+
+        # ---------- Compare ----------
+        got_spark = _get_json_from_dataframe(sel_spark)
+        got_sparkle = _get_json_from_dataframe(sel_sparkle)
+
+        # (Optional) quick visibility during dev:
+        print(got_spark)
+        print(got_sparkle)
+
+        assert got_spark == got_sparkle
