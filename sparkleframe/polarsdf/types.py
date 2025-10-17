@@ -289,7 +289,7 @@ class ArrayType(DataType):
     elementType : DataType
         The type of elements in the array.
     containsNull : bool, default True
-        Whether the array can contain null values.
+        Whether the array can contain null values or not.
     """
 
     def __init__(self, elementType: DataType, containsNull: bool = True):
