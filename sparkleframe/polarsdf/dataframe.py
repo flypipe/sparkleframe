@@ -6,7 +6,6 @@ from sparkleframe.polarsdf import types as sft
 import pandas as pd
 import polars as pl
 import pyarrow as pa
-from pandas import DataFrame as PandasDataFrame
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf.column import Column
@@ -262,9 +261,86 @@ class DataFrame(BaseDataFrame):
         renamed_df = self.df.rename({existing: new})
         return DataFrame(renamed_df)
 
-    def toPandas(self) -> PandasDataFrame:
-        """Convert the underlying Polars DataFrame to a Pandas DataFrame."""
-        return self.df.to_arrow().to_pandas()
+    def toPandas(self) -> pd.DataFrame:
+        """
+        Convert the underlying Polars DataFrame to a Pandas DataFrame,
+        ensuring nested arrays/maps/structs are JSON-friendly.
+        Removes keys inside dicts where the value is None,
+        but keeps the column and row structure intact.
+        """
+        import math
+        import numpy as np
+        import pandas as pd
+
+        df = self.df.to_arrow().to_pandas()
+
+        def is_null(x) -> bool:
+            try:
+                return pd.isna(x) and not isinstance(x, (str, bytes))
+            except Exception:
+                return False
+
+        def convert_number(x):
+            if isinstance(x, (np.integer,)):
+                return int(x)
+            if isinstance(x, int):
+                return x
+            if isinstance(x, (np.floating, float)):
+                if math.isnan(x):
+                    return None
+                return int(x) if float(x).is_integer() else float(x)
+            return x
+
+        # --- helpers to collapse Polars map layout(s) ---
+        def _is_kv(d) -> bool:
+            return isinstance(d, dict) and "key" in d and "value" in d
+
+        def _kv_list_to_dict(kv_list: list):
+            # [{"key":k,"value":v}, ...] -> {k: v}, skipping null values
+            out = {}
+            for item in kv_list:
+                k = convert(item["key"])
+                v = convert(item.get("value"))
+                if v is not None:
+                    out[k] = v
+            return out
+
+        def convert(val):
+            if is_null(val):
+                return None
+
+            # NumPy arrays -> list
+            if isinstance(val, np.ndarray):
+                return [convert(v) for v in val.tolist()]
+
+            # collapse map and array<map> encodings
+            if isinstance(val, list):
+                # Case 1: a single map encoded as a list of {"key","value"} dicts
+                if val and all(_is_kv(item) for item in val):
+                    return _kv_list_to_dict(val)
+
+                # Case 2: array<map<...>> encoded as list of kv-lists
+                if val and all(isinstance(item, list) and (not item or all(_is_kv(x) for x in item)) for item in val):
+                    return [_kv_list_to_dict(item) for item in val]
+
+                # General list -> recurse
+                return [convert(v) for v in val]
+
+            if isinstance(val, tuple):
+                return [convert(v) for v in val]
+
+            if isinstance(val, dict):
+                # Drop only keys whose converted value is None
+                out = {}
+                for k, v in val.items():
+                    cv = convert(v)
+                    if cv is not None:
+                        out[k] = cv
+                return out
+
+            return convert_number(val)
+
+        return df.applymap(convert)
 
     def to_arrow(self) -> pa.Table:
         """
@@ -523,26 +599,52 @@ class DataFrame(BaseDataFrame):
     def schema(self) -> StructType:
         """
         Mimics pyspark.sql.DataFrame.schema by returning the schema as a StructType.
-        Reconstruct a Spark-like StructType from the Polars DataFrame schema.
-        NOTE: Since we materialize MapType columns as Polars Structs, they will be
-        presented here as StructType(...) (with fields inferred from observed keys).
-
-        Returns:
-            StructType: Spark-like schema derived from the Polars DataFrame schema.
         """
 
-        def polars_dtype_to_spark_dtype(name: str, dtype: pl.DataType) -> StructField:
+        def _declared_type_for(col_name: str) -> Optional[DataType]:
+            if isinstance(self._schema, StructType):
+                for f in self._schema:
+                    if f.name == col_name:
+                        return f.dataType
+            return None
 
-            # Handle decimals
+        def _to_spark_datatype(dtype: pl.DataType, col_name: Optional[str] = None) -> DataType:
+            # --- NEW: detect native map layout (List(Struct["key","value"])) ---
+            if _MapTypeUtils.is_map_dtype(dtype):
+                key_dt_pl = dtype.inner.fields[0].dtype
+                val_dt_pl = dtype.inner.fields[1].dtype
+                key_dt = _to_spark_datatype(key_dt_pl)  # typically StringType()
+                val_dt = _to_spark_datatype(val_dt_pl)  # may itself be a Map/Array/Struct/etc.
+
+                # preserve declared valueContainsNull if we have it
+                value_contains_null = True
+                if col_name is not None:
+                    decl = _declared_type_for(col_name)
+                    if isinstance(decl, sft.MapType):
+                        value_contains_null = decl.valueContainsNull
+
+                return sft.MapType(key_dt, val_dt, valueContainsNull=value_contains_null)
+
+            # Decimals
             if isinstance(dtype, pl.Decimal):
-                return StructField(name, DecimalType(dtype.precision, dtype.scale))
+                return DecimalType(dtype.precision, dtype.scale)
 
-            # Handle structs (recursively)
+            # Structs (recursive)
             if isinstance(dtype, pl.Struct):
-                nested_fields = [polars_dtype_to_spark_dtype(field.name, field.dtype) for field in dtype.fields]
-                return StructField(name, StructType(nested_fields))
+                nested_fields = [StructField(f.name, _to_spark_datatype(f.dtype)) for f in dtype.fields]
+                return StructType(nested_fields)
 
-            # Basic type mappings
+            # Arrays
+            if isinstance(dtype, pl.List):
+                elem_dtype = _to_spark_datatype(dtype.inner)
+                contains_null = True
+                if col_name is not None:
+                    decl = _declared_type_for(col_name)
+                    if isinstance(decl, sft.ArrayType):
+                        contains_null = decl.containsNull
+                return sft.ArrayType(elem_dtype, containsNull=contains_null)
+
+            # Scalars
             POLARS_TO_SPARK = {
                 pl.Utf8: StringType(),
                 pl.Int32: IntegerType(),
@@ -560,14 +662,23 @@ class DataFrame(BaseDataFrame):
                 pl.UInt16: ShortType(),
                 pl.Binary: BinaryType(),
             }
-
             for pl_type, spark_type in POLARS_TO_SPARK.items():
                 if isinstance(dtype, pl_type):
-                    return StructField(name, spark_type)
+                    return spark_type
 
-            raise TypeError(f"Unsupported dtype '{dtype}' for column '{name}'")
+            raise TypeError(f"Unsupported dtype '{dtype}'")
 
-        return StructType([polars_dtype_to_spark_dtype(name, dtype) for name, dtype in self.df.schema.items()])
+        def polars_dtype_to_spark_structfield(name: str, dtype: pl.DataType) -> StructField:
+            decl = _declared_type_for(name)
+            # Preserve declared ArrayType(MapType(...)) exactly as provided
+            if isinstance(decl, sft.ArrayType) and isinstance(decl.elementType, sft.MapType):
+                return StructField(name, decl)
+            # Preserve declared MapType exactly as provided
+            if isinstance(decl, sft.MapType):
+                return StructField(name, decl)
+            return StructField(name, _to_spark_datatype(dtype, col_name=name))
+
+        return StructType([polars_dtype_to_spark_structfield(name, dtype) for name, dtype in self.df.schema.items()])
 
     def sort(self, *cols: Union[str, Column, List[Union[str, Column]]]) -> DataFrame:
         """

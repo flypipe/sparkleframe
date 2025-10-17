@@ -103,6 +103,9 @@ class _MapTypeUtils:
         def iter_map_paths(prefix: str, dt: sft.DataType):
             if isinstance(dt, sft.MapType):
                 yield prefix
+            elif isinstance(dt, sft.ArrayType) and isinstance(dt.elementType, sft.MapType):
+                # treat array<map> as a "map-like" node for key union
+                yield prefix
             elif isinstance(dt, sft.StructType):
                 for sf in dt.fields:
                     child_prefix = f"{prefix}.{sf.name}" if prefix else sf.name
@@ -191,52 +194,74 @@ class _MapTypeUtils:
                     continue
 
                 cell = get_nested_cell(row, path)
-                walk(node, dt, cell)
+                if isinstance(dt, sft.MapType):
+                    walk(node, dt, cell)
+                elif isinstance(dt, sft.ArrayType) and isinstance(dt.elementType, sft.MapType):
+                    if isinstance(cell, list):
+                        for elem in cell:
+                            walk(node, dt.elementType, elem)
 
         return roots
 
+    # types_utils.py
+
     @classmethod
     def build_df_from_struct_rows(cls, rows: Iterable[Any], schema: StructType) -> pl.DataFrame:
+        roots_by_path = cls.collect_map_keys_for_fields(rows, schema)
 
-        # 1) Collect unions for all MapType paths
-        roots_by_path = cls.collect_map_keys_for_fields(rows, schema)  # path -> KeyUnion
+        # -------- helpers --------
+        def _top_index():
+            return {f.name: i for i, f in enumerate(schema.fields)}
 
-        # ---------- FIX: dtype builder uses the KeyUnion node, not just the path ----------
-        def dtype_from_path(dt: sft.DataType, path: str, node: Optional[_KeyUnion]) -> pl.DataType:
-            if isinstance(dt, sft.MapType):
-                node = node if node is not None else roots_by_path.get(path)
-                keys_here = [] if node is None else node.keys
+        top_idx = _top_index()
 
-                if isinstance(dt.valueType, sft.MapType):
-                    # for each parent key k, the child keys live in node.children[k]
-                    struct_fields = []
-                    for k in keys_here:
-                        child_node = None if node is None else node.children.get(k)
-                        child_dtype = dtype_from_path(dt.valueType, f"{path}.{k}", child_node)
-                        struct_fields.append(pl.Field(k, child_dtype))
-                    return pl.Struct(struct_fields)
+        def _resolve_dtype_at_path(path: str, dt=None):
+            dt = schema if dt is None else dt
+            if path == "":
+                return dt
+            for seg in path.split("."):
+                if seg == "":
+                    continue
+                if isinstance(dt, sft.StructType):
+                    dt = next(sf.dataType for sf in dt.fields if sf.name == seg)
                 else:
-                    # leaf values
-                    return pl.Struct([pl.Field(k, dt.valueType.to_native()) for k in keys_here])
+                    break
+            return dt
 
-            if isinstance(dt, sft.StructType):
-                return pl.Struct(
-                    [
-                        pl.Field(sf.name, dtype_from_path(sf.dataType, f"{path}.{sf.name}" if path else sf.name, None))
-                        for sf in dt.fields
-                    ]
-                )
+        def _get_cell(row_obj, path: str):
+            """Fetch value at a schema path from a row (dict or tuple/list)."""
+            if path == "":
+                return row_obj
+            parts = path.split(".")
+            first = parts[0]
 
-            return dt.to_native()
+            if isinstance(row_obj, dict):
+                cur = row_obj.get(first, None)
+            elif isinstance(row_obj, (list, tuple)):
+                idx = top_idx.get(first, None)
+                if idx is None or idx >= len(row_obj):
+                    return None
+                cur = row_obj[idx]
+                # support shape: ({col: ...},) and ({...},)
+                if len(parts) == 1 and isinstance(cur, dict) and first in cur:
+                    cur = cur[first]
+            else:
+                return None
 
-        colnames = [f.name for f in schema.fields]
-        coltypes = [dtype_from_path(f.dataType, f.name, None) for f in schema.fields]
+            for seg in parts[1:]:
+                if cur is None:
+                    return None
+                if isinstance(cur, dict):
+                    cur = cur.get(seg, None)
+                else:
+                    return None
+            return cur
 
-        # ---------- coercion stays the same; it already passes child_node ----------
-        def as_dict_or_none(obj):
+        def _as_dict_or_none(obj):
             if obj is None:
                 return None
             if isinstance(obj, list):
+                # [{"key":k,"value":v}, ...] -> {k:v}
                 try:
                     return {kv.get("key"): kv.get("value") for kv in obj}
                 except Exception:
@@ -245,62 +270,150 @@ class _MapTypeUtils:
                 return obj
             return None
 
-        def get_nested(obj, seg):
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                return obj.get(seg, None)
-            return None
+        # -------- backfill unions for array<map<…>> if empty --------
+        for path, node in list(roots_by_path.items()):
+            dt = _resolve_dtype_at_path(path)
+            if isinstance(dt, sft.ArrayType) and isinstance(dt.elementType, sft.MapType) and not node.keys:
+                seen = set()
+                for row in rows:
+                    cell = _get_cell(row, path)
+                    if isinstance(cell, list):
+                        for elem in cell:
+                            d = elem if isinstance(elem, dict) else _as_dict_or_none(elem)
+                            if isinstance(d, dict):
+                                for k in d.keys():
+                                    if k not in seen:
+                                        node.add_key(k)
+                                        seen.add(k)
 
-        def coerce_value(val, dt: sft.DataType, path: str, node: Optional[_KeyUnion]):
+        # -------- dtype construction --------
+        def dtype_from_path(dt: sft.DataType, path: str, node: Optional["_KeyUnion"]) -> pl.DataType:
+            # map<k,v> -> Struct(unioned keys)
             if isinstance(dt, sft.MapType):
                 node = node if node is not None else roots_by_path.get(path)
                 keys_here = [] if node is None else node.keys
-                d = as_dict_or_none(val) or {}
+                if isinstance(dt.valueType, sft.MapType):
+                    fields = []
+                    for k in keys_here:
+                        child_node = None if node is None else node.children.get(k)
+                        child_dtype = dtype_from_path(dt.valueType, f"{path}.{k}", child_node)
+                        fields.append(pl.Field(k, child_dtype))
+                    return pl.Struct(fields)
+                else:
+                    return pl.Struct([pl.Field(k, dt.valueType.to_native()) for k in keys_here])
+
+            # array<map<k,v>> -> List(Struct(unioned keys))
+            if isinstance(dt, sft.ArrayType) and isinstance(dt.elementType, sft.MapType):
+                node = node if node is not None else roots_by_path.get(path)
+                keys_here = [] if node is None else node.keys
+                elem_fields = [pl.Field(k, dt.elementType.valueType.to_native()) for k in keys_here]
+                return pl.List(pl.Struct(elem_fields))
+
+            # generic arrays
+            if isinstance(dt, sft.ArrayType):
+                inner = dtype_from_path(dt.elementType, path, None)
+                return pl.List(inner)
+
+            # struct
+            if isinstance(dt, sft.StructType):
+                return pl.Struct(
+                    [
+                        pl.Field(
+                            sf.name,
+                            dtype_from_path(
+                                sf.dataType,
+                                f"{path}.{sf.name}" if path else sf.name,
+                                roots_by_path.get(f"{path}.{sf.name}" if path else sf.name),
+                            ),
+                        )
+                        for sf in dt.fields
+                    ]
+                )
+
+            # leaf
+            return dt.to_native()
+
+        colnames = [f.name for f in schema.fields]
+        # IMPORTANT: pass the node for each top-level field
+        coltypes = [dtype_from_path(f.dataType, f.name, roots_by_path.get(f.name)) for f in schema.fields]
+
+        # -------- value coercion --------
+        def coerce_value(val, dt: sft.DataType, path: str, node: Optional["_KeyUnion"]):
+            # map<k,v> -> dict with unioned keys
+            if isinstance(dt, sft.MapType):
+                node = node if node is not None else roots_by_path.get(path)
+                keys_here = [] if node is None else node.keys
+                d = _as_dict_or_none(val) or {}
                 out = {}
                 for k in keys_here:
-                    subval = d.get(k, None)
                     if isinstance(dt.valueType, sft.MapType):
                         child_node = None if node is None else node.children.get(k)
-                        out[k] = coerce_value(subval, dt.valueType, f"{path}.{k}", child_node)
+                        out[k] = coerce_value(d.get(k, None), dt.valueType, f"{path}.{k}", child_node)
                     else:
-                        out[k] = subval
+                        out[k] = d.get(k, None)
                 return out
 
+            # array<map<k,v>> -> list of struct dicts with unioned keys
+            if isinstance(dt, sft.ArrayType) and isinstance(dt.elementType, sft.MapType):
+                node = node if node is not None else roots_by_path.get(path)
+                keys_here = [] if node is None else node.keys
+                if val is None:
+                    return None
+                items = val if isinstance(val, list) else [val]
+                out_list = []
+                for elem in items:
+                    d = elem if isinstance(elem, dict) else _as_dict_or_none(elem) or {}
+                    out_elem = {k: d.get(k, None) for k in keys_here}
+                    out_list.append(out_elem)
+                return out_list
+
+            # generic array
+            if isinstance(dt, sft.ArrayType):
+                if val is None:
+                    return None
+                items = val if isinstance(val, list) else [val]
+                return [coerce_value(elem, dt.elementType, path, None) for elem in items]
+
+            # struct
             if isinstance(dt, sft.StructType):
                 src = val if isinstance(val, dict) else {}
                 return {
                     sf.name: coerce_value(
-                        get_nested(src, sf.name), sf.dataType, f"{path}.{sf.name}" if path else sf.name, None
+                        src.get(sf.name, None),
+                        sf.dataType,
+                        f"{path}.{sf.name}" if path else sf.name,
+                        roots_by_path.get(f"{path}.{sf.name}" if path else sf.name),
                     )
                     for sf in dt.fields
                 }
 
+            # leaf
             return val
 
         cols = {name: [] for name in colnames}
         for row in rows:
             if isinstance(row, dict):
                 for f in schema.fields:
-                    cols[f.name].append(coerce_value(row.get(f.name, None), f.dataType, f.name, None))
+                    cols[f.name].append(
+                        coerce_value(row.get(f.name, None), f.dataType, f.name, roots_by_path.get(f.name))
+                    )
             elif isinstance(row, (list, tuple)):
                 if len(schema.fields) == 1 and len(row) == 1:
                     f = schema.fields[0]
                     raw = row[0]
-                    # If user provided {"k": {...}} for a single-field schema "k", unwrap to the inner value.
                     if isinstance(raw, dict) and f.name in raw:
                         raw = raw[f.name]
-                    cols[f.name].append(coerce_value(raw, f.dataType, f.name, None))
+                    cols[f.name].append(coerce_value(raw, f.dataType, f.name, roots_by_path.get(f.name)))
                 else:
                     if len(row) != len(schema.fields):
                         raise ValueError(f"Row length {len(row)} does not match schema length {len(schema.fields)}")
                     for f, raw in zip(schema.fields, row):
-                        cols[f.name].append(coerce_value(raw, f.dataType, f.name, None))
+                        cols[f.name].append(coerce_value(raw, f.dataType, f.name, roots_by_path.get(f.name)))
             else:
                 if len(schema.fields) != 1:
                     raise TypeError(f"Scalar row provided but schema has {len(schema.fields)} fields")
                 f = schema.fields[0]
-                cols[f.name].append(coerce_value(row, f.dataType, f.name, None))
+                cols[f.name].append(coerce_value(row, f.dataType, f.name, roots_by_path.get(f.name)))
 
         schema_pl = list(zip(colnames, coltypes))
         return pl.DataFrame(cols, schema=schema_pl)
@@ -309,10 +422,10 @@ class _MapTypeUtils:
     def apply_schema_casts(df: pl.DataFrame, schema: StructType) -> pl.DataFrame:
         """
         Enforce the provided StructType's dtypes on self.df (post-construction).
-        Cast only primitive leaf types; skip Struct/Map (already handled elsewhere).
+        Cast only primitive leaf types; skip Struct, Map, and Array (already materialized correctly).
         """
         if not isinstance(schema, StructType):
-            return
+            return df
 
         for field_ in schema.fields:
             name = field_.name
@@ -320,13 +433,16 @@ class _MapTypeUtils:
                 continue
 
             dt = field_.dataType
-            # Skip complex types; they’re already materialized correctly
-            if isinstance(dt, (sft.StructType, sft.MapType)):
+
+            # Skip complex or nested types (Struct, Map, Array)
+            if isinstance(dt, (sft.StructType, sft.MapType, sft.ArrayType)):
                 continue
 
             target = dt.to_native()
-            if df.schema[name] != target:
-                # Cast and overwrite the same column name
-                df = df.with_columns([pl.col(name).cast(target).alias(name)])
+            current = df.schema[name]
+
+            # Only cast if the type truly differs and both are scalar types
+            if current != target:
+                df = df.with_columns(pl.col(name).cast(target).alias(name))
 
         return df
