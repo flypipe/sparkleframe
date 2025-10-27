@@ -22,6 +22,7 @@ from pyspark.sql.functions import (
     dense_rank as spark_dense_rank,
     row_number as spark_row_number,
     abs as spark_abs,
+    lower as spark_lower,
 )
 from pyspark.sql.types import IntegerType as SparkIntegerType
 from pyspark.sql.window import Window as SparkWindow
@@ -47,6 +48,7 @@ from sparkleframe.polarsdf.functions import (
     dense_rank,
     row_number,
     abs,
+    lower,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import to_records, create_spark_df
@@ -491,3 +493,28 @@ class TestFunctions:
 
         # Compare
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True, allow_nan_equality=True)
+
+    @pytest.mark.parametrize("col_input", ["txt", col("txt")])
+    @pytest.mark.parametrize(
+        "input_values",
+        [
+            ["ABC", "abc", "AbC"],                      # mixed case
+            ["", None, "Already lower"],                # empty and None
+            ["MiXeD 123!@$", "CamelCase", "UPPER lower"],  # with numbers/symbols
+        ],
+    )
+    def test_lower_str_vs_column(self, spark, col_input, input_values):
+        # Prepare input data
+        df_data = pd.DataFrame({"txt": input_values})
+
+        # Expected Spark result
+        spark_input_df = spark.createDataFrame(df_data)
+        expected_df = spark_input_df.select(spark_lower("txt").alias("lowered"))
+
+        # SparkleFrame / Polars result
+        polars_df = DataFrame(pl.DataFrame(df_data))
+        result_sf = polars_df.select(lower(col_input).alias("lowered"))
+        result_spark_df = create_spark_df(spark, result_sf)
+
+        # Compare
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
