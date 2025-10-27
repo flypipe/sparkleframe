@@ -498,8 +498,8 @@ class TestFunctions:
     @pytest.mark.parametrize(
         "input_values",
         [
-            ["ABC", "abc", "AbC"],                      # mixed case
-            ["", None, "Already lower"],                # empty and None
+            ["ABC", "abc", "AbC"],  # mixed case
+            ["", None, "Already lower"],  # empty and None
             ["MiXeD 123!@$", "CamelCase", "UPPER lower"],  # with numbers/symbols
         ],
     )

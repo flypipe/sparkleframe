@@ -180,6 +180,7 @@ class Column:
             raise TypeError(f"contains() expects a string substring, got {type(substring).__name__}")
         return Column(self.expr.str.contains(substring, literal=True))
 
+
 def _to_expr(value):
     if isinstance(value, Column):
         return value.to_native()
