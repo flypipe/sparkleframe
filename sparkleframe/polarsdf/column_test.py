@@ -20,6 +20,7 @@ from sparkleframe.polarsdf.types import (
 )
 import pyspark.sql.functions as F
 
+
 @pytest.fixture
 def sample_df():
     return pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9], "d": ["cat", "dog", "bird"]})
@@ -234,11 +235,11 @@ class TestColumn:
     @pytest.mark.parametrize(
         "values, pattern",
         [
-            (["apple", "banana", "apricot", None], "ap"),       # basic substring
-            (["car", "cat", "dog", None], "ca"),                # multiple matches
-            (["Spark", "spark", "SPARK", None], "spark"),       # case sensitivity
-            (["a.b", "ab", "a*b", None], "."),                  # literal special char (should be literal, not regex)
-            (["a.b", "ab", "a*b", None], "*"),                  # another literal special char
+            (["apple", "banana", "apricot", None], "ap"),  # basic substring
+            (["car", "cat", "dog", None], "ca"),  # multiple matches
+            (["Spark", "spark", "SPARK", None], "spark"),  # case sensitivity
+            (["a.b", "ab", "a*b", None], "."),  # literal special char (should be literal, not regex)
+            (["a.b", "ab", "a*b", None], "*"),  # another literal special char
         ],
     )
     def test_contains_matches_pyspark(self, spark, values, pattern):
