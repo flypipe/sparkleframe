@@ -164,6 +164,22 @@ class Column:
     def to_native(self) -> pl.Expr:
         return self.expr
 
+    def contains(self, substring: str) -> "Column":
+        """
+        Mimics pyspark.sql.Column.contains.
+
+        Checks if the string column contains the given substring (literal match, case-sensitive).
+
+        Args:
+            substring (str): The substring to search for (treated as a literal, not a regex).
+
+        Returns:
+            Column: A boolean Column: True if substring is found, False if not, and null for null inputs.
+        """
+        if not isinstance(substring, str):
+            raise TypeError(f"contains() expects a string substring, got {type(substring).__name__}")
+        return Column(self.expr.str.contains(substring, literal=True))
+
 
 def _to_expr(value):
     if isinstance(value, Column):

@@ -18,6 +18,7 @@ from sparkleframe.polarsdf.types import (
     ShortType,
     BinaryType,
 )
+import pyspark.sql.functions as F
 
 
 @pytest.fixture
@@ -230,3 +231,33 @@ class TestColumn:
         result = sparkle_df.select(expr).to_native_df()["result"].to_list()
 
         assert result == expected
+
+    @pytest.mark.parametrize(
+        "values, pattern",
+        [
+            (["apple", "banana", "apricot", None], "ap"),  # basic substring
+            (["car", "cat", "dog", None], "ca"),  # multiple matches
+            (["Spark", "spark", "SPARK", None], "spark"),  # case sensitivity
+            (["a.b", "ab", "a*b", None], "."),  # literal special char (should be literal, not regex)
+            (["a.b", "ab", "a*b", None], "*"),  # another literal special char
+        ],
+    )
+    def test_contains_matches_pyspark(self, spark, values, pattern):
+        # Build Polars DF and evaluate with sparkleframe's 'contains'
+        pl_df = pl.DataFrame({"idx": list(range(len(values))), "text": values})
+        sf_df = DataFrame(pl_df)
+        expr = col("text").contains(pattern).alias("result")
+        pl_result = sf_df.select(col("idx"), expr).to_native_df()
+
+        # Convert the Polars result to a Spark DataFrame
+        spark_from_polars = spark.createDataFrame(pl_result.to_pandas())
+
+        # Build a pure Spark DataFrame and compute expected result using PySpark's contains
+        spark_input = spark.createDataFrame(list(enumerate(values)), schema=["idx", "text"])
+        expected = spark_input.select("idx", F.col("text").contains(pattern).alias("result"))
+
+        # Compare results deterministically by ordering on idx
+        actual_rows = spark_from_polars.orderBy("idx").collect()
+        expected_rows = expected.orderBy("idx").collect()
+
+        assert actual_rows == expected_rows

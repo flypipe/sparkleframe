@@ -487,3 +487,20 @@ def abs(col_name: Union[str, Column]) -> Column:
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.abs())
+
+
+def lower(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.lower.
+
+    Converts all characters of a string column to lower case.
+
+    Args:
+        col_name (str or Column): The string column to transform.
+
+    Returns:
+        Column: A Column with lower-cased string values.
+    """
+    col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
+    expr = _to_expr(col_name)
+    return Column(expr.str.to_lowercase())
