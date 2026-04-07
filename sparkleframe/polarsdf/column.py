@@ -5,7 +5,7 @@ from typing import Union
 
 import polars as pl
 
-from sparkleframe.polarsdf.types import DataType
+from sparkleframe.polarsdf.types import DataType, spark_type_name_to_polars
 
 
 class Column:
@@ -97,6 +97,28 @@ class Column:
         if not isinstance(data_type, DataType):
             raise TypeError(f"cast() expects a DataType, got {type(data_type)}")
         return Column(self.expr.cast(data_type.to_native()))
+
+    def try_cast(self, data_type: Union[DataType, str]) -> "Column":
+        """
+        Mimics pyspark.sql.Column.try_cast (Spark 4+).
+
+        Attempts to cast the column to the target type; returns null instead
+        of raising an error when the value cannot be converted.
+
+        Args:
+            data_type (DataType or str): Target type as a sparkleframe DataType
+                or a Spark type-name string (e.g. "int", "double", "string").
+
+        Returns:
+            Column: A new Column with the non-strict cast applied.
+        """
+        if isinstance(data_type, DataType):
+            native = data_type.to_native()
+        elif isinstance(data_type, str):
+            native = spark_type_name_to_polars(data_type)
+        else:
+            raise TypeError(f"try_cast() expects a DataType or str, got {type(data_type)}")
+        return Column(self.expr.cast(native, strict=False))
 
     def isin(self, *values) -> Column:
         """

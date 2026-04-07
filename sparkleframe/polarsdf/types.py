@@ -1,7 +1,33 @@
 import json
-from typing import Any, Union, Dict, Optional, List, Iterator
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 import polars as pl
+
+SPARK_TYPE_NAME_MAP: dict[str, pl.DataType] = {
+    "string": pl.Utf8,
+    "int": pl.Int32,
+    "integer": pl.Int32,
+    "bigint": pl.Int64,
+    "long": pl.Int64,
+    "short": pl.Int16,
+    "smallint": pl.Int16,
+    "tinyint": pl.Int8,
+    "byte": pl.Int8,
+    "float": pl.Float32,
+    "double": pl.Float64,
+    "boolean": pl.Boolean,
+    "date": pl.Date,
+    "timestamp": pl.Datetime,
+    "binary": pl.Binary,
+}
+
+
+def spark_type_name_to_polars(name: str) -> pl.DataType:
+    key = name.strip().lower()
+    try:
+        return SPARK_TYPE_NAME_MAP[key]
+    except KeyError:
+        raise ValueError(f"Unsupported Spark type name for try_cast: '{name}'") from None
 
 
 class DataType:

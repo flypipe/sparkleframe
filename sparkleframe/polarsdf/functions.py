@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import polars as pl
 
@@ -225,6 +225,52 @@ def when(condition: Any, value) -> WhenBuilder:
     return WhenBuilder(condition, value)
 
 
+_SPARK_TS_FORMAT_MAP = [
+    ("yyyy", "%Y"),
+    ("MM", "%m"),
+    ("dd", "%d"),
+    ("HH", "%H"),
+    ("mm", "%M"),
+    ("ss", "%S"),
+    (".SSSSSS", ".%6f"),
+    (".SSSSS", ".%6f"),
+    (".SSSS", ".%6f"),
+    (".SSS", ".%6f"),
+    (".SS", ".%6f"),
+    (".S", ".%6f"),
+]
+
+
+def _convert_spark_ts_format(fmt: str) -> str:
+    """Translate a Spark-style timestamp format string to strftime-style."""
+    for spark_fmt, strftime_fmt in _SPARK_TS_FORMAT_MAP:
+        fmt = fmt.replace(spark_fmt, strftime_fmt)
+    return fmt
+
+
+def _pad_microseconds_expr(expr: pl.Expr) -> pl.Expr:
+    """Normalize fractional seconds to 6 digits (microseconds)."""
+
+    def pad_microseconds(val: Optional[str]) -> Optional[str]:
+        if val is None:
+            return None
+        if "." in val:
+            prefix, suffix = val.split(".", 1)
+            suffix = (suffix + "000000")[:6]
+            return f"{prefix}.{suffix}"
+        return val
+
+    return expr.map_elements(pad_microseconds, return_dtype=pl.String)
+
+
+def _to_datetime_column(col_name: Union[str, Column], fmt: str, *, strict: bool = True) -> Column:
+    strftime_fmt = _convert_spark_ts_format(fmt)
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    if "%6f" in strftime_fmt:
+        expr = _pad_microseconds_expr(expr)
+    return Column(expr.str.strptime(pl.Datetime, strftime_fmt, strict=strict))
+
+
 def to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss") -> Column:
     """
     Mimics pyspark.sql.functions.to_timestamp.
@@ -238,44 +284,7 @@ def to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss")
     Returns:
         Column: A Column with values converted to Polars datetime type.
     """
-    # Convert Spark-style format to strftime-style for Polars
-
-    format_map = [
-        ("yyyy", "%Y"),
-        ("MM", "%m"),
-        ("dd", "%d"),
-        ("HH", "%H"),
-        ("mm", "%M"),
-        ("ss", "%S"),
-        (".SSSSSS", ".%6f"),  # microseconds
-        (".SSSSS", ".%6f"),
-        (".SSSS", ".%6f"),
-        (".SSS", ".%6f"),  # also treated as microseconds, will pad
-        (".SS", ".%6f"),
-        (".S", ".%6f"),
-    ]
-    # Pad fractional seconds to 6 digits (microseconds)
-    for spark_fmt, strftime_fmt in format_map:
-        fmt = fmt.replace(spark_fmt, strftime_fmt)
-
-    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-
-    # Normalize fractional seconds (pad with trailing zeros to make 6 digits)
-    # appends zeros to fractional part (e.g., .993 -> .993000)
-    if "%6f" in fmt:
-        # Pad fractional seconds using a map function
-        def pad_microseconds(val):
-            if val is None:
-                return None
-            if "." in val:
-                prefix, suffix = val.split(".", 1)
-                suffix = (suffix + "000000")[:6]  # Ensure exactly 6 digits
-                return f"{prefix}.{suffix}"
-            return val
-
-        expr = expr.map_elements(pad_microseconds, return_dtype=pl.String)
-
-    return Column(expr.str.strptime(pl.Datetime, fmt))
+    return _to_datetime_column(col_name, fmt, strict=True)
 
 
 def regexp_replace(col_name: Union[str, Column], pattern: str, replacement: str) -> Column:
@@ -580,3 +589,107 @@ def struct(*cols: Any) -> Column:
         raise ValueError("struct requires at least one column")
     parts = [_struct_named_child(c, i) for i, c in enumerate(expanded)]
     return Column(pl.struct(parts))
+
+
+def try_to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss") -> Column:
+    """
+    Mimics pyspark.sql.functions.try_to_timestamp (Spark 4+).
+
+    Same as to_timestamp but returns null instead of raising on malformed strings.
+
+    Args:
+        col_name (str or Column): Column with string values to convert to timestamps.
+        fmt (str): The timestamp format to parse the strings. Defaults to 'yyyy-MM-dd HH:mm:ss'.
+
+    Returns:
+        Column: A Column with values converted to Polars datetime type (null for failures).
+    """
+    return _to_datetime_column(col_name, fmt, strict=False)
+
+
+_SPARK_DATE_FORMAT_MAP = [
+    ("yyyy", "%Y"),
+    ("MM", "%m"),
+    ("dd", "%d"),
+]
+
+
+def _convert_spark_date_format(fmt: str) -> str:
+    """Translate a Spark-style date format string to strftime-style."""
+    for spark_fmt, strftime_fmt in _SPARK_DATE_FORMAT_MAP:
+        fmt = fmt.replace(spark_fmt, strftime_fmt)
+    return fmt
+
+
+def try_to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
+    """
+    Mimics pyspark.sql.functions.try_to_date (Spark 4+).
+
+    Converts a string column to a date, returning null for unparseable values.
+
+    Args:
+        col_name (str or Column): Column with string values to convert to dates.
+        fmt (str, optional): The date format. Defaults to 'yyyy-MM-dd'.
+
+    Returns:
+        Column: A Column with values converted to Polars Date type (null for failures).
+    """
+    fmt = fmt or "yyyy-MM-dd"
+    strftime_fmt = _convert_spark_date_format(fmt)
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.str.strptime(pl.Date, strftime_fmt, strict=False))
+
+
+def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.try_element_at (Spark 4+).
+
+    For arrays: uses 1-based indexing (positive and negative). Returns null
+    for out-of-bounds access instead of raising.
+
+    For maps (materialized as List(Struct(key, value))): looks up the key and
+    returns null when absent.
+
+    Args:
+        col_name (str or Column): The array or map column.
+        extraction (str, int, or Column): The index (1-based int) for arrays,
+            or the key (str / Column) for maps.
+
+    Returns:
+        Column: A Column with the extracted element, or null on failure.
+    """
+    col_expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+
+    if isinstance(extraction, Column):
+        extraction = extraction.to_native()
+
+    if isinstance(extraction, pl.Expr):
+        # Dynamic column-based key lookup for maps: list.eval pattern
+        return Column(
+            col_expr.list.eval(
+                pl.when(pl.element().struct.field("key") == extraction).then(pl.element().struct.field("value"))
+            )
+            .list.drop_nulls()
+            .list.first()
+        )
+
+    if isinstance(extraction, int):
+        # Spark uses 1-based indexing; index 0 is invalid -> null
+        if extraction == 0:
+            return Column(pl.lit(None))
+        polars_idx = extraction - 1 if extraction > 0 else extraction
+        return Column(col_expr.list.get(polars_idx, null_on_oob=True))
+
+    if isinstance(extraction, str):
+        # Map key lookup: List(Struct(key, value)) layout
+        return Column(
+            col_expr.list.eval(
+                pl.when(pl.element().struct.field("key") == pl.lit(extraction)).then(
+                    pl.element().struct.field("value")
+                )
+            )
+            .list.drop_nulls()
+            .list.first()
+        )
+
+    raise TypeError(f"try_element_at extraction must be int, str, or Column, got {type(extraction).__name__}")
