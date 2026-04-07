@@ -212,6 +212,33 @@ class TestDataFrame:
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df)
 
+    def test_drop_columns(self, spark, sparkle_df, spark_df):
+        result_spark_df = spark.createDataFrame(sparkle_df.drop("salary", "birth_date").toPandas())
+        expected_spark_df = spark_df.drop("salary", "birth_date")
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_drop_unpack_list(self, spark, sparkle_df, spark_df):
+        result_spark_df = spark.createDataFrame(sparkle_df.drop(*["salary", "age"]).toPandas())
+        expected_spark_df = spark_df.drop(*["salary", "age"])
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_drop_column_expr(self, spark, sparkle_df, spark_df):
+        result_spark_df = spark.createDataFrame(sparkle_df.drop(PF.col("salary")).toPandas())
+        expected_spark_df = spark_df.drop(F.col("salary"))
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_drop_missing_column_ignored(self, spark, sparkle_df, spark_df):
+        result_spark_df = spark.createDataFrame(sparkle_df.drop("not_there", "age").toPandas())
+        expected_spark_df = spark_df.drop("not_there", "age")
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_drop_no_args_returns_new_wrapper_same_polars_df(self, sparkle_df):
+        out = sparkle_df.drop()
+        assert out is not sparkle_df
+        assert out.columns == sparkle_df.columns
+        assert out.df is sparkle_df.df
+        assert out.to_native_df().equals(sparkle_df.to_native_df())
+
     def test_to_native_df(self, sparkle_df):
         native_df = sparkle_df.to_native_df()
 

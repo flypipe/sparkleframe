@@ -258,6 +258,41 @@ class DataFrame(BaseDataFrame):
         renamed_df = self.df.rename({existing: new})
         return DataFrame(renamed_df)
 
+    def drop(self, *cols: Union[str, Column]) -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.drop.
+
+        Removes the given columns. Columns that are not in the schema are ignored
+        (same as PySpark). With no arguments, returns a new DataFrame wrapper over
+        the same underlying Polars frame (same pattern as ``select`` / ``sort``).
+
+        Args:
+            *cols: Column names as strings or Column references (e.g. ``col("x")``).
+                Use ``df.drop(*["a", "b"])`` to drop from a list (same as PySpark).
+
+        Returns:
+            DataFrame: A new DataFrame without the dropped columns.
+        """
+        if not cols:
+            return DataFrame(self.df)
+
+        to_drop: List[str] = []
+        for c in cols:
+            if isinstance(c, str):
+                to_drop.append(c)
+            elif isinstance(c, Column):
+                roots = c.to_native().meta.root_names()
+                if not roots:
+                    raise TypeError("drop() Column expression must reference a named column")
+                to_drop.append(roots[0])
+            else:
+                raise TypeError(f"drop() expected str or Column, got {type(c).__name__}")
+
+        existing = [name for name in to_drop if name in self.df.columns]
+        if not existing:
+            return DataFrame(self.df)
+        return DataFrame(self.df.drop(*existing))
+
     def toPandas(self) -> pd.DataFrame:
         """
         Convert the underlying Polars DataFrame to a Pandas DataFrame,
