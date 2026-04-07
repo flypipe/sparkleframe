@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Union, Any
+
+from typing import Any, Union
 
 import polars as pl
 
@@ -504,3 +505,61 @@ def lower(col_name: Union[str, Column]) -> Column:
     col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
     expr = _to_expr(col_name)
     return Column(expr.str.to_lowercase())
+
+
+def _struct_expand_varargs(cols: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Match PySpark ``struct`` when called as ``struct([c1, c2])`` or ``struct({...})``."""
+    if len(cols) == 1 and isinstance(cols[0], (list, set)):
+        return tuple(cols[0])
+    return cols
+
+
+def _struct_child_field_name(arg: Union[str, Column], expr: pl.Expr, index: int) -> str:
+    """
+    Spark ``CreateStruct`` naming: plain column refs keep their name (last segment if qualified);
+    literals and non-trivial expressions become ``col1``, ``col2``, ...
+    """
+    if isinstance(arg, str):
+        return arg.split(".")[-1]
+    if b"RepeatBy" in expr.meta.serialize():
+        return f"col{index + 1}"
+    undone = expr.meta.undo_aliases()
+    # Explicit Alias (nested struct(...).alias("nested_x"), col().alias("z"), …): Spark uses output_name.
+    # Do not use serialize() inequality — Polars versions disagree for bare struct(); compare output names instead.
+    if expr.meta.output_name() != undone.meta.output_name():
+        return expr.meta.output_name().split(".")[-1]
+    # Alias-of-column (e.g. col("a").alias("z")) is not is_column() in Polars; Spark uses the alias name.
+    if undone.meta.is_column():
+        return expr.meta.output_name().split(".")[-1]
+    if expr.meta.is_literal():
+        return f"col{index + 1}"
+    return f"col{index + 1}"
+
+
+def _struct_named_child(arg: Union[str, Column], index: int) -> pl.Expr:
+    expr = _to_expr(arg) if isinstance(arg, Column) else pl.col(arg)
+    name = _struct_child_field_name(arg, expr, index)
+    return expr.alias(name)
+
+
+def struct(*cols: Any) -> Column:
+    """
+    Mimics pyspark.sql.functions.struct.
+
+    Builds a struct column from column names and/or Column expressions. If a single
+    list or set is passed, it is expanded like PySpark (3.4+).
+
+    Empty ``struct()`` is not supported (PySpark fails at execution).
+
+    Args:
+        *cols: Column names (``str``), :class:`~sparkleframe.polarsdf.column.Column` values,
+            or a single ``list`` / ``set`` of those.
+
+    Returns:
+        Column: A struct column whose field names follow Spark's ``CreateStruct`` rules.
+    """
+    expanded = _struct_expand_varargs(cols)
+    if not expanded:
+        raise ValueError("struct requires at least one column")
+    parts = [_struct_named_child(c, i) for i, c in enumerate(expanded)]
+    return Column(pl.struct(parts))

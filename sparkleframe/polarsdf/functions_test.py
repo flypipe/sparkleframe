@@ -4,6 +4,7 @@ import pandas as pd
 import pandas.testing as pdt
 import polars as pl
 import pytest
+from polars.testing import assert_frame_equal
 from pyspark.sql.functions import abs as spark_abs
 from pyspark.sql.functions import asc as spark_asc
 from pyspark.sql.functions import asc_nulls_first as spark_asc_nulls_first
@@ -22,9 +23,13 @@ from pyspark.sql.functions import rank as spark_rank
 from pyspark.sql.functions import regexp_replace as spark_regexp_replace
 from pyspark.sql.functions import round as spark_round
 from pyspark.sql.functions import row_number as spark_row_number
+from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import to_timestamp as spark_to_timestamp
 from pyspark.sql.functions import when as spark_when
+from pyspark.sql.types import ArrayType as SparkArrayType
+from pyspark.sql.types import DoubleType as SparkDoubleType
 from pyspark.sql.types import IntegerType as SparkIntegerType
+from pyspark.sql.types import MapType as SparkMapType
 from pyspark.sql.types import StringType as SparkStringType
 from pyspark.sql.types import StructField as SparkStructField
 from pyspark.sql.types import StructType as SparkStructType
@@ -51,6 +56,7 @@ from sparkleframe.polarsdf.functions import (
     regexp_replace,
     round,
     row_number,
+    struct,
     to_timestamp,
     when,
 )
@@ -534,3 +540,79 @@ class TestFunctions:
         result_spark_df = create_spark_df(spark, result_df)
 
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_struct_oracle(self, spark, sparkle_df, spark_df):
+        """PySpark parity: field names follow CreateStruct (plain cols vs colN for lit / expr)."""
+        exprs = [
+            struct("a", "b").alias("s1"),
+            struct(col("a"), col("b")).alias("s2"),
+            struct([col("a"), col("b")]).alias("s3"),
+            struct(col("a"), lit(1)).alias("s4"),
+            struct(lit(1), lit(2)).alias("s5"),
+            struct(col("a") + 1, col("b")).alias("s6"),
+            struct(col("a"), struct(col("b"), lit(3))).alias("s7"),
+            struct(col("a").alias("z")).alias("s8"),
+        ]
+        expected_spark_df = spark_df.select(
+            spark_struct("a", "b").alias("s1"),
+            spark_struct(spark_col("a"), spark_col("b")).alias("s2"),
+            spark_struct([spark_col("a"), spark_col("b")]).alias("s3"),
+            spark_struct(spark_col("a"), spark_lit(1)).alias("s4"),
+            spark_struct(spark_lit(1), spark_lit(2)).alias("s5"),
+            spark_struct(spark_col("a") + 1, spark_col("b")).alias("s6"),
+            spark_struct(spark_col("a"), spark_struct(spark_col("b"), spark_lit(3))).alias("s7"),
+            spark_struct(spark_col("a").alias("z")).alias("s8"),
+        )
+        pdf = sparkle_df.select(*exprs).toPandas()
+        result_spark_df = spark.createDataFrame(pdf, schema=expected_spark_df.schema)
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_struct_nested_aliased_inner_structs_match_spark(self, spark, sparkle_df, spark_df):
+        """Outer struct must use .alias() names for nested struct children (not col1/col2)."""
+        inner_left = struct(col("a").alias("field_a"))
+        inner_right = struct(col("b").alias("field_b"))
+        composite = struct(inner_left.alias("nested_x"), inner_right.alias("nested_y"))
+        pdf = sparkle_df.select(composite.alias("composite")).toPandas()
+        expected_spark_df = spark_df.select(
+            spark_struct(
+                spark_struct(spark_col("a").alias("field_a")).alias("nested_x"),
+                spark_struct(spark_col("b").alias("field_b")).alias("nested_y"),
+            ).alias("composite")
+        )
+        result_spark_df = spark.createDataFrame(pdf, schema=expected_spark_df.schema)
+        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+    def test_struct_nested_with_array_and_map(self, spark):
+        """Parity with Spark struct(array, map); compare via Arrow (avoids pandas map/dict mismatch)."""
+        schema = SparkStructType(
+            [
+                SparkStructField("id", SparkIntegerType(), True),
+                SparkStructField("nums", SparkArrayType(SparkIntegerType()), True),
+                SparkStructField("kv", SparkMapType(SparkStringType(), SparkDoubleType()), True),
+            ]
+        )
+        spark_row = (1, [10, 20, 30], {"x": 1.0, "y": 2.0})
+        spark_input = spark.createDataFrame([spark_row], schema)
+        pl_df = pl.DataFrame(
+            {
+                "id": [1],
+                "nums": [[10, 20, 30]],
+                "kv": [[{"key": "x", "value": 1.0}, {"key": "y", "value": 2.0}]],
+            }
+        )
+        sparkle_df = DataFrame(pl_df)
+        exprs = [
+            struct(col("id"), col("nums"), col("kv")).alias("s1"),
+            struct(col("id"), struct(col("nums"), col("kv"))).alias("s2"),
+        ]
+        expected_spark_df = spark_input.select(
+            spark_struct(spark_col("id"), spark_col("nums"), spark_col("kv")).alias("s1"),
+            spark_struct(spark_col("id"), spark_struct(spark_col("nums"), spark_col("kv"))).alias("s2"),
+        )
+        got = sparkle_df.select(*exprs).to_native_df()
+        expected_pl = pl.from_arrow(expected_spark_df.toArrow())
+        assert_frame_equal(got, expected_pl, check_dtypes=False)
+
+    def test_struct_requires_at_least_one_column(self):
+        with pytest.raises(ValueError, match="struct requires at least one column"):
+            struct()
