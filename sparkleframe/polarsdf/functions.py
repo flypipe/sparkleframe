@@ -165,6 +165,23 @@ def max(col_name: Union[str, Column]) -> Column:
     return Column(expr.max())
 
 
+def collect_list(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.collect_list.
+
+    Collects values into a list per group when used with ``groupBy`` / ``agg``.
+    Null values are omitted from the list, matching PySpark.
+
+    Args:
+        col_name (str or Column): The column whose values are collected.
+
+    Returns:
+        Column: A Column representing the list aggregation expression.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.filter(expr.is_not_null()).implode())
+
+
 def round(col_name: Union[str, Column], scale: int = 0) -> Column:
     """
     Mimics pyspark.sql.functions.round.
