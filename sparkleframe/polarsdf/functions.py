@@ -533,6 +533,20 @@ def lower(col_name: Union[str, Column]) -> Column:
     return Column(expr.str.to_lowercase())
 
 
+def _as_col_expr(col_name: Union[str, Column]) -> pl.Expr:
+    return _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+
+
+def concat(*cols: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.concat for string columns (null if any input is null).
+    """
+    if not cols:
+        raise ValueError("concat requires at least one column")
+    exprs = [_as_col_expr(c).cast(pl.String, strict=False) for c in cols]
+    return Column(pl.concat_str(exprs, separator="", ignore_nulls=False))
+
+
 def _struct_expand_varargs(cols: tuple[Any, ...]) -> tuple[Any, ...]:
     """Match PySpark ``struct`` when called as ``struct([c1, c2])`` or ``struct({...})``."""
     if len(cols) == 1 and isinstance(cols[0], (list, set)):

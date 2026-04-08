@@ -12,6 +12,7 @@ from pyspark.sql.functions import asc_nulls_first as spark_asc_nulls_first
 from pyspark.sql.functions import asc_nulls_last as spark_asc_nulls_last
 from pyspark.sql.functions import coalesce as spark_coalesce
 from pyspark.sql.functions import col as spark_col
+from pyspark.sql.functions import concat as spark_concat
 from pyspark.sql.functions import dense_rank as spark_dense_rank
 from pyspark.sql.functions import desc as spark_desc
 from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
@@ -47,6 +48,7 @@ from sparkleframe.polarsdf.functions import (
     asc_nulls_last,
     coalesce,
     col,
+    concat,
     dense_rank,
     desc,
     desc_nulls_first,
@@ -622,6 +624,70 @@ class TestFunctions:
     def test_struct_requires_at_least_one_column(self):
         with pytest.raises(ValueError, match="struct requires at least one column"):
             struct()
+
+
+class TestConcat:
+    """Behaviour tests for :func:`~sparkleframe.polarsdf.functions.concat` (not copied from prior commits)."""
+
+    def test_concat_without_inputs_raises(self) -> None:
+        with pytest.raises(ValueError, match="concat requires at least one column"):
+            concat()
+
+    def test_concat_single_column_is_identity_on_strings(self, spark) -> None:
+        data = {"token": ["zig", None, ""]}
+        pl_df = pl.DataFrame(data)
+        polars_df = DataFrame(pl_df)
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        out_schema = SparkStructType([SparkStructField("out", SparkStringType(), True)])
+        result_spark_df = create_spark_df(spark, polars_df.select(concat("token").alias("out")), schema=out_schema)
+        expected_df = spark_df.select(spark_concat(spark_col("token")).alias("out"))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_concat_two_parts_any_null_yields_null(self, spark) -> None:
+        data = {
+            "prefix": ["aa", None, "cc"],
+            "suffix": ["bb", "bb", None],
+        }
+        pl_df = pl.DataFrame(data)
+        polars_df = DataFrame(pl_df)
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        out_schema = SparkStructType([SparkStructField("out", SparkStringType(), True)])
+        result_spark_df = create_spark_df(
+            spark,
+            polars_df.select(concat(col("prefix"), col("suffix")).alias("out")),
+            schema=out_schema,
+        )
+        expected_df = spark_df.select(spark_concat(spark_col("prefix"), spark_col("suffix")).alias("out"))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_concat_accepts_string_name_or_column_object(self, spark) -> None:
+        pl_df = pl.DataFrame({"segment": ["north", "south"]})
+        polars_df = DataFrame(pl_df)
+        spark_df = spark.createDataFrame(pl_df.to_pandas())
+        by_name_spark = create_spark_df(
+            spark, polars_df.select(concat("segment", lit(":"), col("segment")).alias("out"))
+        )
+        by_col_spark = create_spark_df(
+            spark, polars_df.select(concat(col("segment"), lit(":"), "segment").alias("out"))
+        )
+        expected_df = spark_df.select(
+            spark_concat(spark_col("segment"), spark_lit(":"), spark_col("segment")).alias("out")
+        )
+        assert_pyspark_df_equal(by_name_spark, expected_df, ignore_nullable=True)
+        assert_pyspark_df_equal(by_col_spark, expected_df, ignore_nullable=True)
+
+    def test_concat_coerces_integer_columns_like_strings(self, spark) -> None:
+        pl_df = pl.DataFrame({"lane": [7, 0], "slot": [13, 42]})
+        polars_df = DataFrame(pl_df)
+        result_spark_df = create_spark_df(
+            spark,
+            polars_df.select(concat(col("lane"), lit("-"), col("slot")).alias("merged")),
+        )
+        spark_df = spark.createDataFrame(pl_df.to_pandas())
+        expected_df = spark_df.select(
+            spark_concat(spark_col("lane"), spark_lit("-"), spark_col("slot")).alias("merged"),
+        )
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
 
 class TestTryToTimestamp:
