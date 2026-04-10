@@ -1,58 +1,61 @@
+import json
+
 import pandas as pd
 import pandas.testing as pdt
 import polars as pl
 import pytest
-from pyspark.sql.functions import (
-    col as spark_col,
-    round as spark_round,
-    when as spark_when,
-    get_json_object as spark_get_json_object,
-    lit as spark_lit,
-    coalesce as spark_coalesce,
-    to_timestamp as spark_to_timestamp,
-    regexp_replace as spark_regexp_replace,
-    length as spark_length,
-    asc as spark_asc,
-    asc_nulls_first as spark_asc_nulls_first,
-    asc_nulls_last as spark_asc_nulls_last,
-    desc as spark_desc,
-    desc_nulls_first as spark_desc_nulls_first,
-    desc_nulls_last as spark_desc_nulls_last,
-    rank as spark_rank,
-    dense_rank as spark_dense_rank,
-    row_number as spark_row_number,
-    abs as spark_abs,
-    lower as spark_lower,
-)
+from pyspark.sql.functions import abs as spark_abs
+from pyspark.sql.functions import asc as spark_asc
+from pyspark.sql.functions import asc_nulls_first as spark_asc_nulls_first
+from pyspark.sql.functions import asc_nulls_last as spark_asc_nulls_last
+from pyspark.sql.functions import coalesce as spark_coalesce
+from pyspark.sql.functions import col as spark_col
+from pyspark.sql.functions import dense_rank as spark_dense_rank
+from pyspark.sql.functions import desc as spark_desc
+from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
+from pyspark.sql.functions import desc_nulls_last as spark_desc_nulls_last
+from pyspark.sql.functions import get_json_object as spark_get_json_object
+from pyspark.sql.functions import length as spark_length
+from pyspark.sql.functions import lit as spark_lit
+from pyspark.sql.functions import lower as spark_lower
+from pyspark.sql.functions import rank as spark_rank
+from pyspark.sql.functions import regexp_replace as spark_regexp_replace
+from pyspark.sql.functions import round as spark_round
+from pyspark.sql.functions import row_number as spark_row_number
+from pyspark.sql.functions import to_timestamp as spark_to_timestamp
+from pyspark.sql.functions import when as spark_when
 from pyspark.sql.types import IntegerType as SparkIntegerType
+from pyspark.sql.types import StringType as SparkStringType
+from pyspark.sql.types import StructField as SparkStructField
+from pyspark.sql.types import StructType as SparkStructType
 from pyspark.sql.window import Window as SparkWindow
+
 from sparkleframe.polarsdf import Window
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.functions import (
-    col,
-    round,
-    when,
-    get_json_object,
-    lit,
-    coalesce,
-    regexp_replace,
-    to_timestamp,
-    length,
+    abs,
     asc,
     asc_nulls_first,
     asc_nulls_last,
+    coalesce,
+    col,
+    dense_rank,
     desc,
     desc_nulls_first,
     desc_nulls_last,
-    rank,
-    dense_rank,
-    row_number,
-    abs,
+    get_json_object,
+    length,
+    lit,
     lower,
+    rank,
+    regexp_replace,
+    round,
+    row_number,
+    to_timestamp,
+    when,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import to_records, create_spark_df
-import json
+from sparkleframe.tests.utils import create_spark_df, spark_rows_from_dict
 
 sample_data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
 
@@ -80,9 +83,7 @@ class TestFunctions:
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
 
     def test_chained_when_boolean_output(self, spark):
-        # Input data
-        data = to_records({"b": ["A", "B", "C", "D"], "c": ["b", "e", "g", "z"]})
-
+        data = {"b": ["A", "B", "C", "D"], "c": ["b", "e", "g", "z"]}
         polars_df = DataFrame(pl.DataFrame(data))
         expr = (
             when((col("b") == "A") & (col("c").isin("A", "b", "c")), True)
@@ -95,7 +96,10 @@ class TestFunctions:
         result_spark_df = spark.createDataFrame(result_df.df.to_dicts())
 
         # Expected result using PySpark chained when()
-        expected_df = spark.createDataFrame(data).withColumn(
+        expected_df = spark.createDataFrame(
+            spark_rows_from_dict(data),
+            list(data.keys()),
+        ).withColumn(
             "result",
             spark_when((spark_col("b") == "A") & (spark_col("c").isin("A", "b", "c")), True)
             .when((spark_col("b") == "B") & (spark_col("c").isin("d", "e")), True)
@@ -121,12 +125,14 @@ class TestFunctions:
         ],
     )
     def test_get_json_object(self, spark, json_data, path, expected_values):
-        df = pd.DataFrame({"json_col": json_data})
-
-        spark_df = spark.createDataFrame(df)
+        data = {"json_col": json_data}
+        spark_df = spark.createDataFrame(
+            spark_rows_from_dict(data),
+            list(data.keys()),
+        )
         expected_df = spark_df.select(spark_get_json_object("json_col", path).alias("result"))
 
-        polars_df = DataFrame(pl.DataFrame(df))
+        polars_df = DataFrame(pl.DataFrame(data))
         result_df = polars_df.select(get_json_object("json_col", path).alias("result"))
         result_spark_df = spark.createDataFrame(result_df.toPandas())
 
@@ -143,12 +149,12 @@ class TestFunctions:
         ],
     )
     def test_lit_against_spark(self, spark, literal_value):
-        df = pl.DataFrame({"x": [1, 2, 3]})
-        sparkle_df = DataFrame(df)
+        data = {"x": [1, 2, 3]}
+        sparkle_df = DataFrame(pl.DataFrame(data))
         result_df = sparkle_df.select(lit(literal_value).alias("value")).toPandas()
 
         # Result using Spark
-        spark_df = spark.createDataFrame(pd.DataFrame({"x": [1, 2, 3]}))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.select(spark_lit(literal_value).alias("value")).toPandas()
 
         # Compare using pandas
@@ -168,31 +174,40 @@ class TestFunctions:
         ],
     )
     def test_coalesce_against_spark(self, spark, a_vals, b_vals, expected_vals):
-        # Build pandas DataFrame for both Spark and Polars
-        data = to_records({"a": a_vals, "b": b_vals})
-
-        # Spark setup
-        if expected_vals == [None, None, None]:
-            spark_df = spark.createDataFrame(data=[("1", "1")], schema="a: string, b: string")
-            spark_df = spark_df.withColumn("a", spark_lit(None)).withColumn("b", spark_lit(None))
-
-            expected_spark_df = spark.createDataFrame(data=[("1", "1")], schema="a: string, b: string")
-            expected_spark_df = expected_spark_df.withColumn("a", spark_lit(None)).withColumn("b", spark_lit(None))
-        else:
-            spark_df = spark.createDataFrame(data)
-            expected_spark_df = spark_df.select(spark_coalesce(spark_col("a"), spark_col("b")).alias("result"))
-
-        # sparkleframe setup
+        data = {"a": a_vals, "b": b_vals}
         polars_df = DataFrame(pl.DataFrame(data))
         result_df = polars_df.select(coalesce(col("a"), col("b")).alias("result"))
 
-        if result_df.df.to_dicts() == [{"result": None}, {"result": None}, {"result": None}]:
-            result_spark_df = spark_df.withColumn("a", spark_lit(None)).withColumn("b", spark_lit(None))
+        if expected_vals == [None, None, None]:
+            null_schema = SparkStructType(
+                [
+                    SparkStructField("a", SparkStringType(), True),
+                    SparkStructField("b", SparkStringType(), True),
+                ]
+            )
+            spark_df = spark.createDataFrame(spark_rows_from_dict(data), null_schema)
         else:
-            result_spark_df = spark.createDataFrame(result_df.df.to_dicts())
+            spark_df = spark.createDataFrame(
+                spark_rows_from_dict(data),
+                list(data.keys()),
+            )
 
-        # Compare using PySpark equality
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        # Spark requires a common type for coalesce; string covers int+str mixes (Spark 4 strict).
+        ca = spark_col("a").cast(SparkStringType())
+        cb = spark_col("b").cast(SparkStringType())
+        expected_spark_df = spark_df.select(spark_coalesce(ca, cb).alias("result"))
+
+        if expected_vals == [None, None, None]:
+            out_schema = SparkStructType([SparkStructField("result", SparkStringType(), True)])
+            result_spark_df = create_spark_df(spark, result_df, schema=out_schema)
+        else:
+            result_spark_df = create_spark_df(spark, result_df)
+
+        assert_pyspark_df_equal(
+            result_spark_df.select(spark_col("result").cast(SparkStringType()).alias("result")),
+            expected_spark_df.select(spark_col("result").cast(SparkStringType()).alias("result")),
+            ignore_nullable=True,
+        )
 
     @pytest.mark.parametrize(
         "values, scale",
@@ -204,14 +219,14 @@ class TestFunctions:
         ],
     )
     def test_round_against_spark(self, spark, values, scale):
-        data = to_records({"x": values})
+        data = {"x": values}
 
         # Sparkleframe / Polars
         polars_df = DataFrame(pl.DataFrame(data))
         result_df = polars_df.select(round(col("x"), scale).alias("rounded")).toPandas()
 
         # PySpark
-        spark_df = spark.createDataFrame(data)
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.select(spark_round(spark_col("x"), scale).alias("rounded")).toPandas()
 
         # Compare using pandas
@@ -232,10 +247,8 @@ class TestFunctions:
         ],
     )
     def test_asc_against_spark(self, spark, data, column):
-        data = to_records(data)
-        # Create input DataFrame
         polars_df = DataFrame(pl.DataFrame(data))
-        spark_df = spark.createDataFrame(data)
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
 
         # SparkleFrame: order by asc
         result_df = polars_df.df.sort(asc(col(column)).to_native())
@@ -256,10 +269,8 @@ class TestFunctions:
         ],
     )
     def test_desc_against_spark(self, spark, data, column):
-        data = to_records(data)
-        # Create input DataFrame
         polars_df = DataFrame(pl.DataFrame(data))
-        spark_df = spark.createDataFrame(data)
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
 
         # SparkleFrame: order by desc
         result_df = polars_df.df.sort(desc(col(column)).to_native())
@@ -289,15 +300,17 @@ class TestFunctions:
         ],
     )
     def test_regexp_replace_str_vs_column(self, spark, col_input, pattern, replacement, input_values, expected_values):
-        # Prepare input as pandas DataFrame and convert to Spark
-        df_data = pd.DataFrame({"txt": input_values})
-        spark_input_df = spark.createDataFrame(df_data)
+        data = {"txt": input_values}
+        spark_input_df = spark.createDataFrame(
+            spark_rows_from_dict(data),
+            list(data.keys()),
+        )
 
         # Expected Spark result
         expected_df = spark_input_df.select(spark_regexp_replace("txt", pattern, replacement).alias("replaced"))
 
         # SparkleFrame Polars-based result
-        polars_df = DataFrame(pl.DataFrame(df_data))
+        polars_df = DataFrame(pl.DataFrame(data))
         result_df = polars_df.select(regexp_replace(col_input, pattern, replacement).alias("replaced"))
         result_spark_df = spark.createDataFrame(result_df.df.to_dicts())
 
@@ -315,12 +328,14 @@ class TestFunctions:
     )
     @pytest.mark.parametrize("col_input", ["txt", col("txt")])
     def test_length_str_vs_column(self, spark, input_values, col_input):
-        # Prepare pandas and polars DataFrame
-        df_data = pd.DataFrame({"txt": input_values})
-        polars_df = DataFrame(pl.DataFrame(df_data))
+        data = {"txt": input_values}
+        polars_df = DataFrame(pl.DataFrame(data))
 
-        # PySpark DataFrame for expected result
-        spark_df = spark.createDataFrame(df_data)
+        # Row tuples keep None as Spark null (vs pandas object columns → NaN).
+        spark_df = spark.createDataFrame(
+            spark_rows_from_dict(data),
+            list(data.keys()),
+        )
         expected_df = spark_df.select(spark_length("txt").alias("result"))
 
         # SparkleFrame/Polars result
@@ -361,12 +376,13 @@ class TestFunctions:
         ],
     )
     def test_to_timestamp_against_spark(self, spark, col_input, datetime_strs, fmt):
-        # Create input DataFrame
-        df = pd.DataFrame({"ts": datetime_strs})
-        polars_df = DataFrame(pl.DataFrame(df))
+        data = {"ts": datetime_strs}
+        polars_df = DataFrame(pl.DataFrame(data))
 
-        # Spark expected output
-        spark_df = spark.createDataFrame(df)
+        spark_df = spark.createDataFrame(
+            spark_rows_from_dict(data),
+            list(data.keys()),
+        )
         expected_df = spark_df.select(spark_to_timestamp("ts", fmt).alias("result"))
 
         # Sparkleframe / Polars output
@@ -406,7 +422,7 @@ class TestFunctions:
     ):
         # Extended sample data with `subcategory`
         # Expanded dataset for more exhaustive testing
-        data = [
+        row_dicts = [
             {"group": "A", "category": "A", "subcategory": "alpha", "value": 100},
             {"group": "A", "category": "A", "subcategory": "alpha", "value": 100},
             {"group": "A", "category": "A", "subcategory": "alpha", "value": 200},
@@ -424,6 +440,7 @@ class TestFunctions:
             {"group": "C", "category": "B", "subcategory": "beta", "value": 60},
             {"group": "C", "category": "B", "subcategory": "beta", "value": 100},
         ]
+        data = {key: [row[key] for row in row_dicts] for key in row_dicts[0]}
 
         order_func = {
             "asc": (asc, spark_asc),
@@ -480,15 +497,15 @@ class TestFunctions:
         ],
     )
     def test_abs_against_spark(self, spark, values):
-        data = to_records({"x": values})
+        data = {"x": values}
 
-        # Sparkleframe Polars
-        sf_df = DataFrame(pd.DataFrame(data))
+        # Sparkleframe Polars (native null ints align with Spark row inference)
+        sf_df = DataFrame(pl.DataFrame(data))
         result_sf = sf_df.select(abs(col("x")).alias("abs_x"))
         result_spark_df = create_spark_df(spark, result_sf)
 
         # PySpark
-        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.select(spark_abs("x").alias("abs_x"))
 
         # Compare
@@ -504,17 +521,16 @@ class TestFunctions:
         ],
     )
     def test_lower_str_vs_column(self, spark, col_input, input_values):
-        # Prepare input data
-        df_data = pd.DataFrame({"txt": input_values})
+        data = {"txt": input_values}
 
-        # Expected Spark result
-        spark_input_df = spark.createDataFrame(df_data)
+        spark_input_df = spark.createDataFrame(
+            spark_rows_from_dict(data),
+            list(data.keys()),
+        )
         expected_df = spark_input_df.select(spark_lower("txt").alias("lowered"))
 
-        # SparkleFrame / Polars result
-        polars_df = DataFrame(pl.DataFrame(df_data))
-        result_sf = polars_df.select(lower(col_input).alias("lowered"))
-        result_spark_df = create_spark_df(spark, result_sf)
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_df = polars_df.select(lower(col_input).alias("lowered"))
+        result_spark_df = create_spark_df(spark, result_df)
 
-        # Compare
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)

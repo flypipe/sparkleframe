@@ -1,32 +1,59 @@
+from __future__ import annotations
+
 import json
 import math
-from typing import Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
 import polars as pl
-from sparkleframe.polarsdf import DataFrame
 from pyspark.sql.dataframe import DataFrame as SparkDataFrame
+from pyspark.sql.types import StructType as SparkStructType
+
+from sparkleframe.polarsdf import DataFrame
 
 
-def to_records(column_dict: dict) -> list[dict]:
+def spark_rows_from_dict(data: dict[str, list[Any]]) -> list[tuple[Any, ...]]:
     """
-    Converts a column-based dictionary into a list of row-based dictionaries.
+    Column-oriented dict -> row tuples for Spark, preserving key order as column order.
+
+    Keeps Python None as None in each row (avoids pandas object-column NaN coercion).
+
+    Usage:
+        spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+    """
+    if not data:
+        return []
+    return list(zip(*[data[name] for name in data.keys()]))
+
+
+def create_spark_df(
+    spark,
+    df: Union[pl.DataFrame, DataFrame],
+    schema: Optional[SparkStructType] = None,
+) -> SparkDataFrame:
+    """
+    Convert a Polars or SparkleFrame-backed frame to a PySpark DataFrame.
 
     Args:
-        column_dict (dict): A dictionary where each key maps to a list of values.
-
-    Returns:
-        list[dict]: A list of dictionaries, each representing a row.
+        spark: Active SparkSession.
+        df: Polars DataFrame or SparkleFrame DataFrame.
+        schema: Optional PySpark StructType. Use when inference is wrong for a test case;
+            omit for normal null-safe tuple conversion with column names.
     """
-    keys = column_dict.keys()
-    values = zip(*column_dict.values())
-    return [dict(zip(keys, row)) for row in values]
+    native = df.to_native_df() if isinstance(df, DataFrame) else df
+    rows = native.to_dicts()
+    cols = list(native.columns)
 
+    if not rows:
+        if schema is not None:
+            return spark.createDataFrame([], schema)
+        return spark.createDataFrame(pd.DataFrame(native.to_arrow().to_pandas()))
 
-def create_spark_df(spark, df: Union[pl.DataFrame, DataFrame]) -> DataFrame:
-    df = df.to_native_df() if isinstance(df, DataFrame) else df
-    return spark.createDataFrame(pd.DataFrame(df.to_arrow().to_pandas()))
+    row_tuples = [tuple(r[c] for c in cols) for r in rows]
+    if schema is not None:
+        return spark.createDataFrame(row_tuples, schema)
+    return spark.createDataFrame(row_tuples, cols)
 
 
 def _remove_nulls_from_dict_list(data):
@@ -72,9 +99,7 @@ def assert_sparkle_spark_frame_are_equal(
     assert df1.count() == df2.count()
     json_df1 = _get_json_from_dataframe(df1)
     json_df2 = _get_json_from_dataframe(df2)
-    assert (
-        json_df1 == json_df2
-    ), f"""
+    assert json_df1 == json_df2, f"""
 {json_df1}
 vs
 {json_df2}"""

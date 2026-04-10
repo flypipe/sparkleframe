@@ -198,14 +198,12 @@ class StructType(DataType):
         elif isinstance(key, slice):
             return StructType(self.fields[key])
         else:
-            raise ValueError(
-                """
+            raise ValueError("""
                 PySparkTypeError(
                     error_class="NOT_INT_OR_SLICE_OR_STR",
                     message_parameters={"arg_name": "key", "arg_type": type(key).__name__},
                 )
-                """
-            )
+                """)
 
     def simpleString(self) -> str:
         return "struct<%s>" % (",".join(f.simpleString() for f in self))
