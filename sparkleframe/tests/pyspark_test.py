@@ -1,9 +1,7 @@
 # sparkleframe/tests/pyspark_test.py
 from chispa.dataframe_comparer import assert_df_equality
 from pyspark.sql.functions import round as spark_round
-
-# utils.py or inside your test helpers
-from pyspark.sql.types import FloatType, DoubleType
+from pyspark.sql.types import DoubleType, FloatType
 
 
 def round_numeric_columns(df, precision=5):

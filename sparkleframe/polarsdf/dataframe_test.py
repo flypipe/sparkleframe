@@ -6,46 +6,45 @@ import pyarrow as pa
 import pytest
 from pyspark.sql import functions as F
 from pyspark.sql.functions import col as spark_col
-from pyspark.sql.types import (
-    StringType as SparkStringType,
-    IntegerType as SparkIntegerType,
-    LongType as SparkLongType,
-    FloatType as SparkFloatType,
-    DoubleType as SparkDoubleType,
-    BooleanType as SparkBooleanType,
-    DateType as SparkDateType,
-    TimestampType as SparkTimestampType,
-    DecimalType as SparkDecimalType,
-    ByteType as SparkByteType,
-    ShortType as SparkShortType,
-    BinaryType as SparkBinaryType,
-    StructType as SparkStructType,
-    StructField as SparkStructField,
-)
+from pyspark.sql.types import BinaryType as SparkBinaryType
+from pyspark.sql.types import BooleanType as SparkBooleanType
+from pyspark.sql.types import ByteType as SparkByteType
+from pyspark.sql.types import DateType as SparkDateType
+from pyspark.sql.types import DecimalType as SparkDecimalType
+from pyspark.sql.types import DoubleType as SparkDoubleType
+from pyspark.sql.types import FloatType as SparkFloatType
+from pyspark.sql.types import IntegerType as SparkIntegerType
+from pyspark.sql.types import LongType as SparkLongType
+from pyspark.sql.types import MapType as SparkMapType
+from pyspark.sql.types import ShortType as SparkShortType
+from pyspark.sql.types import StringType as SparkStringType
+from pyspark.sql.types import StructField as SparkStructField
+from pyspark.sql.types import StructType as SparkStructType
+from pyspark.sql.types import TimestampType as SparkTimestampType
 
 import sparkleframe.polarsdf.functions as PF
 from sparkleframe.polarsdf import Column
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.types import (
-    StringType,
+    BinaryType,
+    BooleanType,
+    ByteType,
+    DateType,
+    DecimalType,
+    DoubleType,
+    FloatType,
     IntegerType,
     LongType,
-    FloatType,
-    DoubleType,
-    BooleanType,
-    DateType,
-    TimestampType,
-    DecimalType,
-    ByteType,
-    ShortType,
-    BinaryType,
-    StructType,
-    StructField,
     MapType,
+    ShortType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
 )
-from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import to_records, create_spark_df, assert_sparkle_spark_frame_are_equal
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
+from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
+from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal, create_spark_df, spark_rows_from_dict
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -63,6 +62,7 @@ def sparkle_df():
 
 @pytest.fixture
 def spark_df(spark):
+    # Pandas preserves int column types for casts; sample_data has no str/None mix.
     return spark.createDataFrame(pd.DataFrame(sample_data))
 
 
@@ -77,7 +77,6 @@ def _polars_native_map_series(name: str, dict_rows: list[dict[str, int]]) -> pl.
 
 
 class TestDataFrame:
-
     @pytest.mark.parametrize(
         "data, schema_sparkle, schema_spark",
         [
@@ -115,7 +114,6 @@ class TestDataFrame:
         ],
     )
     def test_dataframe_creation(self, spark, sparkle, data, schema_sparkle, schema_spark):
-
         df_sparkle = sparkle.createDataFrame(data, schema=schema_sparkle)
 
         if isinstance(data, pl.DataFrame):
@@ -243,7 +241,7 @@ class TestDataFrame:
             ("login_time", TimestampType(), SparkTimestampType()),
             ("age", ByteType(), SparkByteType()),
             ("age", ShortType(), SparkShortType()),
-            ("age", BinaryType(), SparkBinaryType()),
+            # int/long → binary is not valid under Spark 4 default ANSI SQL casts; no PySpark parity case.
         ],
     )
     def test_cast_types(self, spark, sparkle_df, spark_df, col_name, data_type_class, spark_type):
@@ -251,7 +249,6 @@ class TestDataFrame:
         expr = PF.col(col_name).cast(data_type_class)
         polars_result_df = sparkle_df.select(expr.alias(col_name)).to_native_df()
 
-        # Apply the cast using PySpark
         spark_result_df = spark_df.select(F.col(col_name).cast(spark_type).alias(col_name))
 
         # Extract data types for comparison
@@ -340,7 +337,7 @@ class TestDataFrame:
         result_pd = sparkle_df.select(PF.col("name").isNotNull().alias("not_null")).toPandas()
         result_spark_df = spark.createDataFrame(result_pd)
         # Step 3: Apply isNotNull using PySpark
-        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.select(F.col("name").isNotNull().alias("not_null"))
 
         # Step 4: Compare
@@ -366,7 +363,7 @@ class TestDataFrame:
         result_spark_df = spark.createDataFrame(result_df)
 
         # Expected result using PySpark directly
-        expected_spark_df = spark.createDataFrame(pandas_df).select(
+        expected_spark_df = spark.createDataFrame(spark_rows_from_dict({"a": [1, 2, 3]}), ["a"]).select(
             (
                 spark_col("a").__radd__(literal)
                 if op_name == "+"
@@ -394,7 +391,7 @@ class TestDataFrame:
         data = {"a": [1, 2, 3, 4], "b": [10, 5, 3, 8], "c": [7, 12, 9, 4]}
 
         sparkle_df = DataFrame(pl.DataFrame(data))
-        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
 
         expr = expr_func(PF.col("a"), PF.col("b"), PF.col("c")).alias("result")
         expected_expr = expr_func(F.col("a"), F.col("b"), F.col("c")).alias("result")
@@ -417,7 +414,7 @@ class TestDataFrame:
         data = {"a": [1, 2, 3, 4], "b": [10, 5, 3, 8], "c": [7, 12, 9, 4]}
 
         sparkle_df = DataFrame(pl.DataFrame(data))
-        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
 
         # Test .filter
         filtered_result = sparkle_df.filter(expr_func(PF.col("a"), PF.col("b"), PF.col("c"))).toPandas()
@@ -445,9 +442,8 @@ class TestDataFrame:
         data = {
             "name": ["Alice", "Bob", "Charlie"],
         }
-        pandas_df = pd.DataFrame(data)
         polars_df = DataFrame(pl.DataFrame(data))
-        spark_df = spark.createDataFrame(pandas_df)
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
 
         for pattern, expected in [(pattern, expected_matches)]:
             expr = PF.col("name").rlike(pattern).alias("match")
@@ -481,7 +477,7 @@ class TestDataFrame:
         }
 
         # Create both Spark and Polars-backed Sparkle DataFrames
-        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         sparkle_df = DataFrame(pl.DataFrame(data))
 
         # Build .isin expression using list or variadic arguments
@@ -516,10 +512,10 @@ class TestDataFrame:
     )
     def test_groupby_aggregations(self, use_alias, spark, spark_func, sparkle_func):
         # Data: two groups, multiple rows per group
-        data = to_records({"group": ["A", "A", "B", "B", "A", "B"], "value": [10, 20, 5, 15, 30, 25]})
+        data = {"group": ["A", "A", "B", "B", "A", "B"], "value": [10, 20, 5, 15, 30, 25]}
 
         # Spark DataFrame
-        spark_df = spark.createDataFrame(data)
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         if not use_alias:
             expected_df = spark_df.groupBy("group")
         else:
@@ -581,7 +577,6 @@ class TestDataFrame:
     )
     @pytest.mark.parametrize("on_format", ["str", "col", "list_str", "list_col"])
     def test_polars_joins(self, spark, how, on_input, expected, on_format):
-
         if how == "outer" and on_format in ["col", "list_col"]:
             expected = pl.DataFrame(
                 {"id": [1, 2, 3, None], "left_val": ["a", "b", "c", None], "right_val": [None, "x", "y", "z"]}
@@ -636,7 +631,6 @@ class TestDataFrame:
         ],
     )
     def test_joins_non_spark_duplicated_keys(self, spark, how, on_keys):
-
         def get_on(is_spark, is_col, k):
             if is_col:
                 return F.col(k) if is_spark else PF.col(k)
@@ -654,13 +648,12 @@ class TestDataFrame:
             on_keys = get_on(False, on_keys[0], on_keys[1])
 
         # Prepare left and right datasets
-        left_data = to_records({"id": [1, 2, 3], "left_val": ["a", "b", "c"]})
-
-        right_data = to_records({"id": [2, 3, 4], "right_val": ["x", "y", "z"]})
+        left_data = {"id": [1, 2, 3], "left_val": ["a", "b", "c"]}
+        right_data = {"id": [2, 3, 4], "right_val": ["x", "y", "z"]}
 
         # Spark setup
-        spark_left_df = spark.createDataFrame(left_data)
-        spark_right_df = spark.createDataFrame(right_data)
+        spark_left_df = spark.createDataFrame(spark_rows_from_dict(left_data), list(left_data.keys()))
+        spark_right_df = spark.createDataFrame(spark_rows_from_dict(right_data), list(right_data.keys()))
 
         # Perform Spark join
         expected_df = spark_left_df.join(spark_right_df, on=spark_on_keys, how=how)
@@ -698,7 +691,6 @@ class TestDataFrame:
         ],
     )
     def test_joins_with_duplicated_spark_keys(self, spark, how, on_keys):
-
         def get_on(is_spark, is_col, k):
             if is_col:
                 return F.col(k) if is_spark else PF.col(k)
@@ -716,13 +708,12 @@ class TestDataFrame:
             on_keys = get_on(False, on_keys[0], on_keys[1])
 
         # Prepare left and right datasets
-        left_data = to_records({"id": [1, 2, 3], "left_val": ["a", "b", "c"]})
-
-        right_data = to_records({"id": [2, 3, 4], "right_val": ["x", "y", "z"]})
+        left_data = {"id": [1, 2, 3], "left_val": ["a", "b", "c"]}
+        right_data = {"id": [2, 3, 4], "right_val": ["x", "y", "z"]}
 
         # Spark setup
-        spark_left_df = spark.createDataFrame(left_data)
-        spark_right_df = spark.createDataFrame(right_data)
+        spark_left_df = spark.createDataFrame(spark_rows_from_dict(left_data), list(left_data.keys()))
+        spark_right_df = spark.createDataFrame(spark_rows_from_dict(right_data), list(right_data.keys()))
 
         # # Perform Spark join
 
@@ -753,10 +744,8 @@ class TestDataFrame:
         )
 
     def test_join_keys_different_type_raise_error(self):
-
-        left_data = to_records({"id": [1, 2, 3], "left_val": ["a", "b", "c"]})
-
-        right_data = to_records({"id": [2, 3, 4], "right_val": ["x", "y", "z"]})
+        left_data = {"id": [1, 2, 3], "left_val": ["a", "b", "c"]}
+        right_data = {"id": [2, 3, 4], "right_val": ["x", "y", "z"]}
 
         pl_left_df = DataFrame(pl.DataFrame(left_data))
         pl_right_df = DataFrame(pl.DataFrame(right_data))
@@ -774,13 +763,13 @@ class TestDataFrame:
     )
     def test_pyspark_fillna(self, spark, fillna_value, subset):
         # Sample data with nulls
-        data = to_records({"name": ["Alice", None, "Charlie"], "age": [25, None, 35]})
+        data = {"name": ["Alice", None, "Charlie"], "age": [25, None, 35]}
 
         # Create Polars DataFrame (Sparkleframe)
         sparkle_df = DataFrame(pl.DataFrame(data))
 
         # Create Spark DataFrame
-        spark_df = spark.createDataFrame(data)
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
 
         # Apply fillna in Sparkleframe
         if isinstance(fillna_value, dict):
@@ -809,20 +798,20 @@ class TestDataFrame:
             ({"name": "missing", "age": 0}, None, {"name": ["Alice", "missing", "Charlie"], "age": [25, 0, 35]}),
         ],
     )
-    def test_fillna(self, spark, fillna_value, subset, expected_dict):
-        expected_dict = to_records(expected_dict)
-
-        # Sample data with nulls
+    def test_fillna(self, spark, fillna_value, subset, expected_dict):  # Sample data with nulls
         data = {"name": ["Alice", None, "Charlie"], "age": [25, None, 35]}
 
-        sparkle_df = DataFrame(pl.DataFrame(to_records(data)))
+        sparkle_df = DataFrame(pl.DataFrame(data))
         sparkle_df = sparkle_df.fillna(fillna_value, subset=subset)
 
         # Convert result to Pandas for assertion
         result_df = spark.createDataFrame(sparkle_df.df.to_dicts())
         result_df = result_df.select(sorted(result_df.columns)).orderBy("name", "age")
 
-        expected_df = spark.createDataFrame(expected_dict)
+        expected_df = spark.createDataFrame(
+            spark_rows_from_dict(expected_dict),
+            list(expected_dict.keys()),
+        )
         expected_df = expected_df.select(sorted(expected_df.columns)).orderBy("name", "age")
 
         assert_pyspark_df_equal(result_df, expected_df, ignore_nullable=True)
@@ -1083,22 +1072,30 @@ class TestDataFrame:
         sorted_sf_df = sf_df.orderBy(*sparkle_order)
         result_spark_df = create_spark_df(spark, sorted_sf_df)
 
-        spark_df = spark.createDataFrame(pd.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.orderBy(*spark_order)
         assert_pyspark_df_equal(result_spark_df, expected_df, allow_nan_equality=True)
 
-    def test_order_by_int_raises_error(self, spark):
-        data = {"age": [2, 5], "name": ["Alice", "Bob"]}
-
+    @pytest.mark.parametrize("ordinal", [1, 2, -1, -2])
+    def test_order_by_int_matches_spark(self, spark, ordinal):
+        data = {"age": [2, 5, 1], "name": ["Alice", "Bob", "Carol"]}
         sf_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_spark_df = create_spark_df(spark, sf_df.orderBy(ordinal))
+        expected_df = spark_df.orderBy(ordinal)
+        assert_pyspark_df_equal(result_spark_df, expected_df, allow_nan_equality=True)
 
-        spark_df = create_spark_df(spark, sf_df)
+    def test_order_by_int_zero_raises(self):
+        sf_df = DataFrame(pl.DataFrame({"age": [1], "name": ["a"]}))
+        with pytest.raises(ValueError, match=r"\[ZERO_INDEX\] Index must be non-zero\."):
+            sf_df.orderBy(0)
 
-        with pytest.raises(TypeError):
-            spark_df.orderBy(-1)
-
-        with pytest.raises(TypeError):
-            sf_df.orderBy(-1)
+    def test_order_by_int_out_of_range(self):
+        sf_df = DataFrame(pl.DataFrame({"age": [1], "name": ["a"]}))
+        with pytest.raises(IndexError):
+            sf_df.orderBy(3)
+        with pytest.raises(IndexError):
+            sf_df.orderBy(-3)
 
     def test_order_by_ascending_kwarg_raises_error(self, spark):
         data = {"age": [2, 5], "name": ["Alice", "Bob"]}
@@ -1181,9 +1178,11 @@ class TestDataFrame:
         assert isinstance(struct_dtype, pl.Struct)
         assert [f.name for f in struct_dtype.fields] == ["a", "b"]
 
-        # Values line up with nulls where key missing
         result_spark_df = create_spark_df(spark, df_sparkle)
-        expected_pd = pl.DataFrame([{"col": {"a": 1, "b": None}}, {"col": {"a": None, "b": 2}}]).to_pandas()
-        expected_spark_df = spark.createDataFrame(expected_pd)
+        map_long = SparkMapType(SparkStringType(), SparkLongType(), valueContainsNull=True)
+        expected_spark_df = spark.createDataFrame(
+            [({"a": 1, "b": None},), ({"a": None, "b": 2},)],
+            schema=SparkStructType([SparkStructField("col", map_long)]),
+        )
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)

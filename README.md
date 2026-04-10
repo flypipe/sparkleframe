@@ -1,8 +1,9 @@
 ![SparkleFrame](docs/images/logo_white.png#only-dark)
 
-SparkleFrame implements the PySpark DataFrame API in order to enable running transformation pipelines
-directly on [Polars Dataframe](https://docs.pola.rs/api/python/stable/reference/index.html) - no Spark clusters or 
-dependencies required.
+SparkleFrame implements the PySpark DataFrame API so you can run transformation pipelines directly on
+[Polars Dataframe](https://docs.pola.rs/api/python/stable/reference/index.html)—no Spark cluster or Spark
+dependencies required. It is a **partial** **shim** aimed at the **PySpark / Apache Spark 4.x** DataFrame API: not
+every operation or edge case is supported, but behavior matches Spark where implemented.
 
 Apache Spark is designed for distributed, large-scale data processing, but it is not optimized for low-latency use 
 cases. There are scenarios, however, where you need to quickly re-compute certain data—for example, 

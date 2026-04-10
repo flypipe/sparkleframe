@@ -1,36 +1,33 @@
 from __future__ import annotations
 
-from typing import Union, Any, Iterable, Tuple
+from typing import Any, Iterable, List, Optional, Tuple, Union
 from uuid import uuid4
-from sparkleframe.polarsdf import types as sft
+
 import pandas as pd
 import polars as pl
 import pyarrow as pa
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
+from sparkleframe.polarsdf import types as sft
 from sparkleframe.polarsdf.column import Column
 from sparkleframe.polarsdf.group import GroupedData
-
 from sparkleframe.polarsdf.types import (
+    BinaryType,
+    BooleanType,
+    ByteType,
     DataType,
-    StringType,
+    DateType,
+    DecimalType,
+    DoubleType,
+    FloatType,
     IntegerType,
     LongType,
-    FloatType,
-    DoubleType,
-    BooleanType,
-    DateType,
-    TimestampType,
-    ByteType,
     ShortType,
-    DecimalType,
-    BinaryType,
-    StructType,
+    StringType,
     StructField,
+    StructType,
+    TimestampType,
 )
-
-from typing import List, Optional
-
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
 
 
@@ -269,6 +266,7 @@ class DataFrame(BaseDataFrame):
         but keeps the column and row structure intact.
         """
         import math
+
         import numpy as np
         import pandas as pd
 
@@ -340,7 +338,7 @@ class DataFrame(BaseDataFrame):
 
             return convert_number(val)
 
-        return df.applymap(convert)
+        return df.map(convert)
 
     def to_arrow(self) -> pa.Table:
         """
@@ -680,7 +678,7 @@ class DataFrame(BaseDataFrame):
 
         return StructType([polars_dtype_to_spark_structfield(name, dtype) for name, dtype in self.df.schema.items()])
 
-    def sort(self, *cols: Union[str, Column, List[Union[str, Column]]]) -> DataFrame:
+    def sort(self, *cols: Union[str, Column, int, List[Union[str, Column, int]]]) -> DataFrame:
         """
         Mimics PySpark's DataFrame.orderBy using Polars.
 
@@ -688,6 +686,7 @@ class DataFrame(BaseDataFrame):
             *cols: Columns or Column expressions to sort by.
                 Can be:
                   - strings: "col1", "col2"
+                  - ints: 1-based column ordinals (negative means descending on that column)
                   - Column objects with sort metadata (e.g., from asc(), desc(), asc_nulls_first())
                   - a single list of such elements
 
@@ -697,16 +696,21 @@ class DataFrame(BaseDataFrame):
         if len(cols) == 1 and isinstance(cols[0], list):
             cols = cols[0]
 
+        column_names = self.df.columns
         sort_cols = []
         sort_descending = []
         sort_nulls_last = []
-        for i, col in enumerate(cols):
-            if isinstance(col, int):
-                sort_cols.append(self.df.columns[i])
-                sort_descending.append(True if col < 0 else False)
+        for col in cols:
+            if isinstance(col, int) and not isinstance(col, bool):
+                if col == 0:
+                    raise ValueError("[ZERO_INDEX] Index must be non-zero.")
+                if col > 0:
+                    sort_cols.append(column_names[col - 1])
+                else:
+                    sort_cols.append(column_names[-col - 1])
+                sort_descending.append(col < 0)
                 sort_nulls_last.append(True)
-
-            if isinstance(col, str):
+            elif isinstance(col, str):
                 sort_cols.append(col)
                 sort_descending.append(False)
                 sort_nulls_last.append(True)

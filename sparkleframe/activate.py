@@ -13,7 +13,6 @@ from unittest.mock import MagicMock
 # Helps users to use `from sparkleframe import Engine` instead of `from sparkleframe.engine import Engine`
 from .engine import Engine
 
-
 NAME_TO_FILE_OVERRIDE = {
     # "DataFrameNaFunctions": "dataframe",
     # "DataFrameStatFunctions": "dataframe",
