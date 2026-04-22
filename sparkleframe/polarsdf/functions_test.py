@@ -1,4 +1,6 @@
 import json
+import re
+import uuid as std_uuid
 from datetime import date
 
 import pandas as pd
@@ -66,6 +68,7 @@ from sparkleframe.polarsdf.functions import (
     try_element_at,
     try_to_date,
     try_to_timestamp,
+    uuid,
     when,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
@@ -688,6 +691,21 @@ class TestConcat:
             spark_concat(spark_col("lane"), spark_lit("-"), spark_col("slot")).alias("merged"),
         )
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+
+_RE_UUID_V4 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+
+
+class TestUuid:
+    def test_uuid_yields_version4_string_format(self) -> None:
+        """``uuid()`` uses ``uuid4()``; unseeded values are not equal to PySpark, only shape is asserted."""
+        df = DataFrame(pl.DataFrame({"a": list(range(20))}))
+        out = df.select(uuid().alias("u")).to_native_df()["u"].to_list()
+        assert len(out) == 20
+        assert len(set(out)) == 20
+        for s in out:
+            assert _RE_UUID_V4.match(s) is not None
+            assert std_uuid.UUID(s).version == 4
 
 
 class TestTryToTimestamp:

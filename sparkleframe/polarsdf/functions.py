@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional, Union
+from uuid import uuid4
 
 import polars as pl
 
@@ -707,3 +708,22 @@ def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Col
         )
 
     raise TypeError(f"try_element_at extraction must be int, str, or Column, got {type(extraction).__name__}")
+
+
+def uuid() -> Column:
+    """
+    Mimics :func:`pyspark.sql.functions.uuid` (Spark 4.1+), unseeded form only.
+
+    One random canonical UUID string per row via :func:`uuid.uuid4` (not Spark’s JVM
+    output). ``uuid(seed=…)`` is not supported in sparkleframe.
+    """
+
+    def _row_uuid4(_: Any) -> str:
+        return str(uuid4())
+
+    return Column(
+        pl.int_range(0, pl.len(), dtype=pl.Int64, eager=False).map_elements(
+            _row_uuid4,
+            return_dtype=pl.String,
+        )
+    )
