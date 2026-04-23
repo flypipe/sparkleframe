@@ -8,6 +8,7 @@ from polars.exceptions import InvalidOperationError
 from sparkleframe.polarsdf import DataFrame, StringType
 from sparkleframe.polarsdf.functions import col, lit
 from sparkleframe.polarsdf.types import (
+    SPARK_TYPE_NAME_MAP,
     BinaryType,
     BooleanType,
     ByteType,
@@ -156,6 +157,56 @@ class TestColumn:
 
         # Assert the column's dtype is as expected
         assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
+
+    # ---- try_cast tests ----
+
+    @pytest.mark.parametrize(
+        "data_type_class",
+        [
+            StringType,
+            IntegerType,
+            LongType,
+            FloatType,
+            DoubleType,
+            BooleanType,
+        ],
+    )
+    def test_try_cast_datatype_valid(self, sample_df, data_type_class):
+        expected_polars_dtype = data_type_class().to_native()
+        expr = col("a").try_cast(data_type_class())
+        result_df = DataFrame(sample_df).select(expr.alias("casted"))
+        assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
+
+    @pytest.mark.parametrize(
+        "type_name",
+        [
+            "string",
+            "int",
+            "integer",
+            "bigint",
+            "long",
+            "double",
+            "float",
+            "boolean",
+            "date",
+            "timestamp",
+        ],
+    )
+    def test_try_cast_string_type_name(self, sample_df, type_name: str):
+        expected_polars_dtype = SPARK_TYPE_NAME_MAP[type_name]
+        expr = col("a").try_cast(type_name)
+        result_df = DataFrame(sample_df).select(expr.alias("casted"))
+        assert result_df.to_native_df().schema["casted"] == expected_polars_dtype
+
+    def test_try_cast_invalid_returns_null(self):
+        df = pl.DataFrame({"name": ["123", "Bob", None]})
+        result = DataFrame(df).select(col("name").try_cast(LongType()).alias("v")).to_native_df()
+        assert result["v"].to_list() == [123, None, None]
+
+    def test_try_cast_string_invalid_returns_null(self):
+        df = pl.DataFrame({"name": ["123", "Bob", None]})
+        result = DataFrame(df).select(col("name").try_cast("double").alias("v")).to_native_df()
+        assert result["v"].to_list() == [123.0, None, None]
 
     def test_is_not_null(self):
         df = pl.DataFrame({"x": [1, None, 3, None, 5]})
