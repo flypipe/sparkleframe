@@ -6,7 +6,6 @@ from uuid import uuid4
 import pandas as pd
 import polars as pl
 import pyarrow as pa
-
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf import types as sft
 from sparkleframe.polarsdf.column import Column
@@ -60,6 +59,14 @@ class DataFrame(BaseDataFrame):
             # Wrap single logical type as a single-field StructType named "value" (Spark-like)
             wrapped = StructType([StructField("value", schema)])
             self.df = _MapTypeUtils.build_df_from_struct_rows(data, wrapped)
+
+        elif isinstance(schema, (list, tuple)) and all(isinstance(col_name, str) for col_name in schema):
+            # Spark-style createDataFrame(data=[(...), (...)], schema=["c1", "c2", ...]) provides row-oriented tuples.
+            # Force row orientation so Polars does not infer tuple values as column vectors.
+            if isinstance(data, (list, tuple)) and data and isinstance(data[0], (list, tuple)):
+                self.df = pl.DataFrame(data, schema=list(schema), orient="row")
+            else:
+                self.df = pl.DataFrame(data, schema=list(schema))
 
         elif isinstance(data, pd.DataFrame):
             # No (or non-StructType) schema: let Polars infer
@@ -139,6 +146,11 @@ class DataFrame(BaseDataFrame):
         """
         return self.df.columns
 
+    def __getattr__(self, item: str):
+        if item in self.df.columns:
+            return Column(pl.col(item))
+        raise AttributeError(f"'DataFrame' object has no attribute '{item}'")
+
     def alias(self, name: str) -> DataFrame:
         """
         Mimics PySpark's DataFrame.alias(name).
@@ -167,7 +179,11 @@ class DataFrame(BaseDataFrame):
             DataFrame: A new DataFrame containing only the rows that match the filter condition.
         """
         if isinstance(condition, str):
-            filtered_df = self.df.filter(pl.col(condition))
+            try:
+                # Support Spark-style SQL predicates, e.g. "rn = 1", "col is null and other is null".
+                filtered_df = self.df.filter(pl.sql_expr(condition))
+            except Exception:
+                filtered_df = self.df.filter(pl.col(condition))
         elif isinstance(condition, Column):
             filtered_df = self.df.filter(condition.to_native())
         else:
@@ -176,6 +192,39 @@ class DataFrame(BaseDataFrame):
         return DataFrame(filtered_df)
 
     where = filter  # Alias for .filter()
+
+    def union(self, other: "DataFrame") -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.union (UNION ALL by position).
+        """
+        if not isinstance(other, DataFrame):
+            raise TypeError("union() expects a DataFrame")
+
+        left_cols = self.columns
+        right_cols = other.columns
+        if len(left_cols) != len(right_cols):
+            raise ValueError(
+                f"union() requires same number of columns; left={len(left_cols)}, right={len(right_cols)}"
+            )
+
+        right_df = other.df.select([pl.col(col_name).alias(left_cols[idx]) for idx, col_name in enumerate(right_cols)])
+        return DataFrame(pl.concat([self.df, right_df], how="vertical_relaxed"))
+
+    unionAll = union
+
+    def distinct(self) -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.distinct.
+        """
+        return DataFrame(self.df.unique())
+
+    def dropDuplicates(self, subset: Optional[List[str]] = None) -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.dropDuplicates.
+        """
+        if subset is None:
+            return self.distinct()
+        return DataFrame(self.df.unique(subset=subset))
 
     def select(self, *cols: Union[str, Column, List[str], List[Column]]) -> "DataFrame":
         """
@@ -233,7 +282,17 @@ class DataFrame(BaseDataFrame):
         Returns:
             A new DataFrame with the added or updated column.
         """
+        if hasattr(col, "branches") and hasattr(col, "otherwise"):
+            col = col.otherwise(None)
         col = Column(col) if not isinstance(col, Column) else col
+        if getattr(col, "_is_explode", False):
+            source_name = getattr(col, "_explode_source_name", None)
+            if source_name and source_name in self.df.columns:
+                exploded_df = self.df.explode(source_name)
+                if name != source_name:
+                    exploded_df = exploded_df.rename({source_name: name})
+                return DataFrame(exploded_df)
+
         expr = col.to_native().alias(name)
         updated_df = self.df.with_columns(expr)
         return DataFrame(updated_df)
@@ -249,11 +308,12 @@ class DataFrame(BaseDataFrame):
         Returns:
             A new DataFrame with the renamed column.
 
-        Raises:
-            ValueError: If the existing column name is not in the DataFrame.
+        Notes:
+            Matches PySpark behavior: if the source column does not exist, returns
+            the original DataFrame unchanged.
         """
         if existing not in self.df.columns:
-            raise ValueError(f"Column '{existing}' does not exist in the DataFrame.")
+            return DataFrame(self.df)
 
         renamed_df = self.df.rename({existing: new})
         return DataFrame(renamed_df)
@@ -539,7 +599,30 @@ class DataFrame(BaseDataFrame):
 
         polars_join_type = PYSPARK_TO_POLARS_JOIN_MAP[how]
         suffix = "_" + str(uuid4()).replace("-", "")
-        result = self.df.join(other.df, on=on, how=polars_join_type, suffix=suffix)
+        if has_col:
+            if len(on) != 1:
+                raise ValueError("Expression joins expect a single Column predicate")
+            predicate = on[0]
+            if how not in {"inner", "left", "leftouter", "left_outer"}:
+                raise ValueError("Expression joins currently support only inner/left joins")
+
+            left_with_idx = self.df.with_row_index("__sf_left_idx")
+            matched = left_with_idx.join(other.df, how="cross", suffix=suffix).filter(predicate)
+
+            if how in {"inner"}:
+                result = matched.drop("__sf_left_idx")
+            else:
+                matched_ids = matched.select("__sf_left_idx").unique()
+                unmatched = left_with_idx.join(matched_ids, on="__sf_left_idx", how="anti")
+
+                unmatched_right_cols = []
+                for right_col in other.df.columns:
+                    target_col = right_col if right_col not in self.df.columns else f"{right_col}{suffix}"
+                    unmatched_right_cols.append(pl.lit(None).alias(target_col))
+                unmatched = unmatched.with_columns(unmatched_right_cols).drop("__sf_left_idx")
+                result = pl.concat([matched.drop("__sf_left_idx"), unmatched], how="diagonal_relaxed")
+        else:
+            result = self.df.join(other.df, on=on, how=polars_join_type, suffix=suffix)
 
         if how == "outer":
             """
@@ -679,6 +762,9 @@ class DataFrame(BaseDataFrame):
 
             # Scalars
             POLARS_TO_SPARK = {
+                # Polars can infer Null dtype for all-null columns.
+                # Map it to StringType so downstream schema casts can still run.
+                pl.Null: StringType(),
                 pl.Utf8: StringType(),
                 pl.Int32: IntegerType(),
                 pl.UInt32: IntegerType(),
