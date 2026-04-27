@@ -1,12 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
 
 import polars as pl
 import pyspark.sql.functions as F
 import pytest
-from polars.exceptions import InvalidOperationError
 
 from sparkleframe.polarsdf import DataFrame, StringType
-from sparkleframe.polarsdf.functions import col, lit
+from sparkleframe.polarsdf.functions import col, current_date, date_sub, lit
 from sparkleframe.polarsdf.types import (
     SPARK_TYPE_NAME_MAP,
     BinaryType,
@@ -247,22 +246,19 @@ class TestColumn:
             (">=", lambda col, val: col >= val),
         ],
     )
-    def test_temporal_column_string_comparison_raises(spark, op_name, expr_func):
+    def test_temporal_column_string_comparison_completes(self, op_name, expr_func) -> None:
+        """Comparisons coerce like Spark: string/timestamp mix evaluates without error."""
         df = pl.DataFrame({"birth_date": [datetime(1990, 1, 1), datetime(1985, 5, 15), datetime(1970, 12, 30)]})
         sparkle_df = DataFrame(df)
 
-        # Attempt comparison with a string (should raise)
-        with pytest.raises(InvalidOperationError):
-            expr = expr_func(col("birth_date"), "2024-01-01")
-            sparkle_df.select(expr.alias("result")).toPandas()
-
-        # Attempt comparison with a lit string (should raise)
-        with pytest.raises(InvalidOperationError):
-            expr = expr_func(col("birth_date"), lit("2024-01-01"))
-            sparkle_df.select(expr.alias("result")).toPandas()
+        for other in ("2024-01-01", lit("2024-01-01")):
+            expr = expr_func(col("birth_date"), other)
+            out = sparkle_df.select(expr.alias("result")).to_native_df()["result"]
+            assert out.dtype == pl.Boolean
 
         expr = expr_func(col("birth_date"), datetime(2024, 1, 1))
-        sparkle_df.select(expr.alias("result")).toPandas()
+        out = sparkle_df.select(expr.alias("result")).to_native_df()["result"]
+        assert out.dtype == pl.Boolean
 
     @pytest.mark.parametrize(
         "values, pattern, expected",
@@ -312,3 +308,49 @@ class TestColumn:
         expected_rows = expected.orderBy("idx").collect()
 
         assert actual_rows == expected_rows
+
+
+class TestColumnComparisonCoercion:
+    """
+    Spark-like comparison: float cast for ordering; ``==`` / ``!=`` use numeric
+    match when both sides parse as numbers, else string comparison.
+    """
+
+    def _eval(self, expr, df: pl.DataFrame) -> pl.Series:
+        return df.select(expr.to_native()).to_series()
+
+    def test_eq_int_column_to_string_literal_numeric_match(self) -> None:
+        df = pl.DataFrame({"a": [1, 2, 3]})
+        result = self._eval(col("a") == lit("1"), df)
+        assert result.to_list() == [True, False, False]
+
+    def test_eq_string_column_to_int_literal_numeric_match(self) -> None:
+        df = pl.DataFrame({"s": ["1", "2", "x"]})
+        result = self._eval(col("s") == lit(1), df)
+        assert result.to_list() == [True, False, False]
+
+    def test_eq_fallback_string_when_either_not_numeric(self) -> None:
+        df = pl.DataFrame({"a": [1, 1], "t": ["x", "1"]})
+        r = self._eval(col("t") == col("a"), df)
+        assert r.to_list() == [False, True]
+
+    def test_ne_mixed_complements_eq(self) -> None:
+        df = pl.DataFrame({"a": [1, 2]})
+        eq = self._eval(col("a") == lit("1"), df)
+        ne = self._eval(col("a") != lit("1"), df)
+        assert ne.to_list() == [not v for v in eq.to_list()]
+
+    def test_ordering_uses_float_coercion(self) -> None:
+        df = pl.DataFrame({"s": ["1.5", "2", "10"]})
+        # Lexicographic would order "10" < "2"; float orders 2 < 10.
+        lt = self._eval(col("s") < lit(2), df)
+        assert lt.to_list() == [True, False, False]
+
+    def test_ordering_iso_datetime_string_vs_date_sub_offer_age(self) -> None:
+        """``created >= date_sub(current_date(), 30)`` must be boolean, not null."""
+        today = date.today()
+        recent = pl.DataFrame({"created": [f"{today.isoformat()}T12:00:00Z"]})
+        assert self._eval(col("created") >= date_sub(current_date(), 30), recent).to_list() == [True]
+        past = date.fromordinal(today.toordinal() - 40)
+        old = pl.DataFrame({"created": [f"{past.isoformat()}T12:00:00Z"]})
+        assert self._eval(col("created") >= date_sub(current_date(), 30), old).to_list() == [False]
