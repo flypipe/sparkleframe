@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import polars as pl
@@ -24,6 +25,11 @@ SPARK_TYPE_NAME_MAP: dict[str, pl.DataType] = {
 
 def spark_type_name_to_polars(name: str) -> pl.DataType:
     key = name.strip().lower()
+    decimal_match = re.match(r"decimal\((\d+)\s*,\s*(\d+)\)", key)
+    if decimal_match:
+        precision = int(decimal_match.group(1))
+        scale = int(decimal_match.group(2))
+        return pl.Decimal(precision=precision, scale=scale)
     try:
         return SPARK_TYPE_NAME_MAP[key]
     except KeyError:
