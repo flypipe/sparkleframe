@@ -1,3 +1,4 @@
+import builtins
 import json
 import re
 import uuid as std_uuid
@@ -24,6 +25,8 @@ from pyspark.sql.functions import length as spark_length
 from pyspark.sql.functions import lit as spark_lit
 from pyspark.sql.functions import lower as spark_lower
 from pyspark.sql.functions import md5 as spark_md5
+from pyspark.sql.functions import monotonically_increasing_id as spark_monotonically_increasing_id
+from pyspark.sql.functions import now as spark_now
 from pyspark.sql.functions import rank as spark_rank
 from pyspark.sql.functions import regexp_replace as spark_regexp_replace
 from pyspark.sql.functions import round as spark_round
@@ -34,6 +37,7 @@ from pyspark.sql.functions import to_timestamp as spark_to_timestamp
 from pyspark.sql.functions import trim as spark_trim
 from pyspark.sql.functions import try_element_at as spark_try_element_at
 from pyspark.sql.functions import try_to_timestamp as spark_try_to_timestamp
+from pyspark.sql.functions import unix_millis as spark_unix_millis
 from pyspark.sql.functions import when as spark_when
 from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import DoubleType as SparkDoubleType
@@ -63,6 +67,8 @@ from sparkleframe.polarsdf.functions import (
     lit,
     lower,
     md5,
+    monotonically_increasing_id,
+    now,
     rank,
     regexp_replace,
     round,
@@ -769,6 +775,35 @@ class TestTrimAndSplit:
         )
         expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
             spark_split(spark_col("s"), spark_lit(pattern), limit).alias("parts")
+        )
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+
+class TestNowAndMonotonicallyIncreasingId:
+    """Parity with PySpark for now and monotonically_increasing_id."""
+
+    def test_now_all_rows_equal_and_close_to_spark(self, spark) -> None:
+        data = {"x": [1, 2, 3]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_spark_df = create_spark_df(spark, polars_df.select(now().alias("t")))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_now().alias("t")
+        )
+        ms1 = [r[0] for r in result_spark_df.select(spark_unix_millis("t").alias("m")).collect()]
+        ms2 = [r[0] for r in expected_df.select(spark_unix_millis("t").alias("m")).collect()]
+        assert len(set(ms1)) == 1
+        assert len(set(ms2)) == 1
+        assert builtins.abs(ms1[0] - ms2[0]) < 3_000
+
+    def test_monotonically_increasing_id_against_spark(self, spark) -> None:
+        data = {"k": ["a", "b", "c", "d"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_spark_df = create_spark_df(
+            spark,
+            polars_df.select(monotonically_increasing_id().alias("id")),
+        )
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_monotonically_increasing_id().alias("id")
         )
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 

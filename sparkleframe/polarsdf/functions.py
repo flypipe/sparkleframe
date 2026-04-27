@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import datetime, timezone
 from typing import Any, Optional, Union
 from uuid import uuid4
 
@@ -651,6 +652,37 @@ def split(col_name: Union[str, Column], pattern: str, limit: int = -1) -> Column
         return _re_split_sparklike(s, pat, lim)
 
     return Column(expr.map_elements(_one, return_dtype=pl.List(pl.String)))
+
+
+def _now_batch(s: pl.Series) -> pl.Series:
+    if s.len() == 0:
+        return pl.Series("now", [], dtype=pl.Datetime("us"))
+    ts = datetime.now(timezone.utc).replace(tzinfo=None)
+    return pl.Series("now", [ts] * s.len(), dtype=pl.Datetime("us"))
+
+
+def now() -> Column:
+    """
+    Mimics pyspark.sql.functions.now: current timestamp (same value for all rows) at evaluation.
+
+    Uses UTC wall time without tzinfo, comparable to many Spark :class:`TimestampType` outputs.
+    """
+    return Column(
+        pl.int_range(0, pl.len(), dtype=pl.Int64, eager=False).map_batches(
+            _now_batch,
+            return_dtype=pl.Datetime("us"),
+        )
+    )
+
+
+def monotonically_increasing_id() -> Column:
+    """
+    Mimics pyspark.sql.functions.monotonically_increasing_id for a single in-memory partition.
+
+    Yields 0, 1, 2, … in **current row order** (row index). Does not bit-pack a Spark
+    partition id; multi-executor layout is not modeled.
+    """
+    return Column(pl.int_range(0, pl.len(), dtype=pl.Int64, eager=False))
 
 
 def _as_col_expr(col_name: Union[str, Column]) -> pl.Expr:
