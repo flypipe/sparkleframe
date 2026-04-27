@@ -33,7 +33,7 @@ lint:
 .PHONY: lint
 
 coverage:
-	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "pytest -n $(PYTEST_THREADS) -k '_test.py' --cov-config=sparkleframe/.coverage --cov=sparkleframe --no-cov-on-fail --cov-fail-under=$(MIN_COVERAGE) -v sparkleframe"
+	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "pytest -n $(PYTEST_THREADS) -k '_test.py' --cov=sparkleframe --no-cov-on-fail --cov-fail-under=$(MIN_COVERAGE) -v sparkleframe"
 .PHONY: coverage
 
 test:

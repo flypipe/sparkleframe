@@ -10,7 +10,7 @@ from uuid import uuid4
 import polars as pl
 
 from sparkleframe.polarsdf import WindowSpec
-from sparkleframe.polarsdf.column import Column, _to_expr
+from sparkleframe.polarsdf.column import Column, _expr_as_string_for_compare, _to_expr
 from sparkleframe.polarsdf.functions_utils import _RankWrapper
 from sparkleframe.polarsdf.types import (
     ArrayType,
@@ -46,10 +46,12 @@ def col(name: str) -> Column:
     """
     if "." in name:
         parts = name.split(".")
-        expr = pl.col(parts[0])
+        # Defer struct navigation through :class:`Column` so :func:`_apply_getitem_key`
+        # runs under the active frame schema (null-safe / missing-field parity with Spark).
+        c: Column = Column(parts[0])
         for seg in parts[1:]:
-            expr = expr.struct.field(seg)
-        return Column(expr)  # pass a Polars Expr directly
+            c = c.getItem(seg)
+        return c
     return Column(pl.col(name))
 
 
@@ -232,8 +234,14 @@ def lit(value) -> Column:
     Returns:
         Column: A Column object wrapping a literal Polars expression.
     """
-    # Let Polars broadcast scalar literals safely, including empty DataFrames.
-    return Column(pl.lit(value))
+    # Plain ``pl.lit`` broadcasts with ``with_columns`` / ``withColumn``. ``select`` is handled
+    # in :meth:`DataFrame.select` when Polars collapses literal-only selects to one row.
+    if value is None:
+        c = Column(pl.lit(value).cast(pl.String))
+    else:
+        c = Column(pl.lit(value))
+    c._broadcast_row_count_in_select = True
+    return c
 
 
 def coalesce(*cols: Union[str, Column]) -> Column:
@@ -355,6 +363,13 @@ def map_from_entries(col_name: Union[str, Column]) -> Column:
     # Spark map is represented in sparkleframe as list<struct<key,value>>,
     # which keeps key/value access compatible with element_at/getItem helpers.
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    entry = pl.Struct(
+        [
+            pl.Field("key", pl.String),
+            pl.Field("value", pl.String),
+        ]
+    )
+    expr = expr.cast(pl.List(entry), strict=False)
     return Column(expr)
 
 
@@ -810,7 +825,7 @@ def lower(col_name: Union[str, Column]) -> Column:
         Column: A Column with lower-cased string values.
     """
     col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
-    expr = _to_expr(col_name)
+    expr = _to_expr(col_name).cast(pl.String, strict=False)
     return Column(expr.str.to_lowercase())
 
 
@@ -1114,7 +1129,7 @@ def concat(*cols: Union[str, Column]) -> Column:
     """
     if not cols:
         raise ValueError("concat requires at least one column")
-    exprs = [_as_col_expr(c).cast(pl.String, strict=False) for c in cols]
+    exprs = [_expr_as_string_for_compare(_as_col_expr(c)) for c in cols]
     return Column(pl.concat_str(exprs, separator="", ignore_nulls=False))
 
 
@@ -1150,6 +1165,10 @@ def _struct_child_field_name(arg: Union[str, Column], expr: pl.Expr, index: int)
 def _struct_named_child(arg: Union[str, Column], index: int) -> pl.Expr:
     expr = _to_expr(arg) if isinstance(arg, Column) else pl.col(arg)
     name = _struct_child_field_name(arg, expr, index)
+    # Polars rejects ``pl.struct`` with ``Object`` fields (``nested objects are not allowed``).
+    # Map-entry structs use ``key`` / ``value`` names; coerce to string like Spark map keys/values.
+    if name in ("key", "value"):
+        expr = expr.cast(pl.String, strict=False)
     return expr.alias(name)
 
 
@@ -1173,7 +1192,11 @@ def struct(*cols: Any) -> Column:
     if not expanded:
         raise ValueError("struct requires at least one column")
     parts = [_struct_named_child(c, i) for i, c in enumerate(expanded)]
-    return Column(pl.struct(parts))
+    out = Column(pl.struct(parts))
+    out._broadcast_row_count_in_select = bool(expanded) and all(
+        isinstance(c, Column) and getattr(c, "_broadcast_row_count_in_select", False) for c in expanded
+    )
+    return out
 
 
 def try_to_timestamp(
@@ -1286,6 +1309,24 @@ def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Col
         return Column(col_expr.list.get(polars_idx, null_on_oob=True))
 
     if isinstance(extraction, str):
+        try:
+            dt = col_expr.meta.output_dtype()
+        except Exception:
+            dt = None
+        if isinstance(dt, pl.Struct) and extraction in (f.name for f in dt.fields):
+            return Column(col_expr.struct.field(extraction))
+        if isinstance(dt, pl.List) and isinstance(getattr(dt, "inner", None), pl.Struct):
+            inner_s = dt.inner
+            if "key" in {f.name for f in inner_s.fields} and "value" in {f.name for f in inner_s.fields}:
+                return Column(
+                    col_expr.list.eval(
+                        pl.when(pl.element().struct.field("key") == pl.lit(extraction)).then(
+                            pl.element().struct.field("value")
+                        )
+                    )
+                    .list.drop_nulls()
+                    .list.first()
+                )
 
         def _lookup_static(value: Any) -> Any:
             if value is None:
@@ -1298,7 +1339,7 @@ def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Col
                         return entry.get("value")
             return None
 
-        return Column(col_expr.map_elements(_lookup_static, return_dtype=pl.String))
+        return Column(col_expr.map_elements(_lookup_static, return_dtype=pl.Object))
 
     raise TypeError(f"try_element_at extraction must be int, str, or Column, got {type(extraction).__name__}")
 
