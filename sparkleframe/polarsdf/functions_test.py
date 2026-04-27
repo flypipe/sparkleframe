@@ -743,9 +743,7 @@ class TestTryToTimestamp:
         assert result["result"][2] is None
 
         spark_df = spark.createDataFrame(df.to_pandas())
-        expected_df = spark_df.select(
-            spark_try_to_timestamp(spark_col("ts"), spark_lit("yyyy-MM-dd HH:mm:ss")).alias("result")
-        )
+        expected_df = spark_df.select(spark_try_to_timestamp("ts").alias("result"))
         result_spark_df = create_spark_df(spark, polars_df.select(try_to_timestamp("ts").alias("result")))
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
@@ -757,9 +755,7 @@ class TestTryToTimestamp:
         assert result["result"][0] is not None
 
         spark_df = spark.createDataFrame(df.to_pandas())
-        expected_df = spark_df.select(
-            spark_try_to_timestamp(spark_col("ts"), spark_lit("yyyy-MM-dd HH:mm:ss")).alias("result")
-        )
+        expected_df = spark_df.select(spark_try_to_timestamp("ts").alias("result"))
         result_spark_df = create_spark_df(spark, polars_df.select(try_to_timestamp(col("ts")).alias("result")))
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
