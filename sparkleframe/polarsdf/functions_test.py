@@ -28,8 +28,10 @@ from pyspark.sql.functions import rank as spark_rank
 from pyspark.sql.functions import regexp_replace as spark_regexp_replace
 from pyspark.sql.functions import round as spark_round
 from pyspark.sql.functions import row_number as spark_row_number
+from pyspark.sql.functions import split as spark_split
 from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import to_timestamp as spark_to_timestamp
+from pyspark.sql.functions import trim as spark_trim
 from pyspark.sql.functions import try_element_at as spark_try_element_at
 from pyspark.sql.functions import try_to_timestamp as spark_try_to_timestamp
 from pyspark.sql.functions import when as spark_when
@@ -65,8 +67,10 @@ from sparkleframe.polarsdf.functions import (
     regexp_replace,
     round,
     row_number,
+    split,
     struct,
     to_timestamp,
+    trim,
     try_element_at,
     try_to_date,
     try_to_timestamp,
@@ -726,6 +730,46 @@ class TestMd5:
         result_spark_df = create_spark_df(spark, polars_df.select(md5("b").alias("h")))
         spark_in = spark.createDataFrame(spark_rows_from_dict(data), ["b"])
         expected_df = spark_in.select(spark_md5(spark_col("b")).alias("h"))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+
+class TestTrimAndSplit:
+    """Parity with PySpark for trim and split."""
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            ["  a  ", "b\t", " c \n"],
+            [None, "  x  ", ""],
+        ],
+    )
+    def test_trim_against_spark(self, spark, values) -> None:
+        data = {"s": values}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_spark_df = create_spark_df(spark, polars_df.select(trim("s").alias("out")))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_trim(spark_col("s")).alias("out")
+        )
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    @pytest.mark.parametrize(
+        "values, pattern, limit",
+        [
+            (["a-b-c", "x-y-z", None], r"-", -1),
+            (["a1b1c", "nope"], r"\d", -1),
+            (["a-b-c-d", "p.q"], r"-", 2),
+        ],
+    )
+    def test_split_against_spark(self, spark, values: list, pattern: str, limit: int) -> None:
+        data = {"s": values}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_spark_df = create_spark_df(
+            spark,
+            polars_df.select(split("s", pattern, limit).alias("parts")),
+        )
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_split(spark_col("s"), spark_lit(pattern), limit).alias("parts")
+        )
         assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import Any, Optional, Union
 from uuid import uuid4
 
@@ -611,6 +612,45 @@ def md5(col_name: Union[str, Column]) -> Column:
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.map_elements(_md5_sparklike, return_dtype=pl.String))
+
+
+def trim(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.trim (single-argument form).
+
+    Removes leading and trailing **ASCII space** (U+0020) only, matching Spark.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.str.strip_chars(" "))
+
+
+def _re_split_sparklike(value: Any, pattern: str, limit: int) -> list[str] | None:
+    """Replicate PySpark ``split`` limit semantics; uses Python :mod:`re` (not the JVM)."""
+    if value is None:
+        return None
+    s = value if isinstance(value, str) else str(value)
+    if limit == 0 or limit < 0:
+        return re.split(pattern, s)
+    if limit == 1:
+        return [s]
+    return re.split(pattern, s, maxsplit=limit - 1)
+
+
+def split(col_name: Union[str, Column], pattern: str, limit: int = -1) -> Column:
+    """
+    Mimics pyspark.sql.functions.split.
+
+    Splits a string on a *regex* ``pattern`` (Python :mod:`re` dialect; subtle differences
+    from Spark's Java engine are possible). A non-positive ``limit`` applies the pattern
+    as many times as possible; a positive limit caps splits like Spark (``limit - 1``).
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    pat, lim = pattern, limit
+
+    def _one(s: Any) -> list[str] | None:
+        return _re_split_sparklike(s, pat, lim)
+
+    return Column(expr.map_elements(_one, return_dtype=pl.List(pl.String)))
 
 
 def _as_col_expr(col_name: Union[str, Column]) -> pl.Expr:
