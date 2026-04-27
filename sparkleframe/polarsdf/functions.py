@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Optional, Union
 from uuid import uuid4
 
@@ -579,6 +580,37 @@ def lower(col_name: Union[str, Column]) -> Column:
     col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
     expr = _to_expr(col_name)
     return Column(expr.str.to_lowercase())
+
+
+def initcap(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.initcap.
+
+    Converts the first letter of each word to uppercase and the rest to lowercase.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.str.to_titlecase())
+
+
+def _md5_sparklike(value: Any) -> str | None:
+    """MD5 digest as 32-char hex (Spark: UTF-8 for strings, raw bytes for binary)."""
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        b = bytes(value)
+    else:
+        b = str(value).encode("utf-8")
+    return hashlib.md5(b, usedforsecurity=False).hexdigest()
+
+
+def md5(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.md5.
+
+    Returns the MD5 hash of a string (UTF-8) or binary column as a 32-character hex string.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.map_elements(_md5_sparklike, return_dtype=pl.String))
 
 
 def _as_col_expr(col_name: Union[str, Column]) -> pl.Expr:

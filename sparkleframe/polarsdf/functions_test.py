@@ -23,6 +23,7 @@ from pyspark.sql.functions import get_json_object as spark_get_json_object
 from pyspark.sql.functions import length as spark_length
 from pyspark.sql.functions import lit as spark_lit
 from pyspark.sql.functions import lower as spark_lower
+from pyspark.sql.functions import md5 as spark_md5
 from pyspark.sql.functions import rank as spark_rank
 from pyspark.sql.functions import regexp_replace as spark_regexp_replace
 from pyspark.sql.functions import round as spark_round
@@ -59,6 +60,7 @@ from sparkleframe.polarsdf.functions import (
     length,
     lit,
     lower,
+    md5,
     rank,
     regexp_replace,
     round,
@@ -706,6 +708,25 @@ class TestUuid:
         for s in out:
             assert _RE_UUID_V4.match(s) is not None
             assert std_uuid.UUID(s).version == 4
+
+
+class TestMd5:
+    def test_md5_string_against_spark(self, spark) -> None:
+        data = {"s": ["abc", "", None, "café"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_spark_df = create_spark_df(spark, polars_df.select(md5("s").alias("h")))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_md5(spark_col("s")).alias("h")
+        )
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+
+    def test_md5_binary_against_spark(self, spark) -> None:
+        data = {"b": [b"abc", None, b"", b"\x00\xff"]}
+        polars_df = DataFrame(pl.DataFrame(data, schema={"b": pl.Binary}))
+        result_spark_df = create_spark_df(spark, polars_df.select(md5("b").alias("h")))
+        spark_in = spark.createDataFrame(spark_rows_from_dict(data), ["b"])
+        expected_df = spark_in.select(spark_md5(spark_col("b")).alias("h"))
+        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
 
 
 class TestTryToTimestamp:
