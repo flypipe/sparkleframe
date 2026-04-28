@@ -13,6 +13,57 @@ from pyspark.sql.types import StructType as SparkStructType
 from sparkleframe.polarsdf import DataFrame
 
 
+def _polars_dtype_to_spark_sql_type(dtype: pl.DataType) -> str:
+    """Map Polars dtypes to Spark SQL type names for empty-frame DDL (``createDataFrame([], ddl)``)."""
+    if dtype == pl.Null:
+        return "void"
+    if dtype == pl.Int8:
+        return "tinyint"
+    if dtype == pl.Int16:
+        return "smallint"
+    if dtype == pl.Int32:
+        return "int"
+    if dtype == pl.Int64:
+        return "bigint"
+    if dtype == pl.UInt8:
+        return "smallint"
+    if dtype == pl.UInt16:
+        return "int"
+    if dtype == pl.UInt32:
+        return "bigint"
+    if dtype == pl.UInt64:
+        return "decimal(20,0)"
+    if dtype == pl.Float32:
+        return "float"
+    if dtype == pl.Float64:
+        return "double"
+    if dtype in (pl.Utf8, pl.String):
+        return "string"
+    if dtype == pl.Boolean:
+        return "boolean"
+    if dtype == pl.Binary:
+        return "binary"
+    if dtype == pl.Date:
+        return "date"
+    if isinstance(dtype, pl.Datetime):
+        return "timestamp"
+    if isinstance(dtype, pl.Duration):
+        return "bigint"
+    if isinstance(dtype, pl.Decimal):
+        return f"decimal({dtype.precision},{dtype.scale})"
+    if isinstance(dtype, (pl.List, pl.Array, pl.Struct, pl.Object)):
+        return "string"
+    return "string"
+
+
+def _ddl_schema_from_polars_frame(frame: pl.DataFrame) -> str:
+    parts: list[str] = []
+    for name in frame.columns:
+        sql_type = _polars_dtype_to_spark_sql_type(frame.schema[name])
+        parts.append(f"{name} {sql_type}")
+    return ", ".join(parts)
+
+
 def spark_rows_from_dict(data: dict[str, list[Any]]) -> list[tuple[Any, ...]]:
     """
     Column-oriented dict -> row tuples for Spark, preserving key order as column order.
@@ -48,6 +99,8 @@ def create_spark_df(
     if not rows:
         if schema is not None:
             return spark.createDataFrame([], schema)
+        if cols:
+            return spark.createDataFrame([], _ddl_schema_from_polars_frame(native))
         return spark.createDataFrame(pd.DataFrame(native.to_arrow().to_pandas()))
 
     row_tuples = [tuple(r[c] for c in cols) for r in rows]

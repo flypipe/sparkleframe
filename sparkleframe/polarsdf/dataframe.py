@@ -9,7 +9,7 @@ import pyarrow as pa
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf import types as sft
-from sparkleframe.polarsdf.column import Column
+from sparkleframe.polarsdf.column import Column, _polars_schema_for
 from sparkleframe.polarsdf.group import GroupedData
 from sparkleframe.polarsdf.types import (
     BinaryType,
@@ -60,6 +60,14 @@ class DataFrame(BaseDataFrame):
             # Wrap single logical type as a single-field StructType named "value" (Spark-like)
             wrapped = StructType([StructField("value", schema)])
             self.df = _MapTypeUtils.build_df_from_struct_rows(data, wrapped)
+
+        elif isinstance(schema, (list, tuple)) and all(isinstance(col_name, str) for col_name in schema):
+            # Spark-style createDataFrame(data=[(...), (...)], schema=["c1", "c2", ...]) provides row-oriented tuples.
+            # Force row orientation so Polars does not infer tuple values as column vectors.
+            if isinstance(data, (list, tuple)) and data and isinstance(data[0], (list, tuple)):
+                self.df = pl.DataFrame(data, schema=list(schema), orient="row")
+            else:
+                self.df = pl.DataFrame(data, schema=list(schema))
 
         elif isinstance(data, pd.DataFrame):
             # No (or non-StructType) schema: let Polars infer
@@ -112,18 +120,20 @@ class DataFrame(BaseDataFrame):
 
     def __getitem__(self, item: Union[int, str, Column, List, Tuple]) -> Union[Column, "DataFrame"]:
         if isinstance(item, str):
-            # Return a single column by name
-            return Column(self.df[item])
+            # Return a single column by name (``pl.col``, not a materialized Series, so ``Column`` ops work).
+            return Column(pl.col(item))
         elif isinstance(item, int):
             # Return a column by index
-            return Column(self.df[self.df.columns[item]])
+            return Column(pl.col(self.df.columns[item]))
         elif isinstance(item, Column):
             # Return a filtered DataFrame
-            return DataFrame(self.df.filter(item.to_native()))
+            with _polars_schema_for(self.df.schema):
+                return DataFrame(self.df.filter(item.to_native()))
         elif isinstance(item, (list, tuple)):
             # Return a DataFrame with selected columns
-            cols = [col.to_native() if isinstance(col, Column) else col for col in item]
-            return DataFrame(self.df.select(cols))
+            with _polars_schema_for(self.df.schema):
+                cols = [col.to_native() if isinstance(col, Column) else col for col in item]
+                return DataFrame(self.df.select(cols))
         else:
             raise TypeError(f"Unexpected type: {type(item)}")
 
@@ -138,6 +148,11 @@ class DataFrame(BaseDataFrame):
             List[str]: List of column names.
         """
         return self.df.columns
+
+    def __getattr__(self, item: str):
+        if item in self.df.columns:
+            return Column(pl.col(item))
+        raise AttributeError(f"'DataFrame' object has no attribute '{item}'")
 
     def alias(self, name: str) -> DataFrame:
         """
@@ -167,15 +182,53 @@ class DataFrame(BaseDataFrame):
             DataFrame: A new DataFrame containing only the rows that match the filter condition.
         """
         if isinstance(condition, str):
-            filtered_df = self.df.filter(pl.col(condition))
+            try:
+                # Support Spark-style SQL predicates, e.g. "rn = 1", "col is null and other is null".
+                filtered_df = self.df.filter(pl.sql_expr(condition))
+            except Exception:
+                filtered_df = self.df.filter(pl.col(condition))
         elif isinstance(condition, Column):
-            filtered_df = self.df.filter(condition.to_native())
+            with _polars_schema_for(self.df.schema):
+                filtered_df = self.df.filter(condition.to_native())
         else:
             raise TypeError("filter() expects a string column name or a Column expression")
 
         return DataFrame(filtered_df)
 
     where = filter  # Alias for .filter()
+
+    def union(self, other: "DataFrame") -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.union (UNION ALL by position).
+        """
+        if not isinstance(other, DataFrame):
+            raise TypeError("union() expects a DataFrame")
+
+        left_cols = self.columns
+        right_cols = other.columns
+        if len(left_cols) != len(right_cols):
+            raise ValueError(
+                f"union() requires same number of columns; left={len(left_cols)}, right={len(right_cols)}"
+            )
+
+        right_df = other.df.select([pl.col(col_name).alias(left_cols[idx]) for idx, col_name in enumerate(right_cols)])
+        return DataFrame(pl.concat([self.df, right_df], how="vertical_relaxed"))
+
+    unionAll = union
+
+    def distinct(self) -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.distinct.
+        """
+        return DataFrame(self.df.unique())
+
+    def dropDuplicates(self, subset: Optional[List[str]] = None) -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.dropDuplicates.
+        """
+        if subset is None:
+            return self.distinct()
+        return DataFrame(self.df.unique(subset=subset))
 
     def select(self, *cols: Union[str, Column, List[str], List[Column]]) -> "DataFrame":
         """
@@ -195,31 +248,42 @@ class DataFrame(BaseDataFrame):
         """
         cols = list(cols)
         cols = cols[0] if cols and isinstance(cols[0], list) else cols
-        pl_expressions = []
+        pl_expressions: List[Any] = []
+        broadcast_flags: List[bool] = []
 
-        for c in cols:
-            if isinstance(c, Column):
-                pl_expressions.append(c.to_native())
-                continue
+        with _polars_schema_for(self.df.schema):
+            for c in cols:
+                if isinstance(c, Column):
+                    pl_expressions.append(c.to_native())
+                    broadcast_flags.append(bool(getattr(c, "_broadcast_row_count_in_select", False)))
+                    continue
 
-            if isinstance(c, str):
-                if "." in c:
-                    parts = c.split(".")
-                    base, tail = parts[0], parts[1:]
-                    expr = pl.col(base)
-                    for seg in tail:
-                        expr = expr.struct.field(seg)
-                    # Alias to the last segment ("id2" for "col.id.id2")
-                    expr = expr.alias(tail[-1])
-                    pl_expressions.append(expr)
-                else:
-                    pl_expressions.append(pl.col(c))
-                continue
+                if isinstance(c, str):
+                    if "." in c:
+                        parts = c.split(".")
+                        base, tail = parts[0], parts[1:]
+                        expr = pl.col(base)
+                        for seg in tail:
+                            expr = expr.struct.field(seg)
+                        # Alias to the last segment ("id2" for "col.id.id2")
+                        expr = expr.alias(tail[-1])
+                        pl_expressions.append(expr)
+                    else:
+                        pl_expressions.append(pl.col(c))
+                    broadcast_flags.append(False)
+                    continue
 
-            # fallback: assume it's already a polars expr or valid selector
-            pl_expressions.append(c)
+                # fallback: assume it's already a polars expr or valid selector
+                pl_expressions.append(c)
+                broadcast_flags.append(False)
 
         selected_df = self.df.select(*pl_expressions)
+        n_src = self.df.height
+        n_sel = selected_df.height
+        all_lit_broadcast = bool(pl_expressions) and all(broadcast_flags)
+        if all_lit_broadcast and ((n_src == 0 and n_sel != 0) or (n_src > 1 and n_sel == 1)):
+            out_names = [e.meta.output_name() for e in pl_expressions]
+            selected_df = self.df.with_columns(pl_expressions).select(*out_names)
         return DataFrame(selected_df)
 
     def withColumn(self, name: str, col: Any) -> DataFrame:
@@ -233,8 +297,19 @@ class DataFrame(BaseDataFrame):
         Returns:
             A new DataFrame with the added or updated column.
         """
+        if hasattr(col, "branches") and hasattr(col, "otherwise"):
+            col = col.otherwise(None)
         col = Column(col) if not isinstance(col, Column) else col
-        expr = col.to_native().alias(name)
+        if getattr(col, "_is_explode", False):
+            source_name = getattr(col, "_explode_source_name", None)
+            if source_name and source_name in self.df.columns:
+                exploded_df = self.df.explode(source_name)
+                if name != source_name:
+                    exploded_df = exploded_df.rename({source_name: name})
+                return DataFrame(exploded_df)
+
+        with _polars_schema_for(self.df.schema):
+            expr = col._to_native_getitem_only().alias(name)
         updated_df = self.df.with_columns(expr)
         return DataFrame(updated_df)
 
@@ -249,11 +324,12 @@ class DataFrame(BaseDataFrame):
         Returns:
             A new DataFrame with the renamed column.
 
-        Raises:
-            ValueError: If the existing column name is not in the DataFrame.
+        Notes:
+            Matches PySpark behavior: if the source column does not exist, returns
+            the original DataFrame unchanged.
         """
         if existing not in self.df.columns:
-            raise ValueError(f"Column '{existing}' does not exist in the DataFrame.")
+            return DataFrame(self.df)
 
         renamed_df = self.df.rename({existing: new})
         return DataFrame(renamed_df)
@@ -490,11 +566,12 @@ class DataFrame(BaseDataFrame):
         Returns:
             DataFrame: A new DataFrame resulting from the join.
         """
-        has_col = False
+        # True when the user wrapped keys in Column(...) (affects full-outer key coalescing).
+        on_column_wrappers = False
         if isinstance(on, str):
             on = [on]
         elif isinstance(on, Column):
-            has_col = True
+            on_column_wrappers = True
             on = [on.to_native()]
         elif isinstance(on, list):
 
@@ -507,7 +584,7 @@ class DataFrame(BaseDataFrame):
                     )
 
                 if isinstance(n, Column):
-                    has_col = True
+                    on_column_wrappers = True
                     break
             on = [n.to_native() if isinstance(n, Column) else n for n in on]
 
@@ -539,7 +616,42 @@ class DataFrame(BaseDataFrame):
 
         polars_join_type = PYSPARK_TO_POLARS_JOIN_MAP[how]
         suffix = "_" + str(uuid4()).replace("-", "")
-        result = self.df.join(other.df, on=on, how=polars_join_type, suffix=suffix)
+        # Only use cross-join + filter for a *boolean* join condition (e.g. col("a") == col("b")).
+        # Bare column refs (e.g. col("id")) are Spark equi-join keys, not predicates.
+        use_expr_join = on is not None and len(on) == 1 and isinstance(on[0], pl.Expr) and not on[0].meta.is_column()
+        if use_expr_join:
+            if how not in {"inner", "left", "leftouter", "left_outer"}:
+                raise ValueError("Expression joins currently support only inner/left joins")
+            predicate = on[0]
+
+            left_with_idx = self.df.with_row_index("__sf_left_idx")
+            matched = left_with_idx.join(other.df, how="cross", suffix=suffix).filter(predicate)
+
+            if how in {"inner"}:
+                result = matched.drop("__sf_left_idx")
+            else:
+                matched_ids = matched.select("__sf_left_idx").unique()
+                unmatched = left_with_idx.join(matched_ids, on="__sf_left_idx", how="anti")
+
+                unmatched_right_cols = []
+                for right_col in other.df.columns:
+                    target_col = right_col if right_col not in self.df.columns else f"{right_col}{suffix}"
+                    unmatched_right_cols.append(pl.lit(None).alias(target_col))
+                unmatched = unmatched.with_columns(unmatched_right_cols).drop("__sf_left_idx")
+                result = pl.concat([matched.drop("__sf_left_idx"), unmatched], how="diagonal_relaxed")
+        else:
+            equi_on: Union[None, str, list[str]] = on
+            if on is not None:
+                key_names: list[str] = []
+                for x in on:
+                    if isinstance(x, str):
+                        key_names.append(x)
+                    elif isinstance(x, pl.Expr) and x.meta.is_column():
+                        key_names.append(x.meta.output_name().split(".")[-1])
+                    else:
+                        raise TypeError(f"Unsupported equi-join key expression: {x!r}")
+                equi_on = key_names[0] if len(key_names) == 1 else key_names
+            result = self.df.join(other.df, on=equi_on, how=polars_join_type, suffix=suffix)
 
         if how == "outer":
             """
@@ -564,7 +676,7 @@ class DataFrame(BaseDataFrame):
 
                     # TODO: for some reason pyspark results from outer differs when `on_keys` are Column or str, wheter
                     # the col is dropped or a coalesce happens
-                    if has_col:
+                    if on_column_wrappers:
                         result = result.drop(col)
                     else:
                         result = result.with_columns(
@@ -679,6 +791,9 @@ class DataFrame(BaseDataFrame):
 
             # Scalars
             POLARS_TO_SPARK = {
+                # Polars can infer Null dtype for all-null columns.
+                # Map it to StringType so downstream schema casts can still run.
+                pl.Null: StringType(),
                 pl.Utf8: StringType(),
                 pl.Int32: IntegerType(),
                 pl.UInt32: IntegerType(),

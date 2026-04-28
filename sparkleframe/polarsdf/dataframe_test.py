@@ -44,7 +44,11 @@ from sparkleframe.polarsdf.types import (
 )
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal, create_spark_df, spark_rows_from_dict
+from sparkleframe.tests.utils import (
+    assert_sparkle_spark_frame_are_equal,
+    create_spark_df,
+    spark_rows_from_dict,
+)
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -588,6 +592,33 @@ class TestDataFrame:
         result_df = result_df.agg(PF.collect_list("value").alias("agg_result"))
 
         result_spark_df = spark.createDataFrame(result_df.toPandas())
+        assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
+
+    @pytest.mark.parametrize("use_alias", [False, True])
+    def test_groupby_collect_set(self, spark, use_alias) -> None:
+        """collect_set matches Spark; sort_array makes order comparable (sets are unordered)."""
+        data = {
+            "group": ["A", "A", "A", "B", "B"],
+            "value": [3, None, 1, 2, None],
+        }
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).orderBy(
+            "group", F.asc_nulls_last("value")
+        )
+        pl_df = DataFrame(pl.DataFrame(data)).sort("group", PF.asc_nulls_last("value"))
+
+        if not use_alias:
+            expected_df = spark_df.groupBy("group")
+            result_df = pl_df.groupBy("group")
+        else:
+            expected_df = spark_df.groupby("group")
+            result_df = pl_df.groupby("group")
+
+        expected_df = expected_df.agg(F.collect_set("value").alias("agg_result"))
+        result_df = result_df.agg(PF.collect_set("value").alias("agg_result"))
+
+        result_spark_df = spark.createDataFrame(result_df.toPandas())
+        result_spark_df = result_spark_df.select(F.col("group"), F.sort_array("agg_result").alias("agg_result"))
+        expected_df = expected_df.select(F.col("group"), F.sort_array("agg_result").alias("agg_result"))
         assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
 
     def test_groupby_collect_list_nested_aliased_struct(self, spark):

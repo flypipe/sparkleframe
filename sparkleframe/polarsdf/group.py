@@ -3,7 +3,7 @@ from typing import Union
 import polars as pl
 
 from sparkleframe.base.dataframe import DataFrame
-from sparkleframe.polarsdf import Column
+from sparkleframe.polarsdf.column import Column, _polars_schema_for
 
 
 class GroupedData:
@@ -13,7 +13,8 @@ class GroupedData:
         self.group_cols = [col.to_native() if isinstance(col, Column) else pl.col(col) for col in group_cols]
 
     def agg(self, *exprs: Union[str, Column]) -> DataFrame:
-        pl_exprs = [e.to_native() if isinstance(e, Column) else e for e in exprs]
+        with _polars_schema_for(self.df.schema):
+            pl_exprs = [e.to_native() if isinstance(e, Column) else e for e in exprs]
         grouped = self.df.group_by(*self.group_cols).agg(pl_exprs)
         return type(self.spark_df)(grouped)
 
