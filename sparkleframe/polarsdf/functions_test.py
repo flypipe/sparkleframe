@@ -17,6 +17,7 @@ from pyspark.sql.functions import coalesce as spark_coalesce
 from pyspark.sql.functions import col as spark_col
 from pyspark.sql.functions import concat as spark_concat
 from pyspark.sql.functions import current_date as spark_current_date
+from pyspark.sql.functions import current_timestamp as spark_current_timestamp
 from pyspark.sql.functions import date_sub as spark_date_sub
 from pyspark.sql.functions import datediff as spark_datediff
 from pyspark.sql.functions import dense_rank as spark_dense_rank
@@ -69,6 +70,7 @@ from sparkleframe.polarsdf import Window
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.functions import (
     abs,
+    array,
     array_contains,
     asc,
     asc_nulls_first,
@@ -78,6 +80,7 @@ from sparkleframe.polarsdf.functions import (
     col,
     concat,
     current_date,
+    current_timestamp,
     date_sub,
     datediff,
     dense_rank,
@@ -100,6 +103,7 @@ from sparkleframe.polarsdf.functions import (
     monotonically_increasing_id,
     months_between,
     now,
+    rand,
     rank,
     regexp_replace,
     round,
@@ -109,6 +113,7 @@ from sparkleframe.polarsdf.functions import (
     struct,
     substring,
     to_date,
+    to_json,
     to_timestamp,
     transform,
     trim,
@@ -902,6 +907,19 @@ class TestNowAndMonotonicallyIncreasingId:
         assert len(set(ms2)) == 1
         assert builtins.abs(ms1[0] - ms2[0]) < 3_000
 
+    def test_current_timestamp_all_rows_equal_and_close_to_spark(self, spark) -> None:
+        data = {"x": [1, 2, 3]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_spark_df = create_spark_df(spark, polars_df.select(current_timestamp().alias("t")))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_current_timestamp().alias("t")
+        )
+        ms1 = [r[0] for r in result_spark_df.select(spark_unix_millis("t").alias("m")).collect()]
+        ms2 = [r[0] for r in expected_df.select(spark_unix_millis("t").alias("m")).collect()]
+        assert len(set(ms1)) == 1
+        assert len(set(ms2)) == 1
+        assert builtins.abs(ms1[0] - ms2[0]) < 3_000
+
     def test_monotonically_increasing_id_against_spark(self, spark) -> None:
         data = {"k": ["a", "b", "c", "d"]}
         polars_df = DataFrame(pl.DataFrame(data))
@@ -946,6 +964,62 @@ class TestToDate:
         spark_df = spark.createDataFrame([(bad_value,)], ["d"])
         with pytest.raises(Exception):
             spark_df.select(spark_to_date("d", fmt).alias("result")).collect()
+
+
+class TestRand:
+    def test_rand_seeded_is_repeatable_and_in_range(self) -> None:
+        polars_df = DataFrame(pl.DataFrame({"x": [1, 2, 3, 4, 5]}))
+        a = polars_df.select(rand(42).alias("r")).to_native_df()["r"].to_list()
+        b = polars_df.select(rand(42).alias("r")).to_native_df()["r"].to_list()
+        assert a == b
+        assert all(isinstance(v, float) and 0.0 <= v < 1.0 for v in a)
+
+    def test_rand_unseeded_values_in_unit_interval(self) -> None:
+        polars_df = DataFrame(pl.DataFrame({"x": list(range(50))}))
+        vals = polars_df.select(rand().alias("r")).to_native_df()["r"].to_list()
+        assert all(isinstance(v, float) and 0.0 <= v < 1.0 for v in vals)
+
+
+class TestArray:
+    def test_array_empty_broadcasts_per_row(self) -> None:
+        polars_df = DataFrame(pl.DataFrame({"x": [1, 2]}))
+        col_vals = polars_df.withColumn("a", array()).to_native_df()["a"].to_list()
+        assert col_vals == [[], []]
+
+    def test_array_from_column_names(self) -> None:
+        polars_df = DataFrame(pl.DataFrame({"a": [1, 2], "b": [3, 4]}))
+        col_vals = polars_df.select(array("a", "b").alias("m")).to_native_df()["m"].to_list()
+        assert col_vals == [[1, 3], [2, 4]]
+
+
+class TestSizeObjectList:
+    """``size`` on Polars ``Object`` list cells (nested JSON-like structs)."""
+
+    def test_size_object_list_select(self) -> None:
+        offers = pl.Series("offers", [[1, 2], [], None, [3]], dtype=pl.Object)
+        df = DataFrame(pl.DataFrame([offers]))
+        assert df.select(size("offers").alias("sz")).to_native_df()["sz"].to_list() == [2, 0, None, 1]
+
+    def test_size_typed_list_column(self) -> None:
+        df = DataFrame(pl.DataFrame({"arr": [[1, 2], [], [3]]}))
+        assert df.select(size("arr").alias("sz")).to_native_df()["sz"].to_list() == [2, 0, 1]
+
+    def test_filter_or_on_object_list_columns_like_heloc(self) -> None:
+        """Spark ``size`` + ``filter`` on list fields that Polars stores as ``Object``."""
+        offers = pl.Series("replacements_offers", [[1, 2], None, [], [3]], dtype=pl.Object)
+        loans = pl.Series("replacements_loans", [[], [3], [], []], dtype=pl.Object)
+        df = DataFrame(pl.DataFrame([offers, loans]))
+        replaceable_offer_has_items = col("replacements_offers").isNotNull() & (size(col("replacements_offers")) > 0)
+        replaceable_loans_has_items = col("replacements_loans").isNotNull() & (size(col("replacements_loans")) > 0)
+        out = df.filter(replaceable_offer_has_items | replaceable_loans_has_items)
+        assert out.count() == 3
+
+
+class TestToJson:
+    def test_options_argument_rejected(self) -> None:
+        polars_df = DataFrame(pl.DataFrame({"a": [1]}))
+        with pytest.raises(ValueError):
+            polars_df.select(to_json(struct("a"), {"timestampFormat": "yyyy"}).alias("j"))
 
 
 class TestTryToTimestamp:
