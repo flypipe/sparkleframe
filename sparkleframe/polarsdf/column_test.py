@@ -5,7 +5,7 @@ import pyspark.sql.functions as F
 import pytest
 
 from sparkleframe.polarsdf import DataFrame, StringType
-from sparkleframe.polarsdf.functions import col, current_date, date_sub, lit
+from sparkleframe.polarsdf.functions import col, lit
 from sparkleframe.polarsdf.functions import pow as sf_pow
 from sparkleframe.polarsdf.types import (
     SPARK_TYPE_NAME_MAP,
@@ -379,6 +379,14 @@ class TestColumnComparisonCoercion:
 
     def test_ordering_iso_datetime_string_vs_date_sub_offer_age(self) -> None:
         """``created >= date_sub(current_date(), 30)`` must be boolean, not null."""
+        import importlib
+
+        _fn = importlib.import_module("sparkleframe.polarsdf.functions")
+        if not hasattr(_fn, "current_date") or not hasattr(_fn, "date_sub"):
+            pytest.skip("requires current_date/date_sub (merged with functions PR in stack)")
+        current_date = _fn.current_date
+        date_sub = _fn.date_sub
+
         today = date.today()
         recent = pl.DataFrame({"created": [f"{today.isoformat()}T12:00:00Z"]})
         assert self._eval(col("created") >= date_sub(current_date(), 30), recent).to_list() == [True]

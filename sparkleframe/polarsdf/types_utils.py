@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
 import polars as pl
+
 from sparkleframe.polarsdf import types as sft
 from sparkleframe.polarsdf.types import StructType
 
@@ -393,7 +394,7 @@ class _MapTypeUtils:
                 if val is None:
                     return None
                 if isinstance(val, (dict, list)):
-                    return json.dumps(val)
+                    return json.dumps(val, default=str)
                 return str(val)
 
             return val
