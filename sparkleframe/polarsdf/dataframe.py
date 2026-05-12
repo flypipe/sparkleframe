@@ -216,6 +216,53 @@ class DataFrame(BaseDataFrame):
 
     unionAll = union
 
+    def unionByName(self, other: "DataFrame", allowMissingColumns: bool = False) -> "DataFrame":
+        """
+        Mimics PySpark ``DataFrame.unionByName`` (UNION ALL by column name).
+
+        When ``allowMissingColumns`` is false, both frames must have the same set of
+        column names; the right side is reordered to match the left frame's column order.
+
+        When true, columns present in only one frame are filled with null in the other,
+        matching Spark's relaxed union-by-name.
+
+        Args:
+            other: Another sparkleframe :class:`DataFrame`.
+            allowMissingColumns: If true, allow disjoint schemas with null padding.
+
+        Returns:
+            DataFrame: Row-wise concatenation aligned by name.
+
+        Raises:
+            TypeError: If ``other`` is not a :class:`DataFrame`.
+            ValueError: If schemas differ and ``allowMissingColumns`` is false.
+        """
+        if not isinstance(other, DataFrame):
+            raise TypeError("unionByName() expects a DataFrame")
+
+        left_cols = self.columns
+        left_set = set(left_cols)
+        right_set = set(other.columns)
+
+        if not allowMissingColumns:
+            if left_set != right_set:
+                missing_in_right = sorted(left_set - right_set)
+                extra_in_right = sorted(right_set - left_set)
+                msg_parts: list[str] = []
+                if missing_in_right:
+                    msg_parts.append(f"columns not in the right frame: {missing_in_right}")
+                if extra_in_right:
+                    msg_parts.append(f"columns only in the right frame: {extra_in_right}")
+                raise ValueError(
+                    "unionByName() requires the same column names when allowMissingColumns=False ("
+                    + "; ".join(msg_parts)
+                    + "). Use allowMissingColumns=True to union with null padding."
+                )
+            right_aligned = other.df.select([pl.col(name) for name in left_cols])
+            return DataFrame(pl.concat([self.df, right_aligned], how="vertical"))
+
+        return DataFrame(pl.concat([self.df, other.df], how="diagonal_relaxed"))
+
     def distinct(self) -> "DataFrame":
         """
         Mimics PySpark's DataFrame.distinct.

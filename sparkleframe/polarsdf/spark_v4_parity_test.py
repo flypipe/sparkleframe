@@ -144,6 +144,23 @@ class TestArrayFunctions:
             ignore_nullable=True,
         )
 
+    @pytest.mark.parametrize("asc", [True, False])
+    def test_sort_array_int_and_empty_matches_spark(self, spark, asc: bool) -> None:
+        data = {"arr": [[3, 1, 2], None, []]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        got = create_spark_df(spark, pl_df.select(PF.sort_array("arr", asc).alias("s")))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        exp = sdf.select(F.sort_array(spark_col("arr"), asc).alias("s"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_sort_array_strings_matches_spark(self, spark) -> None:
+        data = {"arr": [["b", "a"], None, []]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        got = create_spark_df(spark, pl_df.select(PF.sort_array("arr").alias("s")))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        exp = sdf.select(F.sort_array(spark_col("arr")).alias("s"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
     def test_array_filter_and_transform_against_spark(self, spark) -> None:
         data = {
             "arr": [
@@ -236,6 +253,209 @@ class TestDateFunctions:
         assert_pyspark_df_equal(got, exp, ignore_nullable=True)
 
 
+class TestDateFormatParity:
+    """``date_format``: Spark pattern letters → string, aligned with PySpark 4."""
+
+    def test_date_and_timestamp_columns_match_spark(self, spark) -> None:
+        from datetime import date, datetime
+
+        data = {
+            "d": [date(2024, 3, 15), None, date(2000, 1, 2)],
+            "ts": [datetime(2024, 3, 15, 10, 20, 30), None, datetime(2000, 1, 2, 1, 2, 3)],
+        }
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        fmt_date = "yyyy-MM-dd"
+        fmt_ts = "yyyy-MM-dd HH:mm:ss"
+        got = create_spark_df(
+            spark,
+            pl_df.select(
+                PF.date_format("d", fmt_date).alias("ds"),
+                PF.date_format("d", fmt_ts).alias("dts"),
+                PF.date_format("ts", fmt_ts).alias("tss"),
+            ),
+        )
+        exp = sdf.select(
+            F.date_format(spark_col("d"), fmt_date).alias("ds"),
+            F.date_format(spark_col("d"), fmt_ts).alias("dts"),
+            F.date_format(spark_col("ts"), fmt_ts).alias("tss"),
+        )
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    @pytest.mark.parametrize(
+        "pattern",
+        ["yyyy/MM/dd", "dd-MM-yyyy HH:mm:ss"],
+    )
+    def test_parametrized_patterns_match_spark(self, spark, pattern: str) -> None:
+        from datetime import datetime
+
+        data = {"ts": [datetime(2024, 12, 1, 8, 9, 10), None]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.date_format("ts", pattern).alias("s")))
+        exp = sdf.select(F.date_format(spark_col("ts"), pattern).alias("s"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+
+class TestLeastParity:
+    """``least``: row-wise minimum with nulls skipped, aligned with PySpark 4."""
+
+    def test_int_columns_nulls_match_spark(self, spark) -> None:
+        data = {"a": [1, 10, None, 3], "b": [2, 5, None, None], "c": [3, 1, 1, None]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.least("a", "b", "c").alias("m")))
+        exp = sdf.select(F.least(spark_col("a"), spark_col("b"), spark_col("c")).alias("m"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_with_lit_matches_spark(self, spark) -> None:
+        data = {"a": [10, 3, None]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.least("a", PF.lit(5)).alias("m")))
+        exp = sdf.select(F.least(spark_col("a"), F.lit(5)).alias("m"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_strings_match_spark(self, spark) -> None:
+        data = {"x": ["b", "z", "m"], "y": ["a", None, "n"]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.least("x", "y").alias("m")))
+        exp = sdf.select(F.least(spark_col("x"), spark_col("y")).alias("m"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_mixed_int_and_double_match_spark(self, spark) -> None:
+        data = {"a": [1, 10], "b": [2.5, 2.0]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.least("a", "b").alias("m")))
+        exp = sdf.select(F.least(spark_col("a"), spark_col("b")).alias("m"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+
+class TestExtendedFunctionsParity:
+    """Parity for ``floor``, ``pow``, ``isnan``, ``try_divide``, ``greatest``, ``create_map``, ``months_between``."""
+
+    def test_floor_float_matches_spark(self, spark) -> None:
+        data = {"x": [1.7, -2.3, None]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.floor("x").alias("f")))
+        exp = sdf.select(F.floor(spark_col("x")).alias("f"))
+        assert_pyspark_df_equal(
+            got.withColumn("f", spark_col("f").cast("double")),
+            exp.withColumn("f", spark_col("f").cast("double")),
+            ignore_nullable=True,
+        )
+
+    def test_pow_matches_spark(self, spark) -> None:
+        data = {"a": [2, 2, 3], "b": [3.0, None, 2.0]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.pow("a", "b").alias("p")))
+        exp = sdf.select(F.pow(spark_col("a"), spark_col("b")).alias("p"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_isnan_float_matches_spark(self, spark) -> None:
+        data = {"x": [1.0, float("nan"), None, 2.5]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.isnan("x").alias("n")))
+        exp = sdf.select(F.isnan(spark_col("x")).alias("n"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_try_divide_matches_spark(self, spark) -> None:
+        data = {"a": [10, 10, None, 10], "b": [2, 0, 2, None]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.try_divide("a", "b").alias("q")))
+        exp = sdf.select(F.try_divide(spark_col("a"), spark_col("b")).alias("q"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_greatest_matches_spark(self, spark) -> None:
+        data = {"a": [1, 10, None, 3], "b": [2, 5, None, None], "c": [3, 1, 1, None]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.greatest("a", "b", "c").alias("m")))
+        exp = sdf.select(F.greatest(spark_col("a"), spark_col("b"), spark_col("c")).alias("m"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_create_map_lookup_matches_spark(self, spark) -> None:
+        data = {"c1": ["v1", "a"], "c2": ["v2", "b"]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        m_pf = PF.create_map(PF.lit("k1"), "c1", PF.lit("k2"), "c2")
+        got = create_spark_df(
+            spark,
+            pl_df.select(
+                PF.try_element_at(m_pf, "k1").alias("v1"),
+                PF.try_element_at(m_pf, "k2").alias("v2"),
+            ),
+        )
+        m_sp = F.create_map(F.lit("k1"), spark_col("c1"), F.lit("k2"), spark_col("c2"))
+        exp = sdf.select(m_sp.alias("m")).select(
+            spark_col("m").getItem("k1").alias("v1"), spark_col("m").getItem("k2").alias("v2")
+        )
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_months_between_dates_matches_spark(self, spark) -> None:
+        from datetime import date
+
+        data = {
+            "e": [date(2024, 3, 15), date(2024, 1, 31), None, date(2024, 2, 28)],
+            "s": [date(2024, 1, 15), date(2024, 1, 1), date(2024, 1, 1), date(2024, 3, 30)],
+        }
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.months_between("e", "s").alias("mb")))
+        exp = sdf.select(F.months_between(spark_col("e"), spark_col("s")).alias("mb"))
+        assert_pyspark_df_equal(
+            got.withColumn("mb", spark_col("mb").cast("double")),
+            exp.withColumn("mb", spark_col("mb").cast("double")),
+            ignore_nullable=True,
+            allow_nan_equality=True,
+            precision=6,
+        )
+
+
+class TestNullifAndTrim:
+    def test_nullif_two_columns_against_spark(self, spark) -> None:
+        data = {"a": [1, 2, 2, None, 1], "b": [1, 2, 3, 1, None]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        got = create_spark_df(
+            spark,
+            pl_df.select(PF.nullif("a", "b").alias("n")),
+        )
+        exp = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            F.nullif(spark_col("a"), spark_col("b")).alias("n")
+        )
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_nullif_with_lit_against_spark(self, spark) -> None:
+        data = {"x": [0, 0, 1, None]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        got = create_spark_df(
+            spark,
+            pl_df.select(PF.nullif("x", PF.lit(0)).alias("n")),
+        )
+        exp = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            F.nullif(spark_col("x"), F.lit(0)).alias("n")
+        )
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_trim_against_spark(self, spark) -> None:
+        data = {"s": ["  a  ", "b\t", None, " c \n"]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        got = create_spark_df(
+            spark,
+            pl_df.select(PF.trim("s").alias("t")),
+        )
+        exp = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            F.trim(spark_col("s")).alias("t")
+        )
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+
 class TestGroupingFirst:
     def test_first_agg_against_spark(self, spark) -> None:
         data = {"g": [1, 1, 2, 2], "v": [10, 20, 30, 40]}
@@ -276,4 +496,60 @@ class TestWithColumnLitOnEmptyFrame:
         # Spark ``lit(None)`` is void; sparkleframe ``lit(None)`` matches Spark string nulls.
         exp = spark.createDataFrame([], _EMPTY_ID_SCHEMA).withColumn("n", F.lit(None).cast("string"))
         got = create_spark_df(spark, tagged)
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+
+class TestArrayParity:
+    def test_array_columns_and_literals(self, spark) -> None:
+        data = {"a": [1, None, 3], "b": [10, 20, 30]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(
+            spark,
+            pl_df.select(
+                PF.array("a", "b").alias("arr"),
+                PF.array(PF.lit(1), PF.lit(2)).alias("lit_arr"),
+            ),
+        )
+        exp = sdf.select(
+            F.array(spark_col("a"), spark_col("b")).alias("arr"),
+            F.array(F.lit(1), F.lit(2)).alias("lit_arr"),
+        )
+        assert got.collect() == exp.collect()
+
+
+class TestToJsonParity:
+    def test_struct_matches_spark(self, spark) -> None:
+        data = {"a": [1, 2], "b": ["x", "y"]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.to_json(PF.struct("a", "b")).alias("j")))
+        exp = sdf.select(F.to_json(F.struct(spark_col("a"), spark_col("b"))).alias("j"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_struct_ignore_null_fields_false_matches_spark(self, spark) -> None:
+        data = {"a": [1, 2], "b": [None, "y"]}
+        pl_df = DataFrame(pl.DataFrame(data, schema={"a": pl.Int64, "b": pl.String}))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        options = {"ignoreNullFields": False}
+        got = create_spark_df(spark, pl_df.select(PF.to_json(PF.struct("a", "b"), options=options).alias("j")))
+        exp = sdf.select(F.to_json(F.struct(spark_col("a"), spark_col("b")), options=options).alias("j"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_create_map_matches_spark(self, spark) -> None:
+        data = {"v": [100, 200]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        m_pf = PF.create_map(PF.lit("k"), "v")
+        got = create_spark_df(spark, pl_df.select(PF.to_json(m_pf).alias("j")))
+        m_sp = F.create_map(F.lit("k"), spark_col("v"))
+        exp = sdf.select(F.to_json(m_sp).alias("j"))
+        assert_pyspark_df_equal(got, exp, ignore_nullable=True)
+
+    def test_array_primitives_matches_spark(self, spark) -> None:
+        data = {"arr": [[1, 2], None, []]}
+        pl_df = DataFrame(pl.DataFrame(data))
+        sdf = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        got = create_spark_df(spark, pl_df.select(PF.to_json("arr").alias("j")))
+        exp = sdf.select(F.to_json(spark_col("arr")).alias("j"))
         assert_pyspark_df_equal(got, exp, ignore_nullable=True)

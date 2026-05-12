@@ -351,6 +351,26 @@ class Column:
         )
         return c
 
+    def __pow__(self, other):
+        """Spark-like ``col ** exponent`` (same semantics as :func:`~sparkleframe.polarsdf.functions.pow`)."""
+        left = self.to_native().cast(pl.Float64, strict=False)
+        right = _to_expr(other).cast(pl.Float64, strict=False)
+        c = Column(left.pow(right))
+        c._broadcast_row_count_in_select = bool(
+            getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
+        )
+        return c
+
+    def __rpow__(self, other):
+        """``scalar ** col`` (Spark / PySpark ``Column`` supports reflected power)."""
+        left = _to_expr(other).cast(pl.Float64, strict=False)
+        right = self.to_native().cast(pl.Float64, strict=False)
+        c = Column(left.pow(right))
+        c._broadcast_row_count_in_select = bool(
+            _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
+        )
+        return c
+
     # Comparison operations
     def _numeric_comparison_operands(self, other):
         # Object columns cannot cast to Float/String directly; map Python values to Utf8 first.
@@ -397,6 +417,18 @@ class Column:
 
     def __invert__(self):
         c = Column(~self.to_native())
+        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
+        return c
+
+    def __neg__(self):
+        """Unary minus (PySpark ``-col``), e.g. ``F.pow(1 + rate, -number_of_periods)`` when ``number_of_periods`` is a column."""
+        c = Column(-self.to_native())
+        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
+        return c
+
+    def __pos__(self):
+        """Unary plus (PySpark ``+col``)."""
+        c = Column(+self.to_native())
         c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
         return c
 

@@ -44,11 +44,7 @@ from sparkleframe.polarsdf.types import (
 )
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import (
-    assert_sparkle_spark_frame_are_equal,
-    create_spark_df,
-    spark_rows_from_dict,
-)
+from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal, create_spark_df, spark_rows_from_dict
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -1302,3 +1298,28 @@ class TestDataFrame:
         )
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+
+
+class TestUnionByName:
+    def test_aligns_by_column_name_not_position(self) -> None:
+        left = DataFrame(pl.DataFrame({"x": [1], "y": [2]}))
+        right = DataFrame(pl.DataFrame({"y": [3], "x": [4]}))
+        out = left.unionByName(right)
+        assert out.to_native_df().equals(pl.DataFrame({"x": [1, 4], "y": [2, 3]}))
+
+    def test_strict_rejects_disjoint_schemas(self) -> None:
+        left = DataFrame(pl.DataFrame({"x": [1], "y": [2]}))
+        right = DataFrame(pl.DataFrame({"x": [3], "z": [4]}))
+        with pytest.raises(ValueError, match="allowMissingColumns=True"):
+            left.unionByName(right, allowMissingColumns=False)
+
+    def test_allow_missing_columns_null_pads(self) -> None:
+        left = DataFrame(pl.DataFrame({"x": [1], "y": [2]}))
+        right = DataFrame(pl.DataFrame({"x": [5]}))
+        out = left.unionByName(right, allowMissingColumns=True)
+        assert out.to_native_df().equals(pl.DataFrame({"x": [1, 5], "y": [2, None]}))
+
+    def test_expects_dataframe(self) -> None:
+        left = DataFrame(pl.DataFrame({"x": [1]}))
+        with pytest.raises(TypeError, match="DataFrame"):
+            left.unionByName(pl.DataFrame({"x": [2]}))  # type: ignore[arg-type]
