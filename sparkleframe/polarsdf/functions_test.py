@@ -16,8 +16,10 @@ from pyspark.sql.functions import asc_nulls_last as spark_asc_nulls_last
 from pyspark.sql.functions import coalesce as spark_coalesce
 from pyspark.sql.functions import col as spark_col
 from pyspark.sql.functions import concat as spark_concat
+from pyspark.sql.functions import create_map as spark_create_map
 from pyspark.sql.functions import current_date as spark_current_date
 from pyspark.sql.functions import current_timestamp as spark_current_timestamp
+from pyspark.sql.functions import date_format as spark_date_format
 from pyspark.sql.functions import date_sub as spark_date_sub
 from pyspark.sql.functions import datediff as spark_datediff
 from pyspark.sql.functions import dense_rank as spark_dense_rank
@@ -28,9 +30,13 @@ from pyspark.sql.functions import element_at as spark_element_at
 from pyspark.sql.functions import explode_outer as spark_explode_outer
 from pyspark.sql.functions import filter as spark_filter
 from pyspark.sql.functions import first as spark_first
+from pyspark.sql.functions import floor as spark_floor
 from pyspark.sql.functions import from_json as spark_from_json
 from pyspark.sql.functions import get_json_object as spark_get_json_object
+from pyspark.sql.functions import greatest as spark_greatest
 from pyspark.sql.functions import initcap as spark_initcap
+from pyspark.sql.functions import isnan as spark_isnan
+from pyspark.sql.functions import least as spark_least
 from pyspark.sql.functions import length as spark_length
 from pyspark.sql.functions import lit as spark_lit
 from pyspark.sql.functions import lower as spark_lower
@@ -40,18 +46,24 @@ from pyspark.sql.functions import md5 as spark_md5
 from pyspark.sql.functions import monotonically_increasing_id as spark_monotonically_increasing_id
 from pyspark.sql.functions import months_between as spark_months_between
 from pyspark.sql.functions import now as spark_now
+from pyspark.sql.functions import nullif as spark_nullif
+from pyspark.sql.functions import pow as spark_pow
+from pyspark.sql.functions import rand as spark_rand
 from pyspark.sql.functions import rank as spark_rank
 from pyspark.sql.functions import regexp_replace as spark_regexp_replace
 from pyspark.sql.functions import round as spark_round
 from pyspark.sql.functions import row_number as spark_row_number
 from pyspark.sql.functions import size as spark_size
+from pyspark.sql.functions import sort_array as spark_sort_array
 from pyspark.sql.functions import split as spark_split
 from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import substring as spark_substring
 from pyspark.sql.functions import to_date as spark_to_date
+from pyspark.sql.functions import to_json as spark_to_json
 from pyspark.sql.functions import to_timestamp as spark_to_timestamp
 from pyspark.sql.functions import transform as spark_transform
 from pyspark.sql.functions import trim as spark_trim
+from pyspark.sql.functions import try_divide as spark_try_divide
 from pyspark.sql.functions import try_element_at as spark_try_element_at
 from pyspark.sql.functions import try_to_date as spark_try_to_date
 from pyspark.sql.functions import try_to_timestamp as spark_try_to_timestamp
@@ -79,8 +91,10 @@ from sparkleframe.polarsdf.functions import (
     coalesce,
     col,
     concat,
+    create_map,
     current_date,
     current_timestamp,
+    date_format,
     date_sub,
     datediff,
     dense_rank,
@@ -91,9 +105,13 @@ from sparkleframe.polarsdf.functions import (
     explode,
     filter,
     first,
+    floor,
     from_json,
     get_json_object,
+    greatest,
     initcap,
+    isnan,
+    least,
     length,
     lit,
     lower,
@@ -103,12 +121,15 @@ from sparkleframe.polarsdf.functions import (
     monotonically_increasing_id,
     months_between,
     now,
+    nullif,
+    pow,
     rand,
     rank,
     regexp_replace,
     round,
     row_number,
     size,
+    sort_array,
     split,
     struct,
     substring,
@@ -117,6 +138,7 @@ from sparkleframe.polarsdf.functions import (
     to_timestamp,
     transform,
     trim,
+    try_divide,
     try_element_at,
     try_to_date,
     try_to_timestamp,
@@ -1511,3 +1533,196 @@ class TestBroadcast:
     def test_broadcast_returns_same_dataframe(self) -> None:
         d = DataFrame(pl.DataFrame({"x": [1]}))
         assert broadcast(d) is d
+
+
+class TestToJsonParity:
+    def test_to_json_struct_against_spark(self, spark) -> None:
+        data = {"a": [1, 2], "b": ["x", "y"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(to_json(struct("a", "b")).alias("j"))
+        expected_df = spark_df.select(spark_to_json(spark_struct("a", "b")).alias("j"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_to_json_array_against_spark(self, spark) -> None:
+        from pyspark.sql.functions import array as spark_array
+
+        data = {"a": [1, 2], "b": [3, 4]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(to_json(array("a", "b")).alias("j"))
+        expected_df = spark_df.select(spark_to_json(spark_array("a", "b")).alias("j"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestLeastGreatest:
+    def test_least_against_spark(self, spark) -> None:
+        data = {"a": [10, 1, None], "b": [5, None, 3], "c": [8, 2, 7]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(least("a", "b", "c").alias("min"))
+        expected_df = spark_df.select(spark_least("a", "b", "c").alias("min"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_greatest_against_spark(self, spark) -> None:
+        data = {"a": [10, 1, None], "b": [5, None, 3], "c": [8, 2, 7]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(greatest("a", "b", "c").alias("max"))
+        expected_df = spark_df.select(spark_greatest("a", "b", "c").alias("max"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_least_all_nulls_returns_null(self, spark) -> None:
+        data = {"a": [None, None], "b": [None, None]}
+        polars_df = DataFrame(
+            pl.DataFrame({"a": pl.Series([None, None], dtype=pl.Int64), "b": pl.Series([None, None], dtype=pl.Int64)})
+        )
+        from pyspark.sql.types import LongType as SparkLongType
+
+        schema = SparkStructType(
+            [SparkStructField("a", SparkLongType(), True), SparkStructField("b", SparkLongType(), True)]
+        )
+        spark_df = spark.createDataFrame([(None, None), (None, None)], schema)
+        result_df = polars_df.select(least("a", "b").alias("min"))
+        expected_df = spark_df.select(spark_least("a", "b").alias("min"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestCreateMap:
+    def test_create_map_against_spark(self, spark) -> None:
+        data = {"k": ["a", "b"], "v": [1, 2]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(to_json(create_map("k", "v")).alias("j"))
+        expected_df = spark_df.select(spark_to_json(spark_create_map("k", "v")).alias("j"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestArrayParity:
+    def test_array_against_spark(self, spark) -> None:
+        from pyspark.sql.functions import array as spark_array
+
+        data = {"a": [1, 2, 3], "b": [4, 5, 6]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(array("a", "b").alias("arr"))
+        expected_df = spark_df.select(spark_array("a", "b").alias("arr"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestDateFormat:
+    def test_date_format_against_spark(self, spark) -> None:
+        data = {"ts": ["2023-01-15 10:30:45", "2024-12-25 00:00:00"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+
+        sf_ts = polars_df.select(date_format(to_timestamp("ts"), "yyyy-MM-dd").alias("d"))
+        sp_ts = spark_df.select(spark_date_format(spark_to_timestamp("ts"), "yyyy-MM-dd").alias("d"))
+        assert_sparkle_spark_frame_are_equal(sf_ts, sp_ts)
+
+    def test_date_format_time_parts_against_spark(self, spark) -> None:
+        data = {"ts": ["2023-06-15 14:05:09"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+
+        sf = polars_df.select(date_format(to_timestamp("ts"), "HH:mm:ss").alias("t"))
+        sp = spark_df.select(spark_date_format(spark_to_timestamp("ts"), "HH:mm:ss").alias("t"))
+        assert_sparkle_spark_frame_are_equal(sf, sp)
+
+
+class TestFloor:
+    def test_floor_against_spark(self, spark) -> None:
+        data = {"v": [1.9, 2.1, -0.5, 0.0, None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(floor("v").alias("f"))
+        expected_df = spark_df.select(spark_floor("v").alias("f"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestPow:
+    def test_pow_against_spark(self, spark) -> None:
+        data = {"base": [2.0, 3.0, 10.0], "exp": [3.0, 2.0, 0.0]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(pow("base", "exp").alias("p"))
+        expected_df = spark_df.select(spark_pow("base", "exp").alias("p"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_pow_with_literal_exponent_against_spark(self, spark) -> None:
+        data = {"base": [2.0, 3.0, 4.0]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(pow(col("base"), lit(2)).alias("p"))
+        expected_df = spark_df.select(spark_pow(spark_col("base"), spark_lit(2)).alias("p"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestIsnan:
+    def test_isnan_against_spark(self, spark) -> None:
+        data = {"v": [1.0, float("nan"), None, 0.0]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(isnan("v").alias("n"))
+        expected_df = spark_df.select(spark_isnan("v").alias("n"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestTryDivide:
+    def test_try_divide_against_spark(self, spark) -> None:
+        data = {"a": [10.0, 9.0, None, 5.0], "b": [2.0, 0.0, 3.0, None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(try_divide("a", "b").alias("d"))
+        expected_df = spark_df.select(spark_try_divide("a", "b").alias("d"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestNullif:
+    def test_nullif_against_spark(self, spark) -> None:
+        data = {"a": [1, 2, 3, None], "b": [1, 3, 3, None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(nullif("a", "b").alias("n"))
+        expected_df = spark_df.select(spark_nullif("a", "b").alias("n"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_nullif_with_nulls_preserves_e1(self, spark) -> None:
+        data = {"a": [5, None, 3], "b": [None, 2, None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(nullif("a", "b").alias("n"))
+        expected_df = spark_df.select(spark_nullif("a", "b").alias("n"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestRandParity:
+    def test_rand_output_shape_and_type_matches_spark(self, spark) -> None:
+        data = {"x": [1, 2, 3, 4, 5]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        sf_result = polars_df.select(rand(42).alias("r"))
+        sp_result = spark_df.select(spark_rand(42).alias("r"))
+        sf_vals = sf_result.to_native_df()["r"].to_list()
+        sp_vals = [row[0] for row in sp_result.collect()]
+        assert len(sf_vals) == len(sp_vals)
+        assert all(isinstance(v, float) and 0.0 <= v < 1.0 for v in sf_vals)
+        assert all(isinstance(v, float) and 0.0 <= v < 1.0 for v in sp_vals)
+
+
+class TestSortArray:
+    def test_sort_array_asc_against_spark(self, spark) -> None:
+        data = {"arr": [[3, 1, 2], [6, 4, 5], None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(sort_array("arr").alias("s"))
+        expected_df = spark_df.select(spark_sort_array("arr").alias("s"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_sort_array_desc_against_spark(self, spark) -> None:
+        data = {"arr": [[3, 1, 2], [6, 4, 5]]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(sort_array("arr", asc=False).alias("s"))
+        expected_df = spark_df.select(spark_sort_array("arr", asc=False).alias("s"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import random
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional, Union
@@ -100,6 +102,24 @@ def _convert_spark_ts_format(fmt: str) -> str:
     for spark_fmt, strftime_fmt in _SPARK_TS_FORMAT_MAP:
         fmt = fmt.replace(spark_fmt, strftime_fmt)
     return fmt
+
+
+_SPARK_DATETIME_STRFTIME_MAP = [
+    ("yyyy", "%Y"),
+    ("MM", "%m"),
+    ("dd", "%d"),
+    ("HH", "%H"),
+    ("mm", "%M"),
+    ("ss", "%S"),
+]
+
+
+def _convert_spark_datetime_pattern_to_strftime(fmt: str) -> str:
+    """Translate a Spark datetime pattern to ``strftime`` for :func:`date_format` output."""
+    out = fmt
+    for spark_pat, strf in _SPARK_DATETIME_STRFTIME_MAP:
+        out = out.replace(spark_pat, strf)
+    return out
 
 
 def _pad_microseconds_expr(expr: pl.Expr) -> pl.Expr:
@@ -491,3 +511,74 @@ class _RankWrapper(Column):
 
     def over(self, window_spec: WindowSpec) -> Column:
         return self._fn(window_spec)
+
+
+def _map_entries_list_to_json_obj(entries: Any) -> str | None:
+    if entries is None:
+        return None
+    if not isinstance(entries, list):
+        return None
+    out: dict[str, Any] = {}
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        k = e.get("key")
+        if k is None:
+            continue
+        out[str(k)] = e.get("value")
+    return json.dumps(out, separators=(",", ":"))
+
+
+def _is_spark_map_entry_list_dtype(list_dtype: pl.List) -> bool:
+    inner = list_dtype.inner
+    if not isinstance(inner, pl.Struct):
+        return False
+    names = {f.name for f in inner.fields}
+    return names == {"key", "value"}
+
+
+def _to_json_batch(s: pl.Series) -> pl.Series:
+    name = s.name
+    if s.len() == 0:
+        return pl.Series(name, [], dtype=pl.String)
+    dt = s.dtype
+    if isinstance(dt, pl.Struct):
+        return s.struct.json_encode()
+    if isinstance(dt, pl.List):
+        if _is_spark_map_entry_list_dtype(dt):
+            rows = s.to_list()
+            encoded = [_map_entries_list_to_json_obj(x) for x in rows]
+            return pl.Series(name, encoded, dtype=pl.String)
+        rows = s.to_list()
+
+        def _dump(v: Any) -> str | None:
+            if v is None:
+                return None
+            return json.dumps(v, separators=(",", ":"), default=str)
+
+        return pl.Series(name, [_dump(x) for x in rows], dtype=pl.String)
+    raise TypeError(
+        "to_json expects a struct column, an array column, or a sparkleframe map column "
+        f"(list<struct<key,value>>); got {dt}"
+    )
+
+
+def _rand_batch(s: pl.Series, seed: Optional[int]) -> pl.Series:
+    n = s.len()
+    if n == 0:
+        return pl.Series(s.name, [], dtype=pl.Float64)
+    rng = random.Random(seed) if seed is not None else random.Random()
+    return pl.Series(s.name, [rng.random() for _ in range(n)], dtype=pl.Float64)
+
+
+def _size_sparklike_value(v: Any) -> int | None:
+    """Row-wise length for Spark-like ``size`` when Polars dtype is not ``List`` (e.g. ``Object``)."""
+    if v is None:
+        return None
+    if isinstance(v, pl.Series):
+        return v.len()
+    if isinstance(v, list):
+        return len(v)
+    if isinstance(v, dict):
+        return len(v)
+    return None

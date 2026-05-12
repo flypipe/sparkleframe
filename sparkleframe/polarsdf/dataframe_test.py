@@ -1367,3 +1367,25 @@ class TestUnionByName:
         left = DataFrame(pl.DataFrame({"x": [1]}))
         with pytest.raises(TypeError, match="DataFrame"):
             left.unionByName(pl.DataFrame({"x": [2]}))  # type: ignore[arg-type]
+
+    def test_union_by_name_against_spark(self, spark) -> None:
+        left_data = {"x": [1, 2], "y": [10, 20]}
+        right_data = {"y": [30, 40], "x": [3, 4]}
+        sf_left = DataFrame(pl.DataFrame(left_data))
+        sf_right = DataFrame(pl.DataFrame(right_data))
+        sf_result = sf_left.unionByName(sf_right)
+        sp_left = spark.createDataFrame(pd.DataFrame(left_data))
+        sp_right = spark.createDataFrame(pd.DataFrame(right_data))
+        sp_result = sp_left.unionByName(sp_right)
+        assert_sparkle_spark_frame_are_equal(sf_result, sp_result)
+
+    def test_union_by_name_allow_missing_against_spark(self, spark) -> None:
+        left_data = {"x": [1], "y": [2]}
+        right_data = {"x": [3], "z": [4]}
+        sf_left = DataFrame(pl.DataFrame(left_data))
+        sf_right = DataFrame(pl.DataFrame(right_data))
+        sf_result = sf_left.unionByName(sf_right, allowMissingColumns=True)
+        sp_left = spark.createDataFrame(pd.DataFrame(left_data))
+        sp_right = spark.createDataFrame(pd.DataFrame(right_data))
+        sp_result = sp_left.unionByName(sp_right, allowMissingColumns=True)
+        assert_sparkle_spark_frame_are_equal(sf_result, sp_result)

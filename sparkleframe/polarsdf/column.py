@@ -223,24 +223,12 @@ class Column:
         return Column(~self.to_native())
 
     def __neg__(self):
-        """Unary minus (PySpark ``-col``), e.g. ``F.pow(1 + rate, -number_of_periods)`` when ``number_of_periods`` is a column."""
+        """Unary minus (PySpark ``-col``)."""
         return Column(-self.to_native())
 
     def __pos__(self):
         """Unary plus (PySpark ``+col``)."""
         return Column(+self.to_native())
-
-    def __neg__(self):
-        """Unary minus (PySpark ``-col``), e.g. ``F.pow(1 + rate, -number_of_periods)`` when ``number_of_periods`` is a column."""
-        c = Column(-self.to_native())
-        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
-        return c
-
-    def __pos__(self):
-        """Unary plus (PySpark ``+col``)."""
-        c = Column(+self.to_native())
-        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
-        return c
 
     def alias(self, name: str) -> Column:
         """

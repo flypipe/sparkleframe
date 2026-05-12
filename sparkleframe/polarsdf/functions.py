@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 from datetime import date
 from typing import Any, Callable, Optional, Union
 from uuid import uuid4
@@ -14,14 +13,18 @@ from sparkleframe.polarsdf.column_helpers import _output_dtype_of_expr, _polars_
 from sparkleframe.polarsdf.functions_helpers import (
     _as_date_sparklike_expr,
     _coerce_json_value,
+    _convert_spark_datetime_pattern_to_strftime,
     _md5_sparklike,
     _now_batch,
+    _rand_batch,
     _RankWrapper,
     _re_split_sparklike,
     _schema_from_string,
+    _size_sparklike_value,
     _substring_sparklike,
     _to_date_column,
     _to_datetime_column,
+    _to_json_batch,
     _to_timestamp_no_format_column,
     element_at_column,
 )
@@ -97,56 +100,6 @@ def from_json(col_name: Union[str, Column], schema: Union[DataType, str]) -> Col
     else:
         return_dtype = parsed_schema
     return Column(expr.map_elements(_parse, return_dtype=return_dtype))
-
-
-def _map_entries_list_to_json_obj(entries: Any) -> str | None:
-    if entries is None:
-        return None
-    if not isinstance(entries, list):
-        return None
-    out: dict[str, Any] = {}
-    for e in entries:
-        if not isinstance(e, dict):
-            continue
-        k = e.get("key")
-        if k is None:
-            continue
-        out[str(k)] = e.get("value")
-    return json.dumps(out, separators=(",", ":"))
-
-
-def _is_spark_map_entry_list_dtype(list_dtype: pl.List) -> bool:
-    inner = list_dtype.inner
-    if not isinstance(inner, pl.Struct):
-        return False
-    names = {f.name for f in inner.fields}
-    return names == {"key", "value"}
-
-
-def _to_json_batch(s: pl.Series) -> pl.Series:
-    name = s.name
-    if s.len() == 0:
-        return pl.Series(name, [], dtype=pl.String)
-    dt = s.dtype
-    if isinstance(dt, pl.Struct):
-        return s.struct.json_encode()
-    if isinstance(dt, pl.List):
-        if _is_spark_map_entry_list_dtype(dt):
-            rows = s.to_list()
-            encoded = [_map_entries_list_to_json_obj(x) for x in rows]
-            return pl.Series(name, encoded, dtype=pl.String)
-        rows = s.to_list()
-
-        def _dump(v: Any) -> str | None:
-            if v is None:
-                return None
-            return json.dumps(v, separators=(",", ":"), default=str)
-
-        return pl.Series(name, [_dump(x) for x in rows], dtype=pl.String)
-    raise TypeError(
-        "to_json expects a struct column, an array column, or a sparkleframe map column "
-        f"(list<struct<key,value>>); got {dt}"
-    )
 
 
 def to_json(col_name: Union[str, Column], options: Any = None) -> Column:
@@ -817,7 +770,7 @@ def floor(col_name: Union[str, Column]) -> Column:
         Column: Floored values (``Float64`` after rounding when the input was fractional).
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-    return Column(expr.cast(pl.Float64, strict=False).floor())
+    return Column(expr.cast(pl.Float64, strict=False).floor().cast(pl.Int64))
 
 
 def pow(base: Any, exponent: Any) -> Column:
@@ -926,7 +879,6 @@ def nullif(e1: Union[str, Column], e2: Union[str, Column]) -> Column:
     a = _to_expr(e1) if isinstance(e1, Column) else pl.col(e1)
     b = _to_expr(e2) if isinstance(e2, Column) else pl.col(e2)
     return Column(pl.when(a.is_not_null() & b.is_not_null() & (a == b)).then(None).otherwise(a))
-
 
 
 def split(col_name: Union[str, Column], pattern: str, limit: int = -1) -> Column:
@@ -1038,14 +990,6 @@ def months_between(end: Union[str, Column], start: Union[str, Column]) -> Column
     return Column((whole_months + day_fraction).cast(pl.Float64))
 
 
-def _rand_batch(s: pl.Series, seed: Optional[int]) -> pl.Series:
-    n = s.len()
-    if n == 0:
-        return pl.Series(s.name, [], dtype=pl.Float64)
-    rng = random.Random(seed) if seed is not None else random.Random()
-    return pl.Series(s.name, [rng.random() for _ in range(n)], dtype=pl.Float64)
-
-
 def rand(seed: Optional[int] = None) -> Column:
     """
     Mimics pyspark.sql.functions.rand: uniform random in ``[0.0, 1.0)`` per row.
@@ -1064,7 +1008,6 @@ def rand(seed: Optional[int] = None) -> Column:
             return_dtype=pl.Float64,
         )
     )
-
 
 
 def broadcast(df: Any) -> Any:
@@ -1100,19 +1043,6 @@ def array_contains(col_name: Union[str, Column], value: Union[str, Column, Any])
     array_expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     value_expr = _to_expr(value) if isinstance(value, Column) else pl.lit(value)
     return Column(array_expr.list.contains(value_expr))
-
-
-def _size_sparklike_value(v: Any) -> int | None:
-    """Row-wise length for Spark-like ``size`` when Polars dtype is not ``List`` (e.g. ``Object``)."""
-    if v is None:
-        return None
-    if isinstance(v, pl.Series):
-        return v.len()
-    if isinstance(v, list):
-        return len(v)
-    if isinstance(v, dict):
-        return len(v)
-    return None
 
 
 def size(col_name: Union[str, Column]) -> Column:
