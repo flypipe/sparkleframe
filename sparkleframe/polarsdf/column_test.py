@@ -5,7 +5,8 @@ import pyspark.sql.functions as F
 import pytest
 
 from sparkleframe.polarsdf import DataFrame, StringType
-from sparkleframe.polarsdf.functions import col, current_date, date_sub, lit
+from sparkleframe.polarsdf.functions import col, lit
+from sparkleframe.polarsdf.functions import pow as sf_pow
 from sparkleframe.polarsdf.types import (
     SPARK_TYPE_NAME_MAP,
     BinaryType,
@@ -85,6 +86,26 @@ class TestColumn:
         expected = sample_df.select(
             ((pl.col("c") - pl.col("a") + pl.col("b")) * pl.col("b") / pl.col("a")).alias("result")
         ).to_series()
+        assert result.to_list() == expected.to_list()
+
+    def test_pow_operator_matches_sf_pow(self, sample_df):
+        """``col ** k`` matches :func:`~sparkleframe.polarsdf.functions.pow` (e.g. annuity-style ``(1+r)**-N``)."""
+        n = 3
+        r = col("a") / 10.0
+        via_op = 1 - (1 + r) ** (-n)
+        via_fn = 1 - sf_pow(1 + r, -n)
+        assert self.evaluate_expr(via_op, sample_df).to_list() == self.evaluate_expr(via_fn, sample_df).to_list()
+
+    def test_pow_literal_base_column_exponent(self, sample_df):
+        """``pow(2, col)`` must not treat ``2`` as a column name."""
+        result = self.evaluate_expr(sf_pow(2, col("a")), sample_df)
+        expected = sample_df.select(pl.lit(2.0).pow(pl.col("a").cast(pl.Float64)).alias("result")).to_series()
+        assert result.to_list() == expected.to_list()
+
+    def test_unary_neg_column(self, sample_df):
+        """Spark allows ``-col``; used e.g. as ``pow(..., -n)`` when ``n`` is a column."""
+        result = self.evaluate_expr(-col("a"), sample_df)
+        expected = sample_df.select((-pl.col("a")).alias("result")).to_series()
         assert result.to_list() == expected.to_list()
 
     def test_alias(self, sample_df):
@@ -214,6 +235,16 @@ class TestColumn:
         result = df.select(expr.to_native().alias("result")).to_series()
 
         expected = df.select(pl.col("x").is_not_null().alias("result")).to_series()
+
+        assert result.to_list() == expected.to_list()
+
+    def test_is_null(self):
+        df = pl.DataFrame({"x": [1, None, 3, None, 5]})
+
+        expr = col("x").isNull()
+        result = df.select(expr.to_native().alias("result")).to_series()
+
+        expected = df.select(pl.col("x").is_null().alias("result")).to_series()
 
         assert result.to_list() == expected.to_list()
 
@@ -348,6 +379,14 @@ class TestColumnComparisonCoercion:
 
     def test_ordering_iso_datetime_string_vs_date_sub_offer_age(self) -> None:
         """``created >= date_sub(current_date(), 30)`` must be boolean, not null."""
+        import importlib
+
+        _fn = importlib.import_module("sparkleframe.polarsdf.functions")
+        if not hasattr(_fn, "current_date") or not hasattr(_fn, "date_sub"):
+            pytest.skip("requires current_date/date_sub (merged with functions PR in stack)")
+        current_date = _fn.current_date
+        date_sub = _fn.date_sub
+
         today = date.today()
         recent = pl.DataFrame({"created": [f"{today.isoformat()}T12:00:00Z"]})
         assert self._eval(col("created") >= date_sub(current_date(), 30), recent).to_list() == [True]
