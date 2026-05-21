@@ -22,10 +22,13 @@ from sparkleframe.polarsdf.column_helpers import (
     _assert_arithmetic_series,
     _assert_complex_compare_supported,
     _cmp_exprs,
+    _equality_comparison_expr,
     _format_unsupported_complex_compare,
     _is_complex_polars_dtype,
     _is_numeric_polars_dtype,
     _looks_like_map_dtype,
+    _numeric_compare_operands,
+    _ordering_comparison_expr,
     _parse_datetime_string_safe,
     _spark_numeric_widened_type,
     _validate_and_cast_float64_lenient,
@@ -307,3 +310,83 @@ class TestParseDatetimeStringSafe:
     )
     def test_non_parsable_strings(self, value: str) -> None:
         assert _parse_datetime_string_safe(value) is None
+
+
+class TestNumericCompareOperands:
+    def test_returns_four_aligned_expressions(self) -> None:
+        df = pl.DataFrame({"a": ["1", "2.5", "x"], "b": ["3", "1.5", "y"]})
+        left_num, right_num, left_str, right_str = _numeric_compare_operands(pl.col("a"), pl.col("b"))
+        out = df.select(
+            left_num.alias("ln"),
+            right_num.alias("rn"),
+            left_str.alias("ls"),
+            right_str.alias("rs"),
+        )
+        assert out.schema["ln"] == pl.Float64
+        assert out.schema["rn"] == pl.Float64
+        assert out.schema["ls"] == pl.Utf8
+        assert out.schema["rs"] == pl.Utf8
+        assert out["ln"].to_list() == [1.0, 2.5, None]
+        assert out["rn"].to_list() == [3.0, 1.5, None]
+        assert out["ls"].to_list() == ["1", "2.5", "x"]
+
+
+class TestOrderingComparisonExpr:
+    def test_numeric_branch(self) -> None:
+        df = pl.DataFrame({"a": [1, 2, 3], "b": [2, 2, 2]}, schema={"a": pl.Int64, "b": pl.Int64})
+        result = df.select(_ordering_comparison_expr(pl.col("a"), pl.col("b"), "lt").alias("r"))
+        assert result["r"].to_list() == [True, False, False]
+
+    def test_cross_type_int_vs_string_known_dtypes(self) -> None:
+        # Spark coerces "2" to 2 when compared with an Int column: numeric branch wins.
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["2", "2", "2"]}, schema={"a": pl.Int64, "b": pl.Utf8})
+        result = df.select(_ordering_comparison_expr(pl.col("a"), pl.col("b"), "le").alias("r"))
+        assert result["r"].to_list() == [True, True, False]
+
+    def test_string_branch_when_both_string_dtype(self) -> None:
+        df = pl.DataFrame({"a": ["a", "b", "c"], "b": ["b", "b", "b"]}, schema={"a": pl.Utf8, "b": pl.Utf8})
+        result = df.select(_ordering_comparison_expr(pl.col("a"), pl.col("b"), "lt").alias("r"))
+        assert result["r"].to_list() == [True, False, False]
+
+    def test_ordering_on_complex_raises_at_build_time(self) -> None:
+        # Known List dtype: raises BEFORE the expression is even materialised.
+        df = pl.DataFrame({"a": [[1], [2]], "b": [[1], [3]]}, schema={"a": pl.List(pl.Int64), "b": pl.List(pl.Int64)})
+        with pytest.raises(NotImplementedError, match="List / Struct / Array"):
+            df.select(_ordering_comparison_expr(pl.col("a"), pl.col("b"), "lt").alias("r"))
+
+
+class TestEqualityComparisonExpr:
+    def test_numeric_equal(self) -> None:
+        df = pl.DataFrame({"a": [1, 2, 3], "b": [1, 0, 3]}, schema={"a": pl.Int64, "b": pl.Int64})
+        result = df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=True).alias("r"))
+        assert result["r"].to_list() == [True, False, True]
+
+    def test_numeric_not_equal(self) -> None:
+        df = pl.DataFrame({"a": [1, 2, 3], "b": [1, 0, 3]}, schema={"a": pl.Int64, "b": pl.Int64})
+        result = df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=False).alias("r"))
+        assert result["r"].to_list() == [False, True, False]
+
+    def test_cross_type_int_vs_string_known_dtypes(self) -> None:
+        # Spark: col(int) == lit('1') -> numeric coercion succeeds.
+        df = pl.DataFrame({"a": [1, 2, 3], "b": ["1", "2", "4"]}, schema={"a": pl.Int64, "b": pl.Utf8})
+        result = df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=True).alias("r"))
+        assert result["r"].to_list() == [True, True, False]
+
+    def test_complex_equal_uses_native_polars(self) -> None:
+        # ==/!= on plain List is supported via native Polars; helper must NOT raise.
+        df = pl.DataFrame(
+            {"a": [[1, 2], [3]], "b": [[1, 2], [4]]},
+            schema={"a": pl.List(pl.Int64), "b": pl.List(pl.Int64)},
+        )
+        result = df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=True).alias("r"))
+        assert result["r"].to_list() == [True, False]
+
+    def test_map_like_equality_raises(self) -> None:
+        # MapType (Polars: List(Struct([key, value]))) -> NotImplementedError.
+        map_dt = pl.List(pl.Struct([pl.Field("key", pl.Utf8), pl.Field("value", pl.Int64)]))
+        df = pl.DataFrame(
+            {"a": [[{"key": "k", "value": 1}]], "b": [[{"key": "k", "value": 1}]]},
+            schema={"a": map_dt, "b": map_dt},
+        )
+        with pytest.raises(NotImplementedError, match="MapType"):
+            df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=True).alias("r"))

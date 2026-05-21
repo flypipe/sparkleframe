@@ -7,13 +7,8 @@ import polars as pl
 
 from sparkleframe.polarsdf.column_helpers import (
     _apply_getitem_key,
-    _assert_complex_compare_supported,
-    _cmp_exprs,
-    _coerce_expr_order_datetime,
-    _expr_as_string_for_compare,
-    _is_complex_polars_dtype,
-    _is_numeric_polars_dtype,
-    _native_compare_when_complex,
+    _equality_comparison_expr,
+    _ordering_comparison_expr,
     _resolve_expr_output_dtype,
     _spark_numeric_widened_type,
     _validated_arithmetic_expr,
@@ -21,52 +16,6 @@ from sparkleframe.polarsdf.column_helpers import (
     _validated_pow_expr,
 )
 from sparkleframe.polarsdf.types import BooleanType, DataType, spark_type_name_to_polars
-
-
-def _ordering_comparison(left_col: "Column", other: Any, op: str) -> "Column":
-    """
-    Spark-like ``< <= > >=``: numeric columns use numeric order; dates/timestamps/strings use
-    temporal order when parsable (fixes ``datetime >= date_sub(current_date(), n)`` under
-    string schemas); unknown dtypes prefer numeric parse then temporal then lexicographic string.
-
-    Ordering on List / Struct / Array / Map dtypes is not yet supported (Polars has no
-    lexicographic compare for nested dtypes); raises :class:`NotImplementedError` with a
-    clear message at build time when the dtype is known, or at evaluation time otherwise.
-    """
-    left = left_col.to_native()
-    right = _to_expr(other)
-    ld = _resolve_expr_output_dtype(left)
-    rd = _resolve_expr_output_dtype(right)
-    _assert_complex_compare_supported(op, ld, rd)
-    left_s = _expr_as_string_for_compare(left)
-    right_s = _expr_as_string_for_compare(right)
-    left_num = left_s.cast(pl.Float64, strict=False)
-    right_num = right_s.cast(pl.Float64, strict=False)
-    numeric_ok = left_num.is_not_null() & right_num.is_not_null()
-    if _is_numeric_polars_dtype(ld) or _is_numeric_polars_dtype(rd):
-        return Column(_cmp_exprs(left_num, right_num, op))
-
-    left_dt = _coerce_expr_order_datetime(left)
-    right_dt = _coerce_expr_order_datetime(right)
-    temporal_ok = left_dt.is_not_null() & right_dt.is_not_null()
-    left_str = left_s
-    right_str = right_s
-    if ld is not None or rd is not None:
-        return Column(
-            pl.when(temporal_ok)
-            .then(_cmp_exprs(left_dt, right_dt, op))
-            .when(numeric_ok)
-            .then(_cmp_exprs(left_num, right_num, op))
-            .otherwise(_cmp_exprs(left_str, right_str, op))
-        )
-    coerced_expr = (
-        pl.when(numeric_ok)
-        .then(_cmp_exprs(left_num, right_num, op))
-        .when(temporal_ok)
-        .then(_cmp_exprs(left_dt, right_dt, op))
-        .otherwise(_cmp_exprs(left_str, right_str, op))
-    )
-    return Column(_native_compare_when_complex(left, right, op, coerced_expr))
 
 
 class Column:
@@ -213,59 +162,23 @@ class Column:
         right_expr = _validated_pow_expr(right_expr, rd)
         return Column(left_expr.pow(right_expr))
 
-    # Comparison operations
-    def _numeric_comparison_operands(self, other):
-        left_str = _expr_as_string_for_compare(self.to_native())
-        right_str = _expr_as_string_for_compare(_to_expr(other))
-        left = left_str.cast(pl.Float64, strict=False)
-        right = right_str.cast(pl.Float64, strict=False)
-        return left, right, left_str, right_str
-
-    def _equality_comparison(self, other: Any, equal: bool) -> "Column":
-        """
-        Spark-like ``==`` / ``!=`` semantics: cross-type equality coerces through
-        string / numeric (so ``col(int) == lit('1')`` matches Spark), but
-        list / struct / array operands fall back to Polars' native equality.
-
-        Raises :class:`NotImplementedError` with a clear message for MapType operands
-        (Polars stores maps as ``List(Struct([key, value]))`` so we can't replicate
-        Spark's map equality semantics yet).
-        """
-        left = self.to_native()
-        right = _to_expr(other)
-        ld = _resolve_expr_output_dtype(left)
-        rd = _resolve_expr_output_dtype(right)
-        op = "eq" if equal else "ne"
-        _assert_complex_compare_supported(op, ld, rd)
-        if _is_complex_polars_dtype(ld) or _is_complex_polars_dtype(rd):
-            return Column((left == right) if equal else (left != right))
-        left_num, right_num, left_str, right_str = self._numeric_comparison_operands(other)
-        numeric_valid = left_num.is_not_null() & right_num.is_not_null()
-        if equal:
-            coerced = pl.when(numeric_valid).then(left_num == right_num).otherwise(left_str == right_str)
-        else:
-            coerced = pl.when(numeric_valid).then(left_num != right_num).otherwise(left_str != right_str)
-        if ld is not None and rd is not None:
-            return Column(coerced)
-        return Column(_native_compare_when_complex(left, right, "eq" if equal else "ne", coerced))
-
     def __eq__(self, other):
-        return self._equality_comparison(other, equal=True)
+        return Column(_equality_comparison_expr(self.to_native(), _to_expr(other), equal=True))
 
     def __ne__(self, other):
-        return self._equality_comparison(other, equal=False)
+        return Column(_equality_comparison_expr(self.to_native(), _to_expr(other), equal=False))
 
     def __lt__(self, other):
-        return _ordering_comparison(self, other, "lt")
+        return Column(_ordering_comparison_expr(self.to_native(), _to_expr(other), "lt"))
 
     def __le__(self, other):
-        return _ordering_comparison(self, other, "le")
+        return Column(_ordering_comparison_expr(self.to_native(), _to_expr(other), "le"))
 
     def __gt__(self, other):
-        return _ordering_comparison(self, other, "gt")
+        return Column(_ordering_comparison_expr(self.to_native(), _to_expr(other), "gt"))
 
     def __ge__(self, other):
-        return _ordering_comparison(self, other, "ge")
+        return Column(_ordering_comparison_expr(self.to_native(), _to_expr(other), "ge"))
 
     # Logical operations
     def __and__(self, other):

@@ -394,6 +394,89 @@ def _coerce_expr_order_datetime(e: pl.Expr) -> pl.Expr:
     return e.map_batches(_series_coerce_order_datetime, return_dtype=pl.Datetime("us"))
 
 
+def _numeric_compare_operands(left: pl.Expr, right: pl.Expr) -> tuple[pl.Expr, pl.Expr, pl.Expr, pl.Expr]:
+    """
+    Build the four operand expressions sparkleframe uses for Spark-like cross-type
+    comparisons: ``left_str`` / ``right_str`` cast through string for safe inspection,
+    and ``left_num`` / ``right_num`` further cast to ``Float64`` (nulls where the
+    string isn't parsable). Callers gate on ``is_not_null`` to decide whether to use
+    numeric or lexicographic compare.
+    """
+    left_str = _expr_as_string_for_compare(left)
+    right_str = _expr_as_string_for_compare(right)
+    left_num = left_str.cast(pl.Float64, strict=False)
+    right_num = right_str.cast(pl.Float64, strict=False)
+    return left_num, right_num, left_str, right_str
+
+
+def _ordering_comparison_expr(left: pl.Expr, right: pl.Expr, op: str) -> pl.Expr:
+    """
+    Spark-like ``< <= > >=`` over Polars expressions. Numeric operands use numeric
+    order; date / timestamp / parsable strings use temporal order (fixes
+    ``datetime >= date_sub(current_date(), n)`` under string schemas); unknown
+    dtypes prefer numeric parse then temporal then lexicographic string.
+
+    Ordering on List / Struct / Array / Map dtypes is not supported (Polars has no
+    lexicographic compare for nested dtypes); raises :class:`NotImplementedError`
+    with a clear message at build time when the dtype is known, or at evaluation
+    time via :func:`_native_compare_when_complex` otherwise.
+    """
+    ld = _resolve_expr_output_dtype(left)
+    rd = _resolve_expr_output_dtype(right)
+    _assert_complex_compare_supported(op, ld, rd)
+    left_num, right_num, left_str, right_str = _numeric_compare_operands(left, right)
+    numeric_ok = left_num.is_not_null() & right_num.is_not_null()
+    if _is_numeric_polars_dtype(ld) or _is_numeric_polars_dtype(rd):
+        return _cmp_exprs(left_num, right_num, op)
+
+    left_dt = _coerce_expr_order_datetime(left)
+    right_dt = _coerce_expr_order_datetime(right)
+    temporal_ok = left_dt.is_not_null() & right_dt.is_not_null()
+    if ld is not None or rd is not None:
+        return (
+            pl.when(temporal_ok)
+            .then(_cmp_exprs(left_dt, right_dt, op))
+            .when(numeric_ok)
+            .then(_cmp_exprs(left_num, right_num, op))
+            .otherwise(_cmp_exprs(left_str, right_str, op))
+        )
+    coerced_expr = (
+        pl.when(numeric_ok)
+        .then(_cmp_exprs(left_num, right_num, op))
+        .when(temporal_ok)
+        .then(_cmp_exprs(left_dt, right_dt, op))
+        .otherwise(_cmp_exprs(left_str, right_str, op))
+    )
+    return _native_compare_when_complex(left, right, op, coerced_expr)
+
+
+def _equality_comparison_expr(left: pl.Expr, right: pl.Expr, equal: bool) -> pl.Expr:
+    """
+    Spark-like ``==`` / ``!=`` over Polars expressions. Cross-type equality coerces
+    through string / numeric (so ``col(int) == lit('1')`` matches Spark), while
+    list / struct / array operands fall back to Polars' native equality.
+
+    Raises :class:`NotImplementedError` for MapType operands (Polars stores maps as
+    ``List(Struct([key, value]))``, so sparkleframe can't replicate Spark's map
+    equality semantics yet).
+    """
+    ld = _resolve_expr_output_dtype(left)
+    rd = _resolve_expr_output_dtype(right)
+    op = "eq" if equal else "ne"
+    _assert_complex_compare_supported(op, ld, rd)
+    if _is_complex_polars_dtype(ld) or _is_complex_polars_dtype(rd):
+        return (left == right) if equal else (left != right)
+    left_num, right_num, left_str, right_str = _numeric_compare_operands(left, right)
+    numeric_valid = left_num.is_not_null() & right_num.is_not_null()
+    if equal:
+        coerced = pl.when(numeric_valid).then(left_num == right_num).otherwise(left_str == right_str)
+    else:
+        coerced = pl.when(numeric_valid).then(left_num != right_num).otherwise(left_str != right_str)
+    if ld is not None and rd is not None:
+        return coerced
+    return _native_compare_when_complex(left, right, op, coerced)
+
+
 def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
     """
     One Spark getItem step on ``expr`` (struct field, list index, or map fallbacks).
