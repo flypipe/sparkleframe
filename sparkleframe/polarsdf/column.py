@@ -7,12 +7,18 @@ import polars as pl
 
 from sparkleframe.polarsdf.column_helpers import (
     _apply_getitem_key,
+    _assert_complex_compare_supported,
     _cmp_exprs,
     _coerce_expr_order_datetime,
     _expr_as_string_for_compare,
+    _is_complex_polars_dtype,
     _is_numeric_polars_dtype,
-    _polars_schema_for,
+    _native_compare_when_complex,
     _resolve_expr_output_dtype,
+    _spark_numeric_widened_type,
+    _validated_arithmetic_expr,
+    _validated_float64_expr,
+    _validated_pow_expr,
 )
 from sparkleframe.polarsdf.types import BooleanType, DataType, spark_type_name_to_polars
 
@@ -22,11 +28,16 @@ def _ordering_comparison(left_col: "Column", other: Any, op: str) -> "Column":
     Spark-like ``< <= > >=``: numeric columns use numeric order; dates/timestamps/strings use
     temporal order when parsable (fixes ``datetime >= date_sub(current_date(), n)`` under
     string schemas); unknown dtypes prefer numeric parse then temporal then lexicographic string.
+
+    Ordering on List / Struct / Array / Map dtypes is not yet supported (Polars has no
+    lexicographic compare for nested dtypes); raises :class:`NotImplementedError` with a
+    clear message at build time when the dtype is known, or at evaluation time otherwise.
     """
     left = left_col.to_native()
     right = _to_expr(other)
     ld = _resolve_expr_output_dtype(left)
     rd = _resolve_expr_output_dtype(right)
+    _assert_complex_compare_supported(op, ld, rd)
     left_s = _expr_as_string_for_compare(left)
     right_s = _expr_as_string_for_compare(right)
     left_num = left_s.cast(pl.Float64, strict=False)
@@ -48,13 +59,14 @@ def _ordering_comparison(left_col: "Column", other: Any, op: str) -> "Column":
             .then(_cmp_exprs(left_num, right_num, op))
             .otherwise(_cmp_exprs(left_str, right_str, op))
         )
-    return Column(
+    coerced_expr = (
         pl.when(numeric_ok)
         .then(_cmp_exprs(left_num, right_num, op))
         .when(temporal_ok)
         .then(_cmp_exprs(left_dt, right_dt, op))
         .otherwise(_cmp_exprs(left_str, right_str, op))
     )
+    return Column(_native_compare_when_complex(left, right, op, coerced_expr))
 
 
 class Column:
@@ -73,24 +85,57 @@ class Column:
             self.expr = expr_or_name
         self._broadcast_row_count_in_select: bool = False
 
-    def _binary_arithmetic_float_operands(self, other: Any) -> tuple[pl.Expr, pl.Expr]:
+    def _spark_arithmetic_operands(self, other: Any) -> tuple[pl.Expr, pl.Expr]:
         """
-        Spark-like implicit numeric widening for ``+``, ``-``, ``*``, ``/`` (e.g. Utf8 decimals).
+        Spark-like type promotion for ``+``, ``-``, ``*``.
+        Rejects non-numeric types; widens to the larger numeric type when
+        operands differ (e.g. int + long -> long); preserves the type when
+        both sides match (e.g. int + int -> int).
         """
-        left = self.to_native().cast(pl.Float64, strict=False)
-        right = _to_expr(other).cast(pl.Float64, strict=False)
+        left = self.to_native()
+        right = _to_expr(other)
+        ld = _resolve_expr_output_dtype(left)
+        rd = _resolve_expr_output_dtype(right)
+        left = _validated_arithmetic_expr(left, ld)
+        right = _validated_arithmetic_expr(right, rd)
+        if ld is not None and rd is not None:
+            target = _spark_numeric_widened_type(ld, rd)
+            if target is not None:
+                left = left.cast(target, strict=False)
+                right = right.cast(target, strict=False)
         return left, right
+
+    def _spark_float64_operands(self, other: Any) -> tuple[pl.Expr, pl.Expr]:
+        """
+        For ``/`` which always promotes to Float64 in Spark and rejects
+        non-numeric operands (string, boolean, binary, date/timestamp, complex).
+        """
+        left = self.to_native()
+        right = _to_expr(other)
+        ld = _resolve_expr_output_dtype(left)
+        rd = _resolve_expr_output_dtype(right)
+        return _validated_float64_expr(left, ld), _validated_float64_expr(right, rd)
+
+    def _spark_pow_operands(self, other: Any) -> tuple[pl.Expr, pl.Expr]:
+        """
+        For ``**`` which always promotes to Float64 in Spark. Spark's ``pow``
+        auto-casts string operands, so we are more lenient here than for ``/``.
+        """
+        left = self.to_native()
+        right = _to_expr(other)
+        ld = _resolve_expr_output_dtype(left)
+        rd = _resolve_expr_output_dtype(right)
+        return _validated_pow_expr(left, ld), _validated_pow_expr(right, rd)
 
     # Arithmetic operations
     def __mul__(self, other):
-        # Preserve integral ``list.eval`` / ``transform`` behaviour for ``x * <int literal>`` (Spark).
         if isinstance(other, int) and not isinstance(other, bool):
             c = Column(self.to_native() * _to_expr(other))
             c._broadcast_row_count_in_select = bool(
                 getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
             )
             return c
-        left, right = self._binary_arithmetic_float_operands(other)
+        left, right = self._spark_arithmetic_operands(other)
         c = Column(left * right)
         c._broadcast_row_count_in_select = bool(
             getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
@@ -98,7 +143,7 @@ class Column:
         return c
 
     def __add__(self, other):
-        left, right = self._binary_arithmetic_float_operands(other)
+        left, right = self._spark_arithmetic_operands(other)
         c = Column(left + right)
         c._broadcast_row_count_in_select = bool(
             getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
@@ -106,7 +151,7 @@ class Column:
         return c
 
     def __sub__(self, other):
-        left, right = self._binary_arithmetic_float_operands(other)
+        left, right = self._spark_arithmetic_operands(other)
         c = Column(left - right)
         c._broadcast_row_count_in_select = bool(
             getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
@@ -114,24 +159,44 @@ class Column:
         return c
 
     def __truediv__(self, other):
-        left, right = self._binary_arithmetic_float_operands(other)
-        c = Column(left / right)
+        left, right = self._spark_float64_operands(other)
+        c = Column(left / right)  # both sides already Float64
         c._broadcast_row_count_in_select = bool(
             getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
         )
         return c
 
     def __radd__(self, other):
-        left, right = _to_expr(other).cast(pl.Float64, strict=False), self.to_native().cast(pl.Float64, strict=False)
-        c = Column(left + right)
+        right_expr = self.to_native()
+        left_expr = _to_expr(other)
+        rd = _resolve_expr_output_dtype(right_expr)
+        ld = _resolve_expr_output_dtype(left_expr)
+        right_expr = _validated_arithmetic_expr(right_expr, rd)
+        left_expr = _validated_arithmetic_expr(left_expr, ld)
+        if ld is not None and rd is not None:
+            target = _spark_numeric_widened_type(ld, rd)
+            if target is not None:
+                left_expr = left_expr.cast(target, strict=False)
+                right_expr = right_expr.cast(target, strict=False)
+        c = Column(left_expr + right_expr)
         c._broadcast_row_count_in_select = bool(
             _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
         )
         return c
 
     def __rsub__(self, other):
-        left, right = _to_expr(other).cast(pl.Float64, strict=False), self.to_native().cast(pl.Float64, strict=False)
-        c = Column(left - right)
+        right_expr = self.to_native()
+        left_expr = _to_expr(other)
+        rd = _resolve_expr_output_dtype(right_expr)
+        ld = _resolve_expr_output_dtype(left_expr)
+        right_expr = _validated_arithmetic_expr(right_expr, rd)
+        left_expr = _validated_arithmetic_expr(left_expr, ld)
+        if ld is not None and rd is not None:
+            target = _spark_numeric_widened_type(ld, rd)
+            if target is not None:
+                left_expr = left_expr.cast(target, strict=False)
+                right_expr = right_expr.cast(target, strict=False)
+        c = Column(left_expr - right_expr)
         c._broadcast_row_count_in_select = bool(
             _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
         )
@@ -144,16 +209,31 @@ class Column:
                 _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
             )
             return c
-        left, right = _to_expr(other).cast(pl.Float64, strict=False), self.to_native().cast(pl.Float64, strict=False)
-        c = Column(left * right)
+        right_expr = self.to_native()
+        left_expr = _to_expr(other)
+        rd = _resolve_expr_output_dtype(right_expr)
+        ld = _resolve_expr_output_dtype(left_expr)
+        right_expr = _validated_arithmetic_expr(right_expr, rd)
+        left_expr = _validated_arithmetic_expr(left_expr, ld)
+        if ld is not None and rd is not None:
+            target = _spark_numeric_widened_type(ld, rd)
+            if target is not None:
+                left_expr = left_expr.cast(target, strict=False)
+                right_expr = right_expr.cast(target, strict=False)
+        c = Column(left_expr * right_expr)
         c._broadcast_row_count_in_select = bool(
             _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
         )
         return c
 
     def __rtruediv__(self, other):
-        left, right = _to_expr(other).cast(pl.Float64, strict=False), self.to_native().cast(pl.Float64, strict=False)
-        c = Column(left / right)
+        right_expr = self.to_native()
+        left_expr = _to_expr(other)
+        rd = _resolve_expr_output_dtype(right_expr)
+        ld = _resolve_expr_output_dtype(left_expr)
+        left_expr = _validated_float64_expr(left_expr, ld)
+        right_expr = _validated_float64_expr(right_expr, rd)
+        c = Column(left_expr / right_expr)
         c._broadcast_row_count_in_select = bool(
             _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
         )
@@ -161,8 +241,7 @@ class Column:
 
     def __pow__(self, other):
         """Spark-like ``col ** exponent`` (same semantics as :func:`~sparkleframe.polarsdf.functions.pow`)."""
-        left = self.to_native().cast(pl.Float64, strict=False)
-        right = _to_expr(other).cast(pl.Float64, strict=False)
+        left, right = self._spark_pow_operands(other)
         c = Column(left.pow(right))
         c._broadcast_row_count_in_select = bool(
             getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
@@ -171,9 +250,13 @@ class Column:
 
     def __rpow__(self, other):
         """``scalar ** col`` (Spark / PySpark ``Column`` supports reflected power)."""
-        left = _to_expr(other).cast(pl.Float64, strict=False)
-        right = self.to_native().cast(pl.Float64, strict=False)
-        c = Column(left.pow(right))
+        right_expr = self.to_native()
+        left_expr = _to_expr(other)
+        rd = _resolve_expr_output_dtype(right_expr)
+        ld = _resolve_expr_output_dtype(left_expr)
+        left_expr = _validated_pow_expr(left_expr, ld)
+        right_expr = _validated_pow_expr(right_expr, rd)
+        c = Column(left_expr.pow(right_expr))
         c._broadcast_row_count_in_select = bool(
             _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
         )
@@ -181,22 +264,45 @@ class Column:
 
     # Comparison operations
     def _numeric_comparison_operands(self, other):
-        # Object columns cannot cast to Float/String directly; map Python values to Utf8 first.
         left_str = _expr_as_string_for_compare(self.to_native())
         right_str = _expr_as_string_for_compare(_to_expr(other))
         left = left_str.cast(pl.Float64, strict=False)
         right = right_str.cast(pl.Float64, strict=False)
         return left, right, left_str, right_str
 
-    def __eq__(self, other):
+    def _equality_comparison(self, other: Any, equal: bool) -> "Column":
+        """
+        Spark-like ``==`` / ``!=`` semantics: cross-type equality coerces through
+        string / numeric (so ``col(int) == lit('1')`` matches Spark), but
+        list / struct / array operands fall back to Polars' native equality.
+
+        Raises :class:`NotImplementedError` with a clear message for MapType operands
+        (Polars stores maps as ``List(Struct([key, value]))`` so we can't replicate
+        Spark's map equality semantics yet).
+        """
+        left = self.to_native()
+        right = _to_expr(other)
+        ld = _resolve_expr_output_dtype(left)
+        rd = _resolve_expr_output_dtype(right)
+        op = "eq" if equal else "ne"
+        _assert_complex_compare_supported(op, ld, rd)
+        if _is_complex_polars_dtype(ld) or _is_complex_polars_dtype(rd):
+            return Column((left == right) if equal else (left != right))
         left_num, right_num, left_str, right_str = self._numeric_comparison_operands(other)
         numeric_valid = left_num.is_not_null() & right_num.is_not_null()
-        return Column(pl.when(numeric_valid).then(left_num == right_num).otherwise(left_str == right_str))
+        if equal:
+            coerced = pl.when(numeric_valid).then(left_num == right_num).otherwise(left_str == right_str)
+        else:
+            coerced = pl.when(numeric_valid).then(left_num != right_num).otherwise(left_str != right_str)
+        if ld is not None and rd is not None:
+            return Column(coerced)
+        return Column(_native_compare_when_complex(left, right, "eq" if equal else "ne", coerced))
+
+    def __eq__(self, other):
+        return self._equality_comparison(other, equal=True)
 
     def __ne__(self, other):
-        left_num, right_num, left_str, right_str = self._numeric_comparison_operands(other)
-        numeric_valid = left_num.is_not_null() & right_num.is_not_null()
-        return Column(pl.when(numeric_valid).then(left_num != right_num).otherwise(left_str != right_str))
+        return self._equality_comparison(other, equal=False)
 
     def __lt__(self, other):
         return _ordering_comparison(self, other, "lt")

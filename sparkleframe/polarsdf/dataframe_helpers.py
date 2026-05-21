@@ -42,12 +42,12 @@ def _is_null_pandas(x: Any) -> bool:
 def _convert_number(x: Any) -> Any:
     if isinstance(x, (np.integer,)):
         return int(x)
-    if isinstance(x, int):
+    if isinstance(x, int) and not isinstance(x, bool):
         return x
     if isinstance(x, (np.floating, float)):
         if math.isnan(x):
             return None
-        return int(x) if float(x).is_integer() else float(x)
+        return float(x)
     return x
 
 

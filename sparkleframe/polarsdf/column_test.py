@@ -1,9 +1,27 @@
 from datetime import date, datetime
+from decimal import Decimal
 
 import polars as pl
 import pyspark.sql.functions as F
 import pytest
+from pyspark.sql.types import ArrayType as SparkArrayType
+from pyspark.sql.types import BinaryType as SparkBinaryType
+from pyspark.sql.types import BooleanType as SparkBooleanType
+from pyspark.sql.types import ByteType as SparkByteType
+from pyspark.sql.types import DateType as SparkDateType
+from pyspark.sql.types import DecimalType as SparkDecimalType
+from pyspark.sql.types import DoubleType as SparkDoubleType
+from pyspark.sql.types import FloatType as SparkFloatType
+from pyspark.sql.types import IntegerType as SparkIntegerType
+from pyspark.sql.types import LongType as SparkLongType
+from pyspark.sql.types import MapType as SparkMapType
+from pyspark.sql.types import ShortType as SparkShortType
+from pyspark.sql.types import StringType as SparkStringType
+from pyspark.sql.types import StructField as SparkStructField
+from pyspark.sql.types import StructType as SparkStructType
+from pyspark.sql.types import TimestampType as SparkTimestampType
 
+import sparkleframe.polarsdf.functions as PF
 from sparkleframe.polarsdf import DataFrame, StringType
 from sparkleframe.polarsdf.functions import col, lit
 from sparkleframe.polarsdf.types import (
@@ -19,6 +37,8 @@ from sparkleframe.polarsdf.types import (
     ShortType,
     TimestampType,
 )
+from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
+from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal
 
 
 def _functions_pow_optional():
@@ -404,3 +424,255 @@ class TestColumnComparisonCoercion:
         past = date.fromordinal(today.toordinal() - 40)
         old = pl.DataFrame({"created": [f"{past.isoformat()}T12:00:00Z"]})
         assert self._eval(col("created") >= date_sub(current_date(), 30), old).to_list() == [False]
+
+
+_ARITHMETIC_TYPE_FIXTURES = [
+    ("byte", SparkByteType(), [2, 5, 10], [1, 3, 4]),
+    ("short", SparkShortType(), [2, 5, 10], [1, 3, 4]),
+    ("int", SparkIntegerType(), [2, 5, 10], [1, 3, 4]),
+    ("long", SparkLongType(), [2, 5, 10], [1, 3, 4]),
+    ("float", SparkFloatType(), [1.5, 2.5, 3.5], [0.5, 1.0, 2.0]),
+    ("double", SparkDoubleType(), [1.5, 2.5, 3.5], [0.5, 1.0, 2.0]),
+    ("string", SparkStringType(), ["1.5", "2.5", "3.5"], ["0.5", "1.0", "2.0"]),
+    ("boolean", SparkBooleanType(), [True, False, True], [False, True, False]),
+    (
+        "date",
+        SparkDateType(),
+        [date(2024, 1, 1), date(2024, 6, 15), date(2025, 1, 1)],
+        [date(2023, 1, 1), date(2024, 3, 1), date(2024, 12, 31)],
+    ),
+    (
+        "timestamp",
+        SparkTimestampType(),
+        [datetime(2024, 1, 1), datetime(2024, 6, 15, 12, 0), datetime(2025, 1, 1)],
+        [datetime(2023, 1, 1), datetime(2024, 3, 1, 8, 0), datetime(2024, 12, 31)],
+    ),
+    (
+        "decimal",
+        SparkDecimalType(10, 2),
+        [Decimal("1.50"), Decimal("2.50"), Decimal("3.50")],
+        [Decimal("0.50"), Decimal("1.00"), Decimal("2.00")],
+    ),
+    ("binary", SparkBinaryType(), [b"\x01\x02", b"\x03\x04", b"\x05\x06"], [b"\x07\x08", b"\x09\x0a", b"\x0b\x0c"]),
+    ("array_int", SparkArrayType(SparkIntegerType()), [[1, 2], [3, 4], [5, 6]], [[7, 8], [9, 10], [11, 12]]),
+    (
+        "map_str_int",
+        SparkMapType(SparkStringType(), SparkIntegerType()),
+        [{"a": 1}, {"b": 2}, {"c": 3}],
+        [{"d": 4}, {"e": 5}, {"f": 6}],
+    ),
+    (
+        "struct",
+        SparkStructType([SparkStructField("x", SparkIntegerType()), SparkStructField("y", SparkIntegerType())]),
+        [(1, 2), (3, 4), (5, 6)],
+        [(7, 8), (9, 10), (11, 12)],
+    ),
+]
+
+_ARITHMETIC_OPS = [
+    ("+", lambda a, b: a + b),
+    ("-", lambda a, b: a - b),
+    ("*", lambda a, b: a * b),
+    ("/", lambda a, b: a / b),
+    ("**", lambda a, b: a**b),
+]
+
+_COMPARISON_OPS = [
+    ("==", lambda a, b: a == b),
+    ("!=", lambda a, b: a != b),
+    ("<", lambda a, b: a < b),
+    ("<=", lambda a, b: a <= b),
+    (">", lambda a, b: a > b),
+    (">=", lambda a, b: a >= b),
+]
+
+
+_MAP_COMPARISON_GAPS = {
+    # Polars stores maps as List(Struct([key, value])) -- indistinguishable from arrays at dtype level.
+    # Spark rejects all comparisons on maps, but sparkleframe can't detect map vs array.
+    ("map_str_int", "=="),
+    ("map_str_int", "!="),
+    ("map_str_int", "<"),
+    ("map_str_int", "<="),
+    ("map_str_int", ">"),
+    ("map_str_int", ">="),
+}
+
+
+_COMPLEX_ORDERING_GAPS = {
+    # Polars doesn't implement <, <=, >, >= on List or Struct dtypes (lexicographic
+    # comparison is not built in), so we can't match Spark without re-implementing it
+    # manually via explode + element-wise compare.
+    ("array_int", "<"),
+    ("array_int", "<="),
+    ("array_int", ">"),
+    ("array_int", ">="),
+    ("struct", "<"),
+    ("struct", "<="),
+    ("struct", ">"),
+    ("struct", ">="),
+}
+
+
+class TestArithmeticParityWithSpark:
+    """
+    Parity tests: for every pyspark.sql.types scalar type and every arithmetic / comparison
+    operator, sparkleframe must produce the same result as PySpark.  When Spark raises,
+    sparkleframe must also raise.
+    """
+
+    @staticmethod
+    def _make_dfs(spark, spark_type, values_a, values_b):
+        schema = SparkStructType(
+            [
+                SparkStructField("a", spark_type),
+                SparkStructField("b", spark_type),
+            ]
+        )
+        rows = list(zip(values_a, values_b))
+        spark_df = spark.createDataFrame(rows, schema)
+        sparkle_df = DataFrame(pl.from_arrow(spark_df.toArrow()))
+        return spark_df, sparkle_df
+
+    @pytest.mark.parametrize(
+        "dtype_label, spark_type, values_a, values_b",
+        _ARITHMETIC_TYPE_FIXTURES,
+    )
+    @pytest.mark.parametrize("op_name, op_func", _ARITHMETIC_OPS)
+    def test_arithmetic_col_col(self, spark, dtype_label, spark_type, values_a, values_b, op_name, op_func):
+        spark_df, sparkle_df = self._make_dfs(spark, spark_type, values_a, values_b)
+
+        spark_raised = False
+        try:
+            spark_result = spark_df.select(op_func(F.col("a"), F.col("b")).alias("result"))
+            spark_result.collect()
+        except Exception:
+            spark_raised = True
+
+        if spark_raised:
+            with pytest.raises(Exception):
+                sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result")).to_native_df()
+        else:
+            sf_result = sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result"))
+            assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    @pytest.mark.parametrize(
+        "dtype_label, spark_type, values_a, values_b",
+        _ARITHMETIC_TYPE_FIXTURES,
+    )
+    @pytest.mark.parametrize("op_name, op_func", _COMPARISON_OPS)
+    def test_comparison_col_col(self, spark, dtype_label, spark_type, values_a, values_b, op_name, op_func):
+        if (dtype_label, op_name) in _MAP_COMPARISON_GAPS:
+            pytest.xfail("Polars stores maps as List(Struct) -- indistinguishable from arrays")
+        if (dtype_label, op_name) in _COMPLEX_ORDERING_GAPS:
+            pytest.xfail("Polars does not support <, <=, >, >= on List / Struct dtypes")
+        spark_df, sparkle_df = self._make_dfs(spark, spark_type, values_a, values_b)
+
+        spark_raised = False
+        try:
+            spark_result = spark_df.select(op_func(F.col("a"), F.col("b")).alias("result"))
+            spark_result.collect()
+        except Exception:
+            spark_raised = True
+
+        if spark_raised:
+            with pytest.raises(Exception):
+                sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result")).to_native_df()
+        else:
+            sf_result = sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result"))
+            assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    @pytest.mark.parametrize(
+        "dtype_label, spark_type, values_a, values_b",
+        [
+            ("int", SparkIntegerType(), [1, 2, 3, None], [4, None, 6, None]),
+            ("long", SparkLongType(), [1, 2, 3, None], [4, None, 6, None]),
+            ("double", SparkDoubleType(), [1.0, 2.0, None, None], [None, 5.0, 6.0, None]),
+            ("float", SparkFloatType(), [1.0, 2.0, None, None], [None, 5.0, 6.0, None]),
+        ],
+    )
+    @pytest.mark.parametrize("op_name, op_func", _ARITHMETIC_OPS)
+    def test_arithmetic_with_nulls(self, spark, dtype_label, spark_type, values_a, values_b, op_name, op_func):
+        schema = SparkStructType(
+            [
+                SparkStructField("a", spark_type, nullable=True),
+                SparkStructField("b", spark_type, nullable=True),
+            ]
+        )
+        rows = list(zip(values_a, values_b))
+        spark_df = spark.createDataFrame(rows, schema)
+        sparkle_df = DataFrame(pl.from_arrow(spark_df.toArrow()))
+
+        spark_result = spark_df.select(op_func(F.col("a"), F.col("b")).alias("result"))
+        sf_result = sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result"))
+
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    @pytest.mark.parametrize(
+        "dtype_label, spark_type, values",
+        [
+            ("int", SparkIntegerType(), [2, 5, 10]),
+            ("long", SparkLongType(), [2, 5, 10]),
+            ("float", SparkFloatType(), [1.5, 2.5, 3.5]),
+            ("double", SparkDoubleType(), [1.5, 2.5, 3.5]),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "op_name, sf_op, spark_op",
+        [
+            ("radd", lambda v: 10 + v, lambda v: 10 + v),
+            ("rsub", lambda v: 10 - v, lambda v: 10 - v),
+            ("rmul", lambda v: 10 * v, lambda v: 10 * v),
+            ("rtruediv", lambda v: 10 / v, lambda v: 10 / v),
+        ],
+    )
+    def test_arithmetic_literal_col(self, spark, dtype_label, spark_type, values, op_name, sf_op, spark_op):
+        schema = SparkStructType([SparkStructField("a", spark_type)])
+        rows = [(v,) for v in values]
+        spark_df = spark.createDataFrame(rows, schema)
+        sparkle_df = DataFrame(pl.from_arrow(spark_df.toArrow()))
+
+        spark_result = spark_df.select(spark_op(F.col("a")).alias("result"))
+        sf_result = sparkle_df.select(sf_op(PF.col("a")).alias("result"))
+
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+
+class TestUnsupportedComplexComparisons:
+    """Sparkleframe must raise a clear ``NotImplementedError`` -- not an opaque Polars
+    error -- for compare operations it cannot replicate from Spark yet."""
+
+    @pytest.mark.parametrize("op_name, op_func", [("<", lambda a, b: a < b), ("<=", lambda a, b: a <= b)])
+    def test_ordering_on_list_raises_not_implemented(self, op_name, op_func):
+        df = DataFrame(pl.DataFrame({"a": [[1, 2], [3, 4]], "b": [[5, 6], [7, 8]]}))
+        with pytest.raises(NotImplementedError, match=r"sparkleframe does not support the '.+' operator on List"):
+            df.select(op_func(col("a"), col("b")).alias("r")).to_native_df()
+
+    @pytest.mark.parametrize("op_name, op_func", [(">", lambda a, b: a > b), (">=", lambda a, b: a >= b)])
+    def test_ordering_on_struct_raises_not_implemented(self, op_name, op_func):
+        df = DataFrame(
+            pl.DataFrame(
+                {"a": [{"x": 1, "y": 2}, {"x": 3, "y": 4}], "b": [{"x": 5, "y": 6}, {"x": 7, "y": 8}]},
+            )
+        )
+        with pytest.raises(NotImplementedError, match=r"sparkleframe does not support the '.+' operator on List"):
+            df.select(op_func(col("a"), col("b")).alias("r")).to_native_df()
+
+    @pytest.mark.parametrize("op_name, op_func", [("==", lambda a, b: a == b), ("!=", lambda a, b: a != b)])
+    def test_equality_on_map_raises_not_implemented(self, op_name, op_func):
+        df = DataFrame(
+            pl.DataFrame(
+                {
+                    "a": [[{"key": "x", "value": 1}], [{"key": "y", "value": 2}]],
+                    "b": [[{"key": "x", "value": 1}], [{"key": "y", "value": 2}]],
+                }
+            )
+        )
+        with pytest.raises(NotImplementedError, match=r"sparkleframe does not support the '.+' operator on MapType"):
+            df.select(op_func(col("a"), col("b")).alias("r")).to_native_df()
+
+    def test_equality_on_plain_list_still_works(self):
+        """Sanity check: List equality is supported and must not raise NotImplementedError."""
+        df = DataFrame(pl.DataFrame({"a": [[1, 2], [3, 4]], "b": [[1, 2], [7, 8]]}))
+        result = df.select((col("a") == col("b")).alias("r")).to_native_df()
+        assert result.to_series().to_list() == [True, False]

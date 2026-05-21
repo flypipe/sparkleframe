@@ -562,8 +562,14 @@ def _struct_child_field_name(arg: Union[str, Column], expr: pl.Expr, index: int)
     """
     if isinstance(arg, str):
         return arg.split(".")[-1]
-    if b"RepeatBy" in expr.meta.serialize():
-        return f"col{index + 1}"
+    try:
+        if b"RepeatBy" in expr.meta.serialize():
+            return f"col{index + 1}"
+    except Exception:
+        # Expressions containing Python UDFs (``map_batches``) can fail to serialize
+        # without ``cloudpickle`` installed. Such expressions are never plain literals
+        # broadcast via ``RepeatBy``, so fall through to the regular naming rules.
+        pass
     undone = expr.meta.undo_aliases()
     # Explicit Alias (nested struct(...).alias("nested_x"), col().alias("z"), …): Spark uses output_name.
     # Do not use serialize() inequality — Polars versions disagree for bare struct(); compare output names instead.
