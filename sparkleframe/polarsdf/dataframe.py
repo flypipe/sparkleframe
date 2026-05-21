@@ -243,13 +243,11 @@ class DataFrame(BaseDataFrame):
         cols = list(cols)
         cols = cols[0] if cols and isinstance(cols[0], list) else cols
         pl_expressions: List[Any] = []
-        broadcast_flags: List[bool] = []
 
         with _polars_schema_for(self.df.schema):
             for c in cols:
                 if isinstance(c, Column):
                     pl_expressions.append(c.to_native())
-                    broadcast_flags.append(bool(getattr(c, "_broadcast_row_count_in_select", False)))
                     continue
 
                 if isinstance(c, str):
@@ -264,21 +262,12 @@ class DataFrame(BaseDataFrame):
                         pl_expressions.append(expr)
                     else:
                         pl_expressions.append(pl.col(c))
-                    broadcast_flags.append(False)
                     continue
 
                 # fallback: assume it's already a polars expr or valid selector
                 pl_expressions.append(c)
-                broadcast_flags.append(False)
 
-        selected_df = self.df.select(*pl_expressions)
-        n_src = self.df.height
-        n_sel = selected_df.height
-        all_lit_broadcast = bool(pl_expressions) and all(broadcast_flags)
-        if all_lit_broadcast and ((n_src == 0 and n_sel != 0) or (n_src > 1 and n_sel == 1)):
-            out_names = [e.meta.output_name() for e in pl_expressions]
-            selected_df = self.df.with_columns(pl_expressions).select(*out_names)
-        return DataFrame(selected_df)
+        return DataFrame(self.df.select(*pl_expressions))
 
     def withColumn(self, name: str, col: Any) -> DataFrame:
         """

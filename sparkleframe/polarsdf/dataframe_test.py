@@ -184,6 +184,33 @@ class TestDataFrame:
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df)
 
+    def test_select_literal_only_broadcasts_to_source_row_count(self, spark, sparkle_df, spark_df):
+        """
+        Spark's ``df.select(lit(x))`` produces *one row per source row* (the literal is
+        broadcast to the source's row count). Polars' ``df.select(pl.lit(x))`` would
+        otherwise collapse to a single row, so ``sparkleframe.functions.lit`` wraps the
+        literal with ``.repeat_by(pl.len()).explode()`` to match Spark.
+
+        This test pins that behavior so future refactors of ``lit`` / ``select`` keep
+        Spark parity for "literal-only" projections.
+        """
+        sf_result = sparkle_df.select(PF.lit("constant").alias("c"), PF.lit(42).alias("n"))
+        spark_result = spark_df.select(F.lit("constant").alias("c"), F.lit(42).alias("n"))
+
+        assert sf_result.count() == sparkle_df.count() == spark_result.count()
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    def test_select_literal_broadcast_with_empty_dataframe(self, spark):
+        """Spark parity edge case: selecting a literal against an empty frame yields zero rows."""
+        empty_sparkle = DataFrame(pl.DataFrame({"a": pl.Series("a", [], dtype=pl.Int64)}))
+        empty_spark = spark.createDataFrame([], schema=SparkStructType([SparkStructField("a", SparkLongType())]))
+
+        sf_result = empty_sparkle.select(PF.lit("constant").alias("c"))
+        spark_result = empty_spark.select(F.lit("constant").alias("c"))
+
+        assert sf_result.count() == 0 == spark_result.count()
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
     def test_with_column_add(self, spark, sparkle_df, spark_df):
         result_spark_df = spark.createDataFrame(
             sparkle_df.withColumn("bonus", (PF.col("salary") * 0.1)).toPandas()

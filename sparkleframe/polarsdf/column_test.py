@@ -37,7 +37,6 @@ from sparkleframe.polarsdf.types import (
     ShortType,
     TimestampType,
 )
-from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
 from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal
 
 

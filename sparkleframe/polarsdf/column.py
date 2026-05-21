@@ -83,7 +83,6 @@ class Column:
             self.expr = pl.col(expr_or_name)
         else:
             self.expr = expr_or_name
-        self._broadcast_row_count_in_select: bool = False
 
     def _spark_arithmetic_operands(self, other: Any) -> tuple[pl.Expr, pl.Expr]:
         """
@@ -130,41 +129,21 @@ class Column:
     # Arithmetic operations
     def __mul__(self, other):
         if isinstance(other, int) and not isinstance(other, bool):
-            c = Column(self.to_native() * _to_expr(other))
-            c._broadcast_row_count_in_select = bool(
-                getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
-            )
-            return c
+            return Column(self.to_native() * _to_expr(other))
         left, right = self._spark_arithmetic_operands(other)
-        c = Column(left * right)
-        c._broadcast_row_count_in_select = bool(
-            getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
-        )
-        return c
+        return Column(left * right)
 
     def __add__(self, other):
         left, right = self._spark_arithmetic_operands(other)
-        c = Column(left + right)
-        c._broadcast_row_count_in_select = bool(
-            getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
-        )
-        return c
+        return Column(left + right)
 
     def __sub__(self, other):
         left, right = self._spark_arithmetic_operands(other)
-        c = Column(left - right)
-        c._broadcast_row_count_in_select = bool(
-            getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
-        )
-        return c
+        return Column(left - right)
 
     def __truediv__(self, other):
         left, right = self._spark_float64_operands(other)
-        c = Column(left / right)  # both sides already Float64
-        c._broadcast_row_count_in_select = bool(
-            getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
-        )
-        return c
+        return Column(left / right)  # both sides already Float64
 
     def __radd__(self, other):
         right_expr = self.to_native()
@@ -178,11 +157,7 @@ class Column:
             if target is not None:
                 left_expr = left_expr.cast(target, strict=False)
                 right_expr = right_expr.cast(target, strict=False)
-        c = Column(left_expr + right_expr)
-        c._broadcast_row_count_in_select = bool(
-            _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
-        )
-        return c
+        return Column(left_expr + right_expr)
 
     def __rsub__(self, other):
         right_expr = self.to_native()
@@ -196,19 +171,11 @@ class Column:
             if target is not None:
                 left_expr = left_expr.cast(target, strict=False)
                 right_expr = right_expr.cast(target, strict=False)
-        c = Column(left_expr - right_expr)
-        c._broadcast_row_count_in_select = bool(
-            _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
-        )
-        return c
+        return Column(left_expr - right_expr)
 
     def __rmul__(self, other):
         if isinstance(other, int) and not isinstance(other, bool):
-            c = Column(_to_expr(other) * self.to_native())
-            c._broadcast_row_count_in_select = bool(
-                _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
-            )
-            return c
+            return Column(_to_expr(other) * self.to_native())
         right_expr = self.to_native()
         left_expr = _to_expr(other)
         rd = _resolve_expr_output_dtype(right_expr)
@@ -220,11 +187,7 @@ class Column:
             if target is not None:
                 left_expr = left_expr.cast(target, strict=False)
                 right_expr = right_expr.cast(target, strict=False)
-        c = Column(left_expr * right_expr)
-        c._broadcast_row_count_in_select = bool(
-            _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
-        )
-        return c
+        return Column(left_expr * right_expr)
 
     def __rtruediv__(self, other):
         right_expr = self.to_native()
@@ -233,20 +196,12 @@ class Column:
         ld = _resolve_expr_output_dtype(left_expr)
         left_expr = _validated_float64_expr(left_expr, ld)
         right_expr = _validated_float64_expr(right_expr, rd)
-        c = Column(left_expr / right_expr)
-        c._broadcast_row_count_in_select = bool(
-            _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
-        )
-        return c
+        return Column(left_expr / right_expr)
 
     def __pow__(self, other):
         """Spark-like ``col ** exponent`` (same semantics as :func:`~sparkleframe.polarsdf.functions.pow`)."""
         left, right = self._spark_pow_operands(other)
-        c = Column(left.pow(right))
-        c._broadcast_row_count_in_select = bool(
-            getattr(self, "_broadcast_row_count_in_select", False) and _operand_broadcasts_in_select(other)
-        )
-        return c
+        return Column(left.pow(right))
 
     def __rpow__(self, other):
         """``scalar ** col`` (Spark / PySpark ``Column`` supports reflected power)."""
@@ -256,11 +211,7 @@ class Column:
         ld = _resolve_expr_output_dtype(left_expr)
         left_expr = _validated_pow_expr(left_expr, ld)
         right_expr = _validated_pow_expr(right_expr, rd)
-        c = Column(left_expr.pow(right_expr))
-        c._broadcast_row_count_in_select = bool(
-            _operand_broadcasts_in_select(other) and getattr(self, "_broadcast_row_count_in_select", False)
-        )
-        return c
+        return Column(left_expr.pow(right_expr))
 
     # Comparison operations
     def _numeric_comparison_operands(self, other):
@@ -330,21 +281,15 @@ class Column:
         return Column(_to_expr(other) | self.to_native())
 
     def __invert__(self):
-        c = Column(~self.to_native())
-        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
-        return c
+        return Column(~self.to_native())
 
     def __neg__(self):
         """Unary minus (PySpark ``-col``), e.g. ``F.pow(1 + rate, -number_of_periods)`` when ``number_of_periods`` is a column."""
-        c = Column(-self.to_native())
-        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
-        return c
+        return Column(-self.to_native())
 
     def __pos__(self):
         """Unary plus (PySpark ``+col``)."""
-        c = Column(+self.to_native())
-        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
-        return c
+        return Column(+self.to_native())
 
     def alias(self, name: str) -> Column:
         """
@@ -356,9 +301,7 @@ class Column:
         Returns:
             Column: A new Column with the alias applied
         """
-        c = Column(self.expr, getitem_chain=self._getitem_chain, output_alias=name)
-        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
-        return c
+        return Column(self.expr, getitem_chain=self._getitem_chain, output_alias=name)
 
     def asc(self) -> "Column":
         base = self.to_native()
@@ -416,9 +359,7 @@ class Column:
             return Column(parsed_bool)
         # Use Polars `strict=False` so invalid values become null per row, like Spark 4
         # (ANSI) casts. `strict=True` in Polars fails the whole expression for any bad row.
-        c = Column(self.to_native().cast(data_type.to_native(), strict=False))
-        c._broadcast_row_count_in_select = bool(getattr(self, "_broadcast_row_count_in_select", False))
-        return c
+        return Column(self.to_native().cast(data_type.to_native(), strict=False))
 
     def try_cast(self, data_type: Union[DataType, str]) -> "Column":
         """
@@ -595,14 +536,3 @@ def _to_expr(value):
         return value
     else:
         return pl.lit(value)
-
-
-def _operand_broadcasts_in_select(other: Any) -> bool:
-    """True if ``other`` is a row-aligned literal operand for Spark-style ``select``."""
-    if isinstance(other, Column):
-        return bool(getattr(other, "_broadcast_row_count_in_select", False))
-    if isinstance(other, (int, float, str, bool, type(None))):
-        return True
-    if isinstance(other, pl.Expr):
-        return False
-    return False

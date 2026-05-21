@@ -53,7 +53,13 @@ def lit(value) -> Column:
     """
     Mimics pyspark.sql.functions.lit.
 
-    Creates a Column of literal value.
+    Creates a Column of literal value broadcast to the source DataFrame's row count.
+
+    Spark's ``lit(x)`` produces *one row per source row*; Polars' bare ``pl.lit(x)`` would
+    collapse to a single row. We use :func:`polars.repeat` with ``pl.len()`` so the
+    literal expands to the source row count (including the empty-frame case where Spark
+    yields zero rows -- the previous ``repeat_by(pl.len()).explode()`` trick yielded one
+    null row for empty inputs).
 
     Args:
         value: A literal value (int, float, str, bool, None, etc.)
@@ -62,8 +68,9 @@ def lit(value) -> Column:
         Column: A Column object wrapping a literal Polars expression.
     """
     if value is None:
-        return Column(pl.lit(value).cast(pl.String).repeat_by(pl.len()).explode())
-    return Column(pl.lit(value).repeat_by(pl.len()).explode())
+        # Spark ``lit(None)`` has ``StringType`` by default; mirror that.
+        return Column(pl.repeat(None, pl.len(), dtype=pl.String))
+    return Column(pl.repeat(value, pl.len()))
 
 
 def coalesce(*cols: Union[str, Column]) -> Column:
@@ -563,12 +570,16 @@ def _struct_child_field_name(arg: Union[str, Column], expr: pl.Expr, index: int)
     if isinstance(arg, str):
         return arg.split(".")[-1]
     try:
-        if b"RepeatBy" in expr.meta.serialize():
+        serialized = expr.meta.serialize()
+        # ``lit(value)`` builds either ``pl.repeat(value, pl.len())`` (current) or the
+        # legacy ``pl.lit(value).repeat_by(pl.len()).explode()`` -- both broadcast a
+        # plain literal to the source row count and Spark names them ``col1``, ``col2``.
+        if b"Repeat" in serialized:
             return f"col{index + 1}"
     except Exception:
         # Expressions containing Python UDFs (``map_batches``) can fail to serialize
-        # without ``cloudpickle`` installed. Such expressions are never plain literals
-        # broadcast via ``RepeatBy``, so fall through to the regular naming rules.
+        # without ``cloudpickle`` installed. Such expressions are never plain
+        # broadcast literals, so fall through to the regular naming rules.
         pass
     undone = expr.meta.undo_aliases()
     # Explicit Alias (nested struct(...).alias("nested_x"), col().alias("z"), …): Spark uses output_name.
