@@ -29,8 +29,11 @@ from sparkleframe.polarsdf.column_helpers import (
     _looks_like_map_dtype,
     _numeric_compare_operands,
     _ordering_comparison_expr,
+    _parse_bool_string,
     _parse_datetime_string_safe,
     _spark_numeric_widened_type,
+    _string_to_bool_expr,
+    _string_to_bool_expr_strict,
     _validate_and_cast_float64_lenient,
     _validate_and_cast_float64_strict,
     _validated_arithmetic_expr,
@@ -390,3 +393,81 @@ class TestEqualityComparisonExpr:
         )
         with pytest.raises(NotImplementedError, match="MapType"):
             df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=True).alias("r"))
+
+
+class TestParseBoolString:
+    @pytest.mark.parametrize(
+        "value",
+        ["true", "TRUE", " True ", "t", "1", "yes", "Y"],
+    )
+    def test_truthy(self, value: str) -> None:
+        assert _parse_bool_string(value) is True
+
+    @pytest.mark.parametrize(
+        "value",
+        ["false", "FALSE", "  False", "f", "0", "no", "N"],
+    )
+    def test_falsy(self, value: str) -> None:
+        assert _parse_bool_string(value) is False
+
+    @pytest.mark.parametrize(
+        "value",
+        [None, "", "maybe", "2", "yepp"],
+    )
+    def test_null_or_unrecognised(self, value) -> None:
+        assert _parse_bool_string(value) is None
+
+    def test_non_string_input_is_stringified(self) -> None:
+        # ``str(1).lower() == "1"`` -> True; ``str(7).lower() == "7"`` -> None.
+        assert _parse_bool_string(1) is True
+        assert _parse_bool_string(0) is False
+        assert _parse_bool_string(7) is None
+
+
+class TestStringToBoolExpr:
+    def test_full_table(self) -> None:
+        df = pl.DataFrame(
+            {"s": ["true", "FALSE", " yes", "n", "0", "maybe", None]},
+            schema={"s": pl.Utf8},
+        )
+        result = df.select(_string_to_bool_expr(pl.col("s")).alias("v"))
+        assert result.schema["v"] == pl.Boolean
+        assert result["v"].to_list() == [True, False, True, False, False, None, None]
+
+    def test_empty_frame_keeps_dtype(self) -> None:
+        df = pl.DataFrame({"s": []}, schema={"s": pl.Utf8})
+        result = df.select(_string_to_bool_expr(pl.col("s")).alias("v"))
+        assert result.schema["v"] == pl.Boolean
+        assert result.height == 0
+
+
+class TestStringToBoolExprStrict:
+    def test_string_valid(self) -> None:
+        df = pl.DataFrame({"s": ["true", "FALSE", " yes", "n", "0", None]}, schema={"s": pl.Utf8})
+        result = df.select(_string_to_bool_expr_strict(pl.col("s")).alias("v"))
+        assert result.schema["v"] == pl.Boolean
+        assert result["v"].to_list() == [True, False, True, False, False, None]
+
+    def test_raises_on_unrecognised_string(self) -> None:
+        df = pl.DataFrame({"s": ["true", "maybe", None]}, schema={"s": pl.Utf8})
+        with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+            df.select(_string_to_bool_expr_strict(pl.col("s")).alias("v"))
+
+    def test_int_source_uses_native_cast(self) -> None:
+        # int -> bool: nonzero -> True, 0 -> False, null -> null (no raise; Spark-compatible).
+        df = pl.DataFrame({"a": [1, 2, 0, None]}, schema={"a": pl.Int64})
+        result = df.select(_string_to_bool_expr_strict(pl.col("a")).alias("v"))
+        assert result.schema["v"] == pl.Boolean
+        assert result["v"].to_list() == [True, True, False, None]
+
+    def test_float_source_uses_native_cast(self) -> None:
+        df = pl.DataFrame({"a": [1.5, 0.0, -2.0, None]}, schema={"a": pl.Float64})
+        result = df.select(_string_to_bool_expr_strict(pl.col("a")).alias("v"))
+        assert result.schema["v"] == pl.Boolean
+        assert result["v"].to_list() == [True, False, True, None]
+
+    def test_empty_frame_keeps_dtype(self) -> None:
+        df = pl.DataFrame({"s": []}, schema={"s": pl.Utf8})
+        result = df.select(_string_to_bool_expr_strict(pl.col("s")).alias("v"))
+        assert result.schema["v"] == pl.Boolean
+        assert result.height == 0

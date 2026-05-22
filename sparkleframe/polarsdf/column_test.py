@@ -675,3 +675,123 @@ class TestUnsupportedComplexComparisons:
         df = DataFrame(pl.DataFrame({"a": [[1, 2], [3, 4]], "b": [[1, 2], [7, 8]]}))
         result = df.select((col("a") == col("b")).alias("r")).to_native_df()
         assert result.to_series().to_list() == [True, False]
+
+
+class TestCastParityWithSpark:
+    """
+    Parity coverage for ``Column.cast`` and ``Column.try_cast`` against real Spark 4.
+
+    Spark 4 enables ``spark.sql.ansi.enabled`` by default, so ``cast`` of a malformed
+    value raises ``CAST_INVALID_INPUT`` while ``try_cast`` returns ``NULL``;
+    sparkleframe matches both behaviours.
+    """
+
+    @staticmethod
+    def _make_dfs(spark, rows, spark_type):
+        schema = SparkStructType([SparkStructField("s", spark_type)])
+        spark_df = spark.createDataFrame(rows, schema)
+        sparkle_df = DataFrame(pl.from_arrow(spark_df.toArrow()))
+        return spark_df, sparkle_df
+
+    @pytest.mark.parametrize(
+        "sparkle_dtype, spark_dtype",
+        [
+            (IntegerType(), SparkIntegerType()),
+            (LongType(), SparkLongType()),
+            (DoubleType(), SparkDoubleType()),
+            (FloatType(), SparkFloatType()),
+        ],
+    )
+    def test_cast_string_to_numeric_valid(self, spark, sparkle_dtype, spark_dtype):
+        rows = [("123",), ("-7",), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkStringType())
+        spark_result = spark_df.select(F.col("s").cast(spark_dtype).alias("v"))
+        sparkle_result = sparkle_df.select(col("s").cast(sparkle_dtype).alias("v"))
+        assert_sparkle_spark_frame_are_equal(sparkle_result, spark_result)
+
+    @pytest.mark.parametrize(
+        "sparkle_dtype, spark_dtype",
+        [
+            (IntegerType(), SparkIntegerType()),
+            (LongType(), SparkLongType()),
+            (DoubleType(), SparkDoubleType()),
+        ],
+    )
+    def test_try_cast_string_to_numeric_invalid_returns_null(self, spark, sparkle_dtype, spark_dtype):
+        rows = [("123",), ("Bob",), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkStringType())
+        spark_result = spark_df.select(F.col("s").try_cast(spark_dtype).alias("v"))
+        sparkle_result = sparkle_df.select(col("s").try_cast(sparkle_dtype).alias("v"))
+        assert_sparkle_spark_frame_are_equal(sparkle_result, spark_result)
+
+    @pytest.mark.parametrize(
+        "sparkle_dtype, spark_dtype",
+        [
+            (IntegerType(), SparkIntegerType()),
+            (LongType(), SparkLongType()),
+            (DoubleType(), SparkDoubleType()),
+        ],
+    )
+    def test_cast_string_to_numeric_invalid_raises_like_spark_ansi(self, spark, sparkle_dtype, spark_dtype):
+        """Both Spark 4 (ANSI default) and sparkleframe raise when an invalid string can't be cast."""
+        rows = [("123",), ("Bob",), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkStringType())
+        with pytest.raises(Exception):
+            spark_df.select(F.col("s").cast(spark_dtype).alias("v")).collect()
+        with pytest.raises(Exception):
+            sparkle_df.select(col("s").cast(sparkle_dtype).alias("v")).to_native_df()
+
+    def test_cast_string_to_boolean_invalid_raises_like_spark_ansi(self, spark):
+        """Same parity for boolean casts: Spark and sparkleframe both raise on 'maybe'."""
+        rows = [("true",), ("maybe",), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkStringType())
+        with pytest.raises(Exception):
+            spark_df.select(F.col("s").cast(SparkBooleanType()).alias("v")).collect()
+        with pytest.raises(Exception):
+            sparkle_df.select(col("s").cast(BooleanType()).alias("v")).to_native_df()
+
+    def test_cast_int_to_boolean_parity(self, spark):
+        """Spark casts nonzero int -> True, 0 -> False; no raise. Sparkleframe must match."""
+        rows = [(1,), (2,), (0,), (-1,), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkIntegerType())
+        spark_result = spark_df.select(F.col("s").cast(SparkBooleanType()).alias("v"))
+        sparkle_result = sparkle_df.select(col("s").cast(BooleanType()).alias("v"))
+        assert_sparkle_spark_frame_are_equal(sparkle_result, spark_result)
+
+    def test_cast_double_to_boolean_parity(self, spark):
+        rows = [(1.5,), (0.0,), (-3.2,), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkDoubleType())
+        spark_result = spark_df.select(F.col("s").cast(SparkBooleanType()).alias("v"))
+        sparkle_result = sparkle_df.select(col("s").cast(BooleanType()).alias("v"))
+        assert_sparkle_spark_frame_are_equal(sparkle_result, spark_result)
+
+    def test_try_cast_string_to_boolean_parity(self, spark):
+        # Only test the literals Spark actually accepts for string -> boolean.
+        rows = [("true",), ("TRUE",), ("false",), ("FALSE",), ("t",), ("f",), ("1",), ("0",), ("y",), ("n",), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkStringType())
+        spark_result = spark_df.select(F.col("s").try_cast(SparkBooleanType()).alias("v"))
+        sparkle_result = sparkle_df.select(col("s").try_cast(BooleanType()).alias("v"))
+        assert_sparkle_spark_frame_are_equal(sparkle_result, spark_result)
+
+    def test_cast_string_to_boolean_valid(self, spark):
+        # Valid literals only -- avoids the ANSI raise divergence above.
+        rows = [("true",), ("false",), ("t",), ("f",), ("1",), ("0",), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkStringType())
+        spark_result = spark_df.select(F.col("s").cast(SparkBooleanType()).alias("v"))
+        sparkle_result = sparkle_df.select(col("s").cast(BooleanType()).alias("v"))
+        assert_sparkle_spark_frame_are_equal(sparkle_result, spark_result)
+
+    @pytest.mark.parametrize(
+        "sparkle_dtype, spark_dtype",
+        [
+            (StringType(), SparkStringType()),
+            (DoubleType(), SparkDoubleType()),
+            (LongType(), SparkLongType()),
+        ],
+    )
+    def test_cast_int_to_other_parity(self, spark, sparkle_dtype, spark_dtype):
+        rows = [(1,), (-5,), (0,), (None,)]
+        spark_df, sparkle_df = self._make_dfs(spark, rows, SparkIntegerType())
+        spark_result = spark_df.select(F.col("s").cast(spark_dtype).alias("v"))
+        sparkle_result = sparkle_df.select(col("s").cast(sparkle_dtype).alias("v"))
+        assert_sparkle_spark_frame_are_equal(sparkle_result, spark_result)

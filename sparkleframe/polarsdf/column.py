@@ -9,8 +9,11 @@ from sparkleframe.polarsdf.column_helpers import (
     _apply_getitem_key,
     _equality_comparison_expr,
     _ordering_comparison_expr,
+    _parse_bool_string,
     _resolve_expr_output_dtype,
     _spark_numeric_widened_type,
+    _string_to_bool_expr,
+    _string_to_bool_expr_strict,
     _validated_arithmetic_expr,
     _validated_float64_expr,
     _validated_pow_expr,
@@ -247,6 +250,14 @@ class Column:
         """
         Mimics pyspark.sql.Column.cast using Polars' cast().
 
+        Follows Spark 4's default ``spark.sql.ansi.enabled=true`` semantics: raises
+        ``CAST_INVALID_INPUT`` on malformed input (e.g. ``"Bob".cast(int)``,
+        ``"maybe".cast(boolean)``) instead of silently returning null. Use
+        :meth:`try_cast` for the lenient variant that returns null.
+
+        Numeric / boolean coercions that Spark accepts (e.g. ``int -> bool`` via
+        nonzero -> true) still flow through Polars' native cast.
+
         Args:
             data_type (DataType): A sparkleframe-defined DataType object.
 
@@ -255,24 +266,15 @@ class Column:
         """
         if not isinstance(data_type, DataType):
             raise TypeError(f"cast() expects a DataType, got {type(data_type)}")
+        native = self.to_native()
         if isinstance(data_type, BooleanType):
-            # Polars does not support strict Utf8->Boolean casting directly.
-            # Parse common Spark-like boolean string values first.
-            base = self.to_native()
-            string_expr = base.cast(pl.String, strict=False).str.strip_chars().str.to_lowercase()
-            parsed_bool = (
-                pl.when(base.is_null())
-                .then(pl.lit(None, dtype=pl.Boolean))
-                .when(string_expr.is_in(["true", "t", "1", "yes", "y"]))
-                .then(pl.lit(True))
-                .when(string_expr.is_in(["false", "f", "0", "no", "n"]))
-                .then(pl.lit(False))
-                .otherwise(pl.lit(None, dtype=pl.Boolean))
-            )
-            return Column(parsed_bool)
-        # Use Polars `strict=False` so invalid values become null per row, like Spark 4
-        # (ANSI) casts. `strict=True` in Polars fails the whole expression for any bad row.
-        return Column(self.to_native().cast(data_type.to_native(), strict=False))
+            # The helper dispatches at runtime: string source -> strict literal
+            # parse (CAST_INVALID_INPUT on unknown); numeric / bool source -> native
+            # Polars cast (which already matches Spark for those types).
+            return Column(_string_to_bool_expr_strict(native))
+        # ``strict=True`` mirrors Spark 4 ANSI: Polars raises (wrapped) when any
+        # row fails the cast, where Spark raises ``CAST_INVALID_INPUT``.
+        return Column(native.cast(data_type.to_native(), strict=True))
 
     def try_cast(self, data_type: Union[DataType, str]) -> "Column":
         """
@@ -288,7 +290,6 @@ class Column:
         Returns:
             Column: A new Column with the non-strict cast applied.
         """
-        simple_type_name = None
         if isinstance(data_type, DataType):
             simple_type_name = data_type.simpleString().lower()
             native = data_type.to_native()
@@ -302,34 +303,9 @@ class Column:
             raise TypeError(f"try_cast() expects a DataType or str, got {type(data_type)}")
 
         if simple_type_name in {"bool", "boolean"}:
-            true_values = {"true", "t", "1", "yes", "y"}
-            false_values = {"false", "f", "0", "no", "n"}
-
-            def _parse_bool(value: Any):
-                if value is None:
-                    return None
-                lowered = str(value).strip().lower()
-                if lowered in true_values:
-                    return True
-                if lowered in false_values:
-                    return False
-                return None
-
             if isinstance(self.expr, pl.Series):
-                return Column(self.expr.map_elements(_parse_bool, return_dtype=pl.Boolean))
-
-            base = self.to_native()
-            string_expr = base.cast(pl.String, strict=False).str.strip_chars().str.to_lowercase()
-            parsed_bool = (
-                pl.when(base.is_null())
-                .then(pl.lit(None, dtype=pl.Boolean))
-                .when(string_expr.is_in(list(true_values)))
-                .then(pl.lit(True))
-                .when(string_expr.is_in(list(false_values)))
-                .then(pl.lit(False))
-                .otherwise(pl.lit(None, dtype=pl.Boolean))
-            )
-            return Column(parsed_bool)
+                return Column(self.expr.map_elements(_parse_bool_string, return_dtype=pl.Boolean))
+            return Column(_string_to_bool_expr(self.to_native()))
         return Column(self.to_native().cast(native, strict=False))
 
     def isin(self, *values) -> Column:

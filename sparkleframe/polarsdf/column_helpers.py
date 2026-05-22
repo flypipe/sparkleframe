@@ -394,6 +394,84 @@ def _coerce_expr_order_datetime(e: pl.Expr) -> pl.Expr:
     return e.map_batches(_series_coerce_order_datetime, return_dtype=pl.Datetime("us"))
 
 
+_BOOL_TRUE_STRINGS = frozenset({"true", "t", "1", "yes", "y"})
+_BOOL_FALSE_STRINGS = frozenset({"false", "f", "0", "no", "n"})
+
+
+def _parse_bool_string(value: Any) -> Optional[bool]:
+    """Per-row Spark-like string -> bool: ``None`` for null / unrecognised values."""
+    if value is None:
+        return None
+    lowered = str(value).strip().lower()
+    if lowered in _BOOL_TRUE_STRINGS:
+        return True
+    if lowered in _BOOL_FALSE_STRINGS:
+        return False
+    return None
+
+
+def _string_to_bool_expr(expr: pl.Expr) -> pl.Expr:
+    """
+    Spark-like ``string -> Boolean`` coercion as a Polars expression: nulls stay null,
+    common truthy / falsy literals (``true/false``, ``t/f``, ``1/0``, ``yes/no``,
+    ``y/n``; case-insensitive, trimmed) map to ``True`` / ``False``, anything else
+    becomes ``None``. Polars has no built-in strict ``Utf8 -> Boolean`` cast, so we
+    parse manually with a ``when().then()`` ladder.
+
+    This is the *lenient* helper used by :meth:`Column.try_cast`. For Spark 4 ANSI
+    ``cast`` semantics (raise on malformed input), use :func:`_string_to_bool_expr_strict`.
+    """
+    string_expr = expr.cast(pl.String, strict=False).str.strip_chars().str.to_lowercase()
+    return (
+        pl.when(expr.is_null())
+        .then(pl.lit(None, dtype=pl.Boolean))
+        .when(string_expr.is_in(list(_BOOL_TRUE_STRINGS)))
+        .then(pl.lit(True))
+        .when(string_expr.is_in(list(_BOOL_FALSE_STRINGS)))
+        .then(pl.lit(False))
+        .otherwise(pl.lit(None, dtype=pl.Boolean))
+    )
+
+
+def _series_to_bool_strict(s: pl.Series) -> pl.Series:
+    """
+    Per-batch Spark-like strict ``-> Boolean`` cast. Strings must be one of the
+    recognised literals (case-insensitive, trimmed) or the batch raises
+    ``CAST_INVALID_INPUT``. Numeric / boolean inputs use Polars' native cast
+    (nonzero -> true), matching Spark 4 ANSI behaviour for those source types.
+    """
+    if s.dtype not in (pl.Utf8, pl.String):
+        return s.cast(pl.Boolean, strict=True)
+    out: list[Optional[bool]] = []
+    for v in s.to_list():
+        if v is None:
+            out.append(None)
+            continue
+        lowered = str(v).strip().lower()
+        if lowered in _BOOL_TRUE_STRINGS:
+            out.append(True)
+        elif lowered in _BOOL_FALSE_STRINGS:
+            out.append(False)
+        else:
+            raise ValueError(
+                f'[CAST_INVALID_INPUT] The value {v!r} of the type "STRING" cannot be cast to '
+                f'"BOOLEAN" because it is malformed. Use try_cast to tolerate malformed input and '
+                f"return NULL instead."
+            )
+    return pl.Series(s.name, out, dtype=pl.Boolean)
+
+
+def _string_to_bool_expr_strict(expr: pl.Expr) -> pl.Expr:
+    """
+    Spark 4 ANSI-style strict ``-> Boolean`` cast: raises ``CAST_INVALID_INPUT`` for
+    any unrecognised string literal (mirroring Spark's default behaviour). Numeric /
+    bool source dtypes fall through to Polars' native cast (which Spark accepts).
+    For ``try_cast`` (lenient, returns ``None`` on malformed input) use
+    :func:`_string_to_bool_expr`.
+    """
+    return expr.map_batches(_series_to_bool_strict, return_dtype=pl.Boolean)
+
+
 def _numeric_compare_operands(left: pl.Expr, right: pl.Expr) -> tuple[pl.Expr, pl.Expr, pl.Expr, pl.Expr]:
     """
     Build the four operand expressions sparkleframe uses for Spark-like cross-type
