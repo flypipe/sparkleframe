@@ -7,14 +7,18 @@ import polars as pl
 
 from sparkleframe.polarsdf.column_helpers import (
     _apply_getitem_key,
+    _coerce_mixed_arithmetic_operands,
     _equality_comparison_expr,
+    _has_decimal_operand,
     _ordering_comparison_expr,
     _parse_bool_string,
     _resolve_expr_output_dtype,
+    _spark_decimal_div_result_type,
     _spark_numeric_widened_type,
     _string_to_bool_expr,
     _string_to_bool_expr_strict,
     _validated_arithmetic_expr,
+    _validated_decimal_div_expr,
     _validated_float64_expr,
     _validated_pow_expr,
 )
@@ -36,17 +40,23 @@ class Column:
         else:
             self.expr = expr_or_name
 
-    def _spark_arithmetic_operands(self, other: Any) -> tuple[pl.Expr, pl.Expr]:
+    def _spark_arithmetic_operands(self, other: Any, op: str = "+") -> tuple[pl.Expr, pl.Expr]:
         """
         Spark-like type promotion for ``+``, ``-``, ``*``.
         Rejects non-numeric types; widens to the larger numeric type when
         operands differ (e.g. int + long -> long); preserves the type when
         both sides match (e.g. int + int -> int).
+
+        Cross-type coercion (numeric + string, int + date) is attempted before
+        per-operand validation so mixed-type operations match Spark behaviour.
         """
         left = self.to_native()
         right = _to_expr(other)
         ld = _resolve_expr_output_dtype(left)
         rd = _resolve_expr_output_dtype(right)
+        coerced = _coerce_mixed_arithmetic_operands(left, right, ld, rd, op)
+        if coerced is not None:
+            return coerced
         left = _validated_arithmetic_expr(left, ld)
         right = _validated_arithmetic_expr(right, rd)
         if ld is not None and rd is not None:
@@ -58,13 +68,21 @@ class Column:
 
     def _spark_float64_operands(self, other: Any) -> tuple[pl.Expr, pl.Expr]:
         """
-        For ``/`` which always promotes to Float64 in Spark and rejects
-        non-numeric operands (string, boolean, binary, date/timestamp, complex).
+        For ``/`` which promotes to Float64 in Spark for most types, but preserves
+        Decimal arithmetic when at least one operand is Decimal.
+        Cross-type numeric+string coercion is applied first.
         """
         left = self.to_native()
         right = _to_expr(other)
         ld = _resolve_expr_output_dtype(left)
         rd = _resolve_expr_output_dtype(right)
+        coerced = _coerce_mixed_arithmetic_operands(left, right, ld, rd, "/")
+        if coerced is not None:
+            return coerced[0].cast(pl.Float64, strict=False), coerced[1].cast(pl.Float64, strict=False)
+        if _has_decimal_operand(ld, rd):
+            left = _validated_decimal_div_expr(left, ld)
+            right = _validated_decimal_div_expr(right, rd)
+            return left, right
         return _validated_float64_expr(left, ld), _validated_float64_expr(right, rd)
 
     def _spark_pow_operands(self, other: Any) -> tuple[pl.Expr, pl.Expr]:
@@ -82,20 +100,25 @@ class Column:
     def __mul__(self, other):
         if isinstance(other, int) and not isinstance(other, bool):
             return Column(self.to_native() * _to_expr(other))
-        left, right = self._spark_arithmetic_operands(other)
+        left, right = self._spark_arithmetic_operands(other, op="*")
         return Column(left * right)
 
     def __add__(self, other):
-        left, right = self._spark_arithmetic_operands(other)
+        left, right = self._spark_arithmetic_operands(other, op="+")
         return Column(left + right)
 
     def __sub__(self, other):
-        left, right = self._spark_arithmetic_operands(other)
+        left, right = self._spark_arithmetic_operands(other, op="-")
         return Column(left - right)
 
     def __truediv__(self, other):
         left, right = self._spark_float64_operands(other)
-        return Column(left / right)  # both sides already Float64
+        result = left / right
+        ld = _resolve_expr_output_dtype(self.to_native())
+        rd = _resolve_expr_output_dtype(_to_expr(other))
+        if _has_decimal_operand(ld, rd):
+            result = result.cast(_spark_decimal_div_result_type(ld, rd), strict=False)
+        return Column(result)
 
     def __radd__(self, other):
         right_expr = self.to_native()

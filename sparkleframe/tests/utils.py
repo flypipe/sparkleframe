@@ -84,6 +84,21 @@ def _remove_nulls_from_dict_list(data):
     return [clean_value(d) for d in data]
 
 
+_FLOAT_SIG_DIGITS = 12
+
+
+def _round_float_sigfigs(f: float) -> float:
+    """Round a float to ``_FLOAT_SIG_DIGITS`` significant figures.
+
+    This absorbs last-ULP differences between JVM (Spark) and Rust (Polars)
+    float64 math while still catching real divergences.
+    """
+    if f == 0.0:
+        return 0.0
+    magnitude = math.floor(math.log10(abs(f))) + 1
+    return round(f, _FLOAT_SIG_DIGITS - magnitude)
+
+
 def _normalize_compare_value(value: Any) -> Any:
     """
     Convert a Spark/Polars record value into a JSON-friendly form that preserves the
@@ -108,9 +123,7 @@ def _normalize_compare_value(value: Any) -> Any:
     if isinstance(value, (bytes, bytearray)):
         return base64.b64encode(bytes(value)).decode("ascii")
     if isinstance(value, Decimal):
-        # Compare decimals by numeric value; Spark widens scale during arithmetic while
-        # Polars keeps the input scale, so a string compare would diverge spuriously.
-        return float(value)
+        return _round_float_sigfigs(float(value))
     if isinstance(value, timedelta):
         return value.total_seconds()
     if isinstance(value, datetime):
@@ -122,13 +135,13 @@ def _normalize_compare_value(value: Any) -> Any:
         f = float(value)
         if math.isnan(f):
             return None
-        return f
+        return _round_float_sigfigs(f)
     if isinstance(value, (np.integer,)):
         return int(value)
     if isinstance(value, float):
         if math.isnan(value):
             return None
-        return value
+        return _round_float_sigfigs(value)
     if isinstance(value, int):
         return value
     return value

@@ -340,10 +340,16 @@ class TestOrderingComparisonExpr:
         result = df.select(_ordering_comparison_expr(pl.col("a"), pl.col("b"), "lt").alias("r"))
         assert result["r"].to_list() == [True, False, False]
 
-    def test_cross_type_int_vs_string_known_dtypes(self) -> None:
-        # Spark coerces "2" to 2 when compared with an Int column: numeric branch wins.
+    def test_cross_type_int_vs_string_col_col_raises(self) -> None:
+        # Spark 4 rejects col(int) vs col(string) column-column comparisons.
         df = pl.DataFrame({"a": [1, 2, 3], "b": ["2", "2", "2"]}, schema={"a": pl.Int64, "b": pl.Utf8})
-        result = df.select(_ordering_comparison_expr(pl.col("a"), pl.col("b"), "le").alias("r"))
+        with pytest.raises(TypeError, match="data type mismatch"):
+            df.select(_ordering_comparison_expr(pl.col("a"), pl.col("b"), "le").alias("r"))
+
+    def test_cross_type_int_vs_string_literal_coerces(self) -> None:
+        # Spark coerces lit('2') to 2 when compared with an Int column: numeric branch wins.
+        df = pl.DataFrame({"a": [1, 2, 3]}, schema={"a": pl.Int64})
+        result = df.select(_ordering_comparison_expr(pl.col("a"), pl.lit("2"), "le").alias("r"))
         assert result["r"].to_list() == [True, True, False]
 
     def test_string_branch_when_both_string_dtype(self) -> None:
@@ -369,11 +375,17 @@ class TestEqualityComparisonExpr:
         result = df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=False).alias("r"))
         assert result["r"].to_list() == [False, True, False]
 
-    def test_cross_type_int_vs_string_known_dtypes(self) -> None:
-        # Spark: col(int) == lit('1') -> numeric coercion succeeds.
+    def test_cross_type_int_vs_string_col_col_raises(self) -> None:
+        # Spark 4 rejects col(int) vs col(string) column-column comparisons.
         df = pl.DataFrame({"a": [1, 2, 3], "b": ["1", "2", "4"]}, schema={"a": pl.Int64, "b": pl.Utf8})
-        result = df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=True).alias("r"))
-        assert result["r"].to_list() == [True, True, False]
+        with pytest.raises(TypeError, match="data type mismatch"):
+            df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=True).alias("r"))
+
+    def test_cross_type_int_vs_string_literal_coerces(self) -> None:
+        # Spark coerces lit('1') to 1 when compared with an Int column: numeric branch wins.
+        df = pl.DataFrame({"a": [1, 2, 3]}, schema={"a": pl.Int64})
+        result = df.select(_equality_comparison_expr(pl.col("a"), pl.lit("1"), equal=True).alias("r"))
+        assert result["r"].to_list() == [True, False, False]
 
     def test_complex_equal_uses_native_polars(self) -> None:
         # ==/!= on plain List is supported via native Polars; helper must NOT raise.

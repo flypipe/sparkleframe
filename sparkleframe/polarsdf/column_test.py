@@ -1,5 +1,7 @@
+import itertools
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Optional
 
 import polars as pl
 import pyspark.sql.functions as F
@@ -390,10 +392,11 @@ class TestColumnComparisonCoercion:
         result = self._eval(col("s") == lit(1), df)
         assert result.to_list() == [True, False, False]
 
-    def test_eq_fallback_string_when_either_not_numeric(self) -> None:
+    def test_eq_cross_type_col_col_raises(self) -> None:
+        """Spark 4 raises AnalysisException for col(string) == col(int)."""
         df = pl.DataFrame({"a": [1, 1], "t": ["x", "1"]})
-        r = self._eval(col("t") == col("a"), df)
-        assert r.to_list() == [False, True]
+        with pytest.raises(TypeError, match="data type mismatch"):
+            self._eval(col("t") == col("a"), df)
 
     def test_ne_mixed_complements_eq(self) -> None:
         df = pl.DataFrame({"a": [1, 2]})
@@ -484,6 +487,46 @@ _COMPARISON_OPS = [
     (">", lambda a, b: a > b),
     (">=", lambda a, b: a >= b),
 ]
+
+_MIXED_TYPE_PAIRS = [
+    (f"{left[0]}_x_{right[0]}", left[1], left[2], right[1], right[2])
+    for left, right in itertools.combinations(_ARITHMETIC_TYPE_FIXTURES, 2)
+]
+
+
+# Known parity gaps — see docs/known_gaps.md for full details and fix paths.
+
+_MIXED_ARITH_STRING_COERCION_PAIRS = {
+    "float_x_string",
+    "double_x_string",
+    "string_x_decimal",
+}
+_MIXED_ARITH_STRING_OPS = {"+", "-", "*", "/"}
+
+_MIXED_ARITH_DATE_INT_PAIRS = {
+    "byte_x_date",
+    "short_x_date",
+    "int_x_date",
+}
+
+
+def _mixed_pair_xfail_reason(pair_label: str, op_name: str) -> Optional[str]:
+    """Return an xfail reason for known gaps, or ``None`` if the test should run.
+
+    See ``docs/known_gaps.md`` for the full catalogue of gaps and possible fix paths.
+    """
+    left, _, right = pair_label.partition("_x_")
+    nested_ordering_ops = {"<", "<=", ">", ">="}
+    nested_labels = {"array_int", "struct"}
+    if op_name in nested_ordering_ops and (left in nested_labels or right in nested_labels):
+        return "Polars does not support <, <=, >, >= on List / Struct dtypes"
+    if "map_str_int" in (left, right):
+        return "Polars stores maps as List(Struct) -- indistinguishable from arrays"
+    if pair_label in _MIXED_ARITH_STRING_COERCION_PAIRS and op_name in _MIXED_ARITH_STRING_OPS:
+        return "dtype unknown at build time -- see docs/known_gaps.md 'Mixed-type column arithmetic'"
+    if pair_label in _MIXED_ARITH_DATE_INT_PAIRS and op_name == "+":
+        return "dtype unknown at build time -- see docs/known_gaps.md 'Mixed-type column arithmetic'"
+    return None
 
 
 _MAP_COMPARISON_GAPS = {
@@ -635,6 +678,81 @@ class TestArithmeticParityWithSpark:
         sf_result = sparkle_df.select(sf_op(PF.col("a")).alias("result"))
 
         assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    @staticmethod
+    def _make_dfs_mixed(spark, left_spark_type, left_values, right_spark_type, right_values):
+        schema = SparkStructType(
+            [
+                SparkStructField("a", left_spark_type),
+                SparkStructField("b", right_spark_type),
+            ]
+        )
+        rows = list(zip(left_values, right_values))
+        spark_df = spark.createDataFrame(rows, schema)
+        sparkle_df = DataFrame(pl.from_arrow(spark_df.toArrow()))
+        return spark_df, sparkle_df
+
+    @pytest.mark.parametrize(
+        "pair_label, left_spark_type, left_values, right_spark_type, right_values",
+        _MIXED_TYPE_PAIRS,
+        ids=[p[0] for p in _MIXED_TYPE_PAIRS],
+    )
+    @pytest.mark.parametrize("op_name, op_func", _ARITHMETIC_OPS)
+    def test_arithmetic_col_col_mixed_types(
+        self, spark, pair_label, left_spark_type, left_values, right_spark_type, right_values, op_name, op_func
+    ):
+        reason = _mixed_pair_xfail_reason(pair_label, op_name)
+        if reason:
+            pytest.xfail(reason)
+
+        spark_df, sparkle_df = self._make_dfs_mixed(
+            spark, left_spark_type, left_values, right_spark_type, right_values
+        )
+
+        spark_raised = False
+        try:
+            spark_result = spark_df.select(op_func(F.col("a"), F.col("b")).alias("result"))
+            spark_result.collect()
+        except Exception:
+            spark_raised = True
+
+        if spark_raised:
+            with pytest.raises(Exception):
+                sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result")).to_native_df()
+        else:
+            sf_result = sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result"))
+            assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    @pytest.mark.parametrize(
+        "pair_label, left_spark_type, left_values, right_spark_type, right_values",
+        _MIXED_TYPE_PAIRS,
+        ids=[p[0] for p in _MIXED_TYPE_PAIRS],
+    )
+    @pytest.mark.parametrize("op_name, op_func", _COMPARISON_OPS)
+    def test_comparison_col_col_mixed_types(
+        self, spark, pair_label, left_spark_type, left_values, right_spark_type, right_values, op_name, op_func
+    ):
+        reason = _mixed_pair_xfail_reason(pair_label, op_name)
+        if reason:
+            pytest.xfail(reason)
+
+        spark_df, sparkle_df = self._make_dfs_mixed(
+            spark, left_spark_type, left_values, right_spark_type, right_values
+        )
+
+        spark_raised = False
+        try:
+            spark_result = spark_df.select(op_func(F.col("a"), F.col("b")).alias("result"))
+            spark_result.collect()
+        except Exception:
+            spark_raised = True
+
+        if spark_raised:
+            with pytest.raises(Exception):
+                sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result")).to_native_df()
+        else:
+            sf_result = sparkle_df.select(op_func(PF.col("a"), PF.col("b")).alias("result"))
+            assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
 
 
 class TestUnsupportedComplexComparisons:
