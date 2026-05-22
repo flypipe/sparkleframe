@@ -1,8 +1,18 @@
+import os
+import re
 import subprocess
 import requests
 import base64
 
-def get_github_file_content(branch, file_path, owner="flypipe", repo="sparkleframe"):
+RELEASE_BRANCH_RE = re.compile(r'^origin/release/(\d+)\.(\d+)\.(\d+)$')
+
+
+def _release_version_key(branch):
+    match = RELEASE_BRANCH_RE.match(branch)
+    return tuple(int(part) for part in match.groups()) if match else (-1, -1, -1)
+
+
+def get_github_file_content(branch, file_path, owner="flypipe", repo="sparkleframe", token=None):
     """
     Fetches the content of a file from a specific branch in a GitHub repo.
 
@@ -11,13 +21,18 @@ def get_github_file_content(branch, file_path, owner="flypipe", repo="sparklefra
         repo (str): Repository name.
         branch (str): Branch name.
         file_path (str): Path to the file within the repo.
-        token (str, optional): GitHub personal access token for private repos or higher rate limits.
+        token (str, optional): GitHub token for authenticated requests (higher rate limits and
+            access to private repos). Falls back to the ``GITHUB_TOKEN`` environment variable
+            when not provided.
 
     Returns:
         str: Content of the file as a string.
     """
     url = (f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}")
     headers = {'Accept': 'application/vnd.github.v3+json'}
+    token = token or os.environ.get('GITHUB_TOKEN')
+    if token:
+        headers['Authorization'] = f'Bearer {token}'
     params = {'ref': branch}
     response = requests.get(url, headers=headers, params=params)
     if response.status_code == 200:
@@ -34,10 +49,10 @@ def get_release_branches():
         .split()
     )
     release_branches = [
-        branch for branch in all_branches if branch.startswith("origin/release/")
+        branch for branch in all_branches if RELEASE_BRANCH_RE.match(branch)
     ]
 
-    return sorted(release_branches)
+    return sorted(release_branches, key=_release_version_key)[-10:]
 
 def get_commit_list(from_branch=None, to_branch=None):
     to_branch=to_branch or "HEAD"
@@ -64,7 +79,7 @@ def get_commit_message(commit_id):
 def get_changelog_latest_branch_release():
     release_branches = get_release_branches()
     if release_branches:
-        latest_version_branch_name = max(release_branches)
+        latest_version_branch_name = release_branches[-1]
         lines = get_github_file_content(latest_version_branch_name.replace("origin/", ""), "changelog.md", owner="flypipe", repo="sparkleframe")
         lines = lines.splitlines()[2:]
         lines = [l for l in lines if l.strip() != ""]

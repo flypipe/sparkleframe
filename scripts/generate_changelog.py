@@ -28,7 +28,7 @@ def generate_changelog(to_branch: str=None):
         # Unable to find a previous release
         commit_list = get_commit_list(to_branch=to_branch)
     else:
-        latest_version_branch_name = max(release_branches)
+        latest_version_branch_name = release_branches[-1]
         commit_list = get_commit_list(from_branch=latest_version_branch_name, to_branch=to_branch)
 
     issues = {}
