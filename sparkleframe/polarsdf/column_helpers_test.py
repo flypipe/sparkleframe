@@ -21,22 +21,37 @@ from sparkleframe.polarsdf.column_helpers import (
     _assert_arithmetic_compatible,
     _assert_arithmetic_series,
     _assert_complex_compare_supported,
+    _assert_spark_compare_compatible,
+    _assert_spark_compare_compatible_eager,
     _cmp_exprs,
+    _coerce_mixed_arithmetic_operands,
+    _compare_series,
     _equality_comparison_expr,
+    _expr_is_literal,
     _format_unsupported_complex_compare,
+    _has_decimal_operand,
     _is_complex_polars_dtype,
+    _is_date_polars_dtype,
+    _is_integer_polars_dtype,
     _is_numeric_polars_dtype,
+    _is_string_polars_dtype,
     _looks_like_map_dtype,
+    _needs_date_datetime_promotion,
     _numeric_compare_operands,
     _ordering_comparison_expr,
     _parse_bool_string,
     _parse_datetime_string_safe,
+    _polars_schema_for,
+    _promote_date_to_datetime_pair,
+    _spark_compare_group,
+    _spark_decimal_div_result_type,
     _spark_numeric_widened_type,
     _string_to_bool_expr,
     _string_to_bool_expr_strict,
     _validate_and_cast_float64_lenient,
     _validate_and_cast_float64_strict,
     _validated_arithmetic_expr,
+    _validated_decimal_div_expr,
     _validated_float64_expr,
     _validated_pow_expr,
 )
@@ -483,3 +498,269 @@ class TestStringToBoolExprStrict:
         result = df.select(_string_to_bool_expr_strict(pl.col("s")).alias("v"))
         assert result.schema["v"] == pl.Boolean
         assert result.height == 0
+
+
+class TestSparkCompareGroup:
+    @pytest.mark.parametrize(
+        "dt, expected",
+        [
+            (pl.Int64, "integer"),
+            (pl.UInt8, "integer"),
+            (pl.Float32, "float"),
+            (pl.Float64, "float"),
+            (pl.Decimal(10, 2), "decimal"),
+            (pl.Datetime("us"), "temporal"),
+            (pl.Duration("ms"), "temporal"),
+            (pl.Date, "temporal"),
+            (pl.Utf8, "string"),
+            (pl.String, "string"),
+            (pl.Boolean, "boolean"),
+            (pl.Binary, "binary"),
+            (pl.List(pl.Int64), "complex"),
+            (pl.Struct([pl.Field("a", pl.Int64)]), "complex"),
+            (None, None),
+        ],
+    )
+    def test_group_mapping(self, dt: Optional[pl.DataType], expected: Optional[str]) -> None:
+        assert _spark_compare_group(dt) == expected
+
+
+class TestExprIsLiteral:
+    def test_literal_returns_true(self) -> None:
+        assert _expr_is_literal(pl.lit(42)) is True
+
+    def test_column_returns_false(self) -> None:
+        assert _expr_is_literal(pl.col("a")) is False
+
+
+class TestAssertSparkCompareCompatibleEager:
+    def test_compatible_pair_passes(self) -> None:
+        _assert_spark_compare_compatible_eager("eq", pl.Int64, pl.Float64)
+
+    def test_incompatible_pair_raises(self) -> None:
+        with pytest.raises(TypeError, match="data type mismatch"):
+            _assert_spark_compare_compatible_eager("eq", pl.Int64, pl.Boolean)
+
+    def test_unknown_group_passes(self) -> None:
+        _assert_spark_compare_compatible_eager("eq", pl.Null, pl.Int64)
+
+
+class TestAssertSparkCompareCompatible:
+    def test_compatible_passes(self) -> None:
+        _assert_spark_compare_compatible("eq", pl.col("a"), pl.col("b"), pl.Int64, pl.Float64)
+
+    def test_incompatible_col_col_raises(self) -> None:
+        with pytest.raises(TypeError, match="data type mismatch"):
+            _assert_spark_compare_compatible("eq", pl.col("a"), pl.col("b"), pl.Int64, pl.Boolean)
+
+    def test_incompatible_with_literal_passes(self) -> None:
+        _assert_spark_compare_compatible("eq", pl.col("a"), pl.lit(True), pl.Int64, pl.Boolean)
+
+    def test_unknown_dtype_passes(self) -> None:
+        _assert_spark_compare_compatible("eq", pl.col("a"), pl.col("b"), None, pl.Int64)
+
+
+class TestIsStringPolarsDtype:
+    @pytest.mark.parametrize("dt", [pl.Utf8, pl.String])
+    def test_string_types(self, dt: pl.DataType) -> None:
+        assert _is_string_polars_dtype(dt) is True
+
+    @pytest.mark.parametrize("dt", [pl.Int64, pl.Boolean, None])
+    def test_non_string_types(self, dt: Optional[pl.DataType]) -> None:
+        assert _is_string_polars_dtype(dt) is False
+
+
+class TestIsDatePolarsDtype:
+    def test_date(self) -> None:
+        assert _is_date_polars_dtype(pl.Date) is True
+
+    @pytest.mark.parametrize("dt", [pl.Datetime("us"), pl.Int64, None])
+    def test_non_date(self, dt: Optional[pl.DataType]) -> None:
+        assert _is_date_polars_dtype(dt) is False
+
+
+class TestIsIntegerPolarsDtype:
+    @pytest.mark.parametrize("dt", [pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt32])
+    def test_integers(self, dt: pl.DataType) -> None:
+        assert _is_integer_polars_dtype(dt) is True
+
+    @pytest.mark.parametrize("dt", [pl.Float64, pl.Utf8, None])
+    def test_non_integers(self, dt: Optional[pl.DataType]) -> None:
+        assert _is_integer_polars_dtype(dt) is False
+
+
+class TestHasDecimalOperand:
+    def test_one_decimal(self) -> None:
+        assert _has_decimal_operand(pl.Decimal(10, 2), pl.Int64) is True
+        assert _has_decimal_operand(pl.Int64, pl.Decimal(10, 2)) is True
+
+    def test_no_decimal(self) -> None:
+        assert _has_decimal_operand(pl.Int64, pl.Float64) is False
+        assert _has_decimal_operand(None, None) is False
+
+
+class TestSparkDecimalDivResultType:
+    def test_decimal_div_decimal(self) -> None:
+        result = _spark_decimal_div_result_type(pl.Decimal(10, 2), pl.Decimal(10, 2))
+        assert isinstance(result, pl.Decimal)
+        assert result.scale == max(6, 2 + 10 + 1)  # 13
+
+    def test_int_div_decimal(self) -> None:
+        result = _spark_decimal_div_result_type(pl.Int64, pl.Decimal(10, 2))
+        assert isinstance(result, pl.Decimal)
+
+
+class TestValidatedDecimalDivExpr:
+    def test_non_decimal_casts_to_decimal(self) -> None:
+        expr = _validated_decimal_div_expr(pl.col("a"), pl.Int64)
+        df = pl.DataFrame({"a": [10, 20]}, schema={"a": pl.Int64})
+        result = df.select(expr.alias("r"))
+        assert isinstance(result.schema["r"], pl.Decimal)
+
+    def test_decimal_stays_decimal(self) -> None:
+        expr = _validated_decimal_div_expr(pl.col("a"), pl.Decimal(10, 2))
+        df = pl.DataFrame({"a": pl.Series([1, 2], dtype=pl.Decimal(10, 2))})
+        result = df.select(expr.alias("r"))
+        assert isinstance(result.schema["r"], pl.Decimal)
+
+    def test_incompatible_dtype_raises(self) -> None:
+        with pytest.raises(TypeError):
+            _validated_decimal_div_expr(pl.col("a"), pl.Utf8)
+
+
+class TestCoerceMixedArithmeticOperands:
+    def test_returns_none_when_dtypes_unknown(self) -> None:
+        assert _coerce_mixed_arithmetic_operands(pl.col("a"), pl.col("b"), None, None, "+") is None
+
+    def test_numeric_plus_string_coerces(self) -> None:
+        with _polars_schema_for(pl.Schema({"a": pl.Int64, "b": pl.Utf8})):
+            result = _coerce_mixed_arithmetic_operands(pl.col("a"), pl.col("b"), pl.Int64, pl.Utf8, "+")
+            assert result is not None
+
+    def test_string_plus_numeric_coerces(self) -> None:
+        result = _coerce_mixed_arithmetic_operands(pl.col("a"), pl.col("b"), pl.Utf8, pl.Float64, "+")
+        assert result is not None
+
+    def test_int_plus_date_coerces(self) -> None:
+        result = _coerce_mixed_arithmetic_operands(pl.col("a"), pl.col("b"), pl.Int32, pl.Date, "+")
+        assert result is not None
+
+    def test_date_plus_int_coerces(self) -> None:
+        result = _coerce_mixed_arithmetic_operands(pl.col("a"), pl.col("b"), pl.Date, pl.Int32, "+")
+        assert result is not None
+
+    def test_same_type_returns_none(self) -> None:
+        assert _coerce_mixed_arithmetic_operands(pl.col("a"), pl.col("b"), pl.Int64, pl.Int64, "+") is None
+
+
+class TestNeedsDateDatetimePromotion:
+    def test_date_vs_datetime(self) -> None:
+        assert _needs_date_datetime_promotion(pl.Date, pl.Datetime("us")) is True
+
+    def test_datetime_vs_date(self) -> None:
+        assert _needs_date_datetime_promotion(pl.Datetime("us"), pl.Date) is True
+
+    def test_same_type(self) -> None:
+        assert _needs_date_datetime_promotion(pl.Date, pl.Date) is False
+        assert _needs_date_datetime_promotion(pl.Datetime("us"), pl.Datetime("us")) is False
+
+    def test_unrelated_types(self) -> None:
+        assert _needs_date_datetime_promotion(pl.Int64, pl.Utf8) is False
+
+
+class TestPromoteDateToDatetimePair:
+    def test_date_left_datetime_right(self) -> None:
+        left = pl.Series("a", ["2024-01-01"], dtype=pl.Date)
+        right = pl.Series("b", ["2024-01-01T12:00:00"], dtype=pl.Datetime("us"))
+        l_out, r_out = _promote_date_to_datetime_pair(left, right)
+        assert isinstance(l_out.dtype, pl.Datetime)
+        assert r_out.dtype == right.dtype
+
+    def test_datetime_left_date_right(self) -> None:
+        left = pl.Series("a", ["2024-01-01T12:00:00"], dtype=pl.Datetime("us"))
+        right = pl.Series("b", ["2024-01-01"], dtype=pl.Date)
+        l_out, r_out = _promote_date_to_datetime_pair(left, right)
+        assert l_out.dtype == left.dtype
+        assert isinstance(r_out.dtype, pl.Datetime)
+
+    def test_no_promotion_needed(self) -> None:
+        left = pl.Series("a", [1, 2], dtype=pl.Int64)
+        right = pl.Series("b", [3, 4], dtype=pl.Int64)
+        l_out, r_out = _promote_date_to_datetime_pair(left, right)
+        assert l_out.dtype == pl.Int64
+        assert r_out.dtype == pl.Int64
+
+
+class TestCompareSeries:
+    def test_eq(self) -> None:
+        a = pl.Series("a", [1, 2, 3])
+        b = pl.Series("b", [1, 0, 3])
+        assert _compare_series(a, b, "eq").to_list() == [True, False, True]
+
+    def test_ne(self) -> None:
+        a = pl.Series("a", [1, 2, 3])
+        b = pl.Series("b", [1, 0, 3])
+        assert _compare_series(a, b, "ne").to_list() == [False, True, False]
+
+    def test_lt(self) -> None:
+        a = pl.Series("a", [1, 2, 3])
+        b = pl.Series("b", [2, 2, 2])
+        assert _compare_series(a, b, "lt").to_list() == [True, False, False]
+
+    def test_le(self) -> None:
+        a = pl.Series("a", [1, 2, 3])
+        b = pl.Series("b", [2, 2, 2])
+        assert _compare_series(a, b, "le").to_list() == [True, True, False]
+
+    def test_gt(self) -> None:
+        a = pl.Series("a", [1, 2, 3])
+        b = pl.Series("b", [2, 2, 2])
+        assert _compare_series(a, b, "gt").to_list() == [False, False, True]
+
+    def test_ge(self) -> None:
+        a = pl.Series("a", [1, 2, 3])
+        b = pl.Series("b", [2, 2, 2])
+        assert _compare_series(a, b, "ge").to_list() == [False, True, True]
+
+    def test_invalid_op_raises(self) -> None:
+        a = pl.Series("a", [1])
+        b = pl.Series("b", [1])
+        with pytest.raises(ValueError):
+            _compare_series(a, b, "??")
+
+
+class TestOrderingDateDatetimePromotion:
+    def test_date_lt_datetime(self) -> None:
+        df = pl.DataFrame(
+            {
+                "a": pl.Series(["2024-01-01", "2024-06-15"], dtype=pl.Date),
+                "b": pl.Series(["2024-01-01T12:00:00", "2024-06-15T00:00:00"], dtype=pl.Datetime("us")),
+            }
+        )
+        with _polars_schema_for(df.schema):
+            result = df.select(_ordering_comparison_expr(pl.col("a"), pl.col("b"), "lt").alias("r"))
+        assert result["r"].to_list() == [True, False]
+
+
+class TestEqualityDateDatetimePromotion:
+    def test_date_eq_datetime_midnight(self) -> None:
+        df = pl.DataFrame(
+            {
+                "a": pl.Series(["2024-01-01"], dtype=pl.Date),
+                "b": pl.Series(["2024-01-01T00:00:00"], dtype=pl.Datetime("us")),
+            }
+        )
+        with _polars_schema_for(df.schema):
+            result = df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=True).alias("r"))
+        assert result["r"].to_list() == [True]
+
+    def test_date_ne_datetime(self) -> None:
+        df = pl.DataFrame(
+            {
+                "a": pl.Series(["2024-01-01"], dtype=pl.Date),
+                "b": pl.Series(["2024-01-01T12:00:00"], dtype=pl.Datetime("us")),
+            }
+        )
+        with _polars_schema_for(df.schema):
+            result = df.select(_equality_comparison_expr(pl.col("a"), pl.col("b"), equal=False).alias("r"))
+        assert result["r"].to_list() == [True]
