@@ -8,8 +8,7 @@ import polars as pl
 from sparkleframe.polarsdf import WindowSpec
 from sparkleframe.polarsdf.column import Column, _to_expr
 from sparkleframe.polarsdf.column_helpers import _md5_sparklike, _now_batch, _re_split_sparklike
-from sparkleframe.polarsdf.functions_helpers import _to_datetime_column, _to_timestamp_no_format_column
-from sparkleframe.polarsdf.functions_utils import _RankWrapper
+from sparkleframe.polarsdf.functions_helpers import _RankWrapper, _to_datetime_column, _to_timestamp_no_format_column
 
 
 def col(name: str) -> Column:
@@ -711,9 +710,9 @@ def try_to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Colu
     fmt = fmt or "yyyy-MM-dd"
     strftime_fmt = _convert_spark_date_format(fmt)
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-    parsed_from_string = expr.cast(pl.String, strict=False).str.strptime(pl.Date, strftime_fmt, strict=False)
-    cast_direct = expr.cast(pl.Date, strict=False)
-    return Column(pl.coalesce(cast_direct, parsed_from_string))
+    # Spark applies the format to string inputs only; unparseable strings become null.
+    parsed = expr.cast(pl.String, strict=False).str.strptime(pl.Date, strftime_fmt, strict=False)
+    return Column(parsed)
 
 
 def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Column]) -> Column:

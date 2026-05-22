@@ -6,6 +6,7 @@ import polars as pl
 
 from sparkleframe.polarsdf.column import Column, _to_expr
 from sparkleframe.polarsdf.types import TimestampType
+from sparkleframe.polarsdf.window import WindowSpec
 
 _SPARK_TS_FORMAT_MAP = [
     ("yyyy", "%Y"),
@@ -118,3 +119,15 @@ def _to_timestamp_no_format_column(col_name: Union[str, Column], *, strict: bool
             result.alias("_result"),
         ).map_batches(_assert_no_unparsed_timestamps, return_dtype=pl.Datetime("us"))
     return Column(result)
+
+
+class _RankWrapper(Column):
+    """
+    A wrapper for deferred window function binding, enabling rank().over(...).
+    """
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    def over(self, window_spec: WindowSpec) -> Column:
+        return self._fn(window_spec)

@@ -2,7 +2,6 @@ import builtins
 import json
 import re
 import uuid as std_uuid
-from datetime import date
 
 import pandas as pd
 import pandas.testing as pdt
@@ -37,6 +36,7 @@ from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import to_timestamp as spark_to_timestamp
 from pyspark.sql.functions import trim as spark_trim
 from pyspark.sql.functions import try_element_at as spark_try_element_at
+from pyspark.sql.functions import try_to_date as spark_try_to_date
 from pyspark.sql.functions import try_to_timestamp as spark_try_to_timestamp
 from pyspark.sql.functions import unix_millis as spark_unix_millis
 from pyspark.sql.functions import when as spark_when
@@ -447,6 +447,23 @@ class TestFunctions:
         spark_df = spark.createDataFrame([("not-a-date",)], ["ts"])
         with pytest.raises(Exception):
             spark_df.select(spark_to_timestamp("ts").alias("result")).collect()
+
+    @pytest.mark.parametrize(
+        "bad_value, fmt",
+        [
+            ("not-a-date", "yyyy-MM-dd HH:mm:ss"),
+            ("01-03-2023 09:15:00", "yyyy-MM-dd HH:mm:ss"),
+        ],
+    )
+    def test_to_timestamp_with_format_malformed_raises(self, spark, bad_value, fmt):
+        """Spark 4 to_timestamp(col, fmt) is ANSI-strict and raises on malformed or pattern-mismatched input."""
+        polars_df = DataFrame(pl.DataFrame({"ts": [bad_value]}))
+        with pytest.raises(Exception):
+            polars_df.select(to_timestamp("ts", fmt).alias("result")).to_native_df()
+
+        spark_df = spark.createDataFrame([(bad_value,)], ["ts"])
+        with pytest.raises(Exception):
+            spark_df.select(spark_to_timestamp("ts", fmt).alias("result")).collect()
 
     @pytest.mark.parametrize(
         "sparkle_col_type, spark_col_type",
@@ -878,27 +895,38 @@ class TestTryToTimestamp:
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
     def test_try_to_timestamp_malformed_returns_null(self, spark):
-        df = pl.DataFrame({"ts": ["2023-01-01 12:34:56", "not-a-date", None]})
-        polars_df = DataFrame(df)
-        result = polars_df.select(try_to_timestamp("ts").alias("result")).to_native_df()
-
-        assert result["result"][0] is not None
-        assert result["result"][1] is None
-        assert result["result"][2] is None
-
-        spark_df = spark.createDataFrame(df.to_pandas())
+        data = {"ts": ["2023-01-01 12:34:56", "not-a-date", None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.select(spark_try_to_timestamp("ts").alias("result"))
         result_df = polars_df.select(try_to_timestamp("ts").alias("result"))
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
+    @pytest.mark.parametrize(
+        "datetime_strs, fmt",
+        [
+            (
+                ["2023-01-01 12:34:56", "not-a-date", None],
+                "yyyy-MM-dd HH:mm:ss",
+            ),
+            (
+                ["2023-01-01 12:34:56", "01-03-2023 09:15:00", None],
+                "yyyy-MM-dd HH:mm:ss",
+            ),
+        ],
+    )
+    def test_try_to_timestamp_with_format_malformed_returns_null(self, spark, datetime_strs, fmt):
+        data = {"ts": datetime_strs}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        expected_df = spark_df.select(spark_try_to_timestamp(spark_col("ts"), spark_lit(fmt)).alias("result"))
+        result_df = polars_df.select(try_to_timestamp("ts", fmt).alias("result"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
     def test_try_to_timestamp_accepts_column_input(self, spark):
-        df = pl.DataFrame({"ts": ["2023-01-01 12:34:56"]})
-        polars_df = DataFrame(df)
-        result = polars_df.select(try_to_timestamp(col("ts")).alias("result")).to_native_df()
-
-        assert result["result"][0] is not None
-
-        spark_df = spark.createDataFrame(df.to_pandas())
+        data = {"ts": ["2023-01-01 12:34:56"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.select(spark_try_to_timestamp("ts").alias("result"))
         result_df = polars_df.select(try_to_timestamp(col("ts")).alias("result"))
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)
@@ -907,47 +935,39 @@ class TestTryToTimestamp:
 class TestTryToDate:
     """Tests for try_to_date — verifies null-safe date parsing."""
 
-    def test_try_to_date_default_format(self, spark):
-        df = pl.DataFrame({"d": ["1997-02-28", "2024-12-31", "bad", None]})
-        polars_df = DataFrame(df)
-        result = polars_df.select(try_to_date("d").alias("result")).to_native_df()
+    def test_try_to_date_default_format_malformed_returns_null(self, spark):
+        data = {"d": ["1997-02-28", "2024-12-31", "bad", None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        expected_df = spark_df.select(spark_try_to_date("d").alias("result"))
+        result_df = polars_df.select(try_to_date("d").alias("result"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
-        assert result["result"][0] == date(1997, 2, 28)
-        assert result["result"][1] == date(2024, 12, 31)
-        assert result["result"][2] is None
-        assert result["result"][3] is None
+    def test_try_to_date_custom_format_against_spark(self, spark):
+        data = {"d": ["28-02-1997", "31-12-2024"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        expected_df = spark_df.select(spark_try_to_date("d", "dd-MM-yyyy").alias("result"))
+        result_df = polars_df.select(try_to_date("d", "dd-MM-yyyy").alias("result"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
-        expected_df = spark.createDataFrame(
-            [(date(1997, 2, 28),), (date(2024, 12, 31),), (None,), (None,)],
-            schema="result date",
-        )
-        result_spark_df = create_spark_df(spark, polars_df.select(try_to_date("d").alias("result")))
-        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
-
-    def test_try_to_date_custom_format(self, spark):
-        df = pl.DataFrame({"d": ["28-02-1997", "31-12-2024"]})
-        polars_df = DataFrame(df)
-        result = polars_df.select(try_to_date("d", "dd-MM-yyyy").alias("result")).to_native_df()
-
-        assert result["result"][0] == date(1997, 2, 28)
-        assert result["result"][1] == date(2024, 12, 31)
-
-        expected_df = spark.createDataFrame(
-            [(date(1997, 2, 28),), (date(2024, 12, 31),)],
-            schema="result date",
-        )
-        result_spark_df = create_spark_df(spark, polars_df.select(try_to_date("d", "dd-MM-yyyy").alias("result")))
-        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+    def test_try_to_date_custom_format_malformed_returns_null(self, spark):
+        data = {
+            "d": ["28-02-1997", "31-12-2024", "not-a-date", "1997-02-28", None],
+        }
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        expected_df = spark_df.select(spark_try_to_date("d", "dd-MM-yyyy").alias("result"))
+        result_df = polars_df.select(try_to_date("d", "dd-MM-yyyy").alias("result"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
     def test_try_to_date_accepts_column_input(self, spark):
-        df = pl.DataFrame({"d": ["2024-01-01"]})
-        polars_df = DataFrame(df)
-        result = polars_df.select(try_to_date(col("d")).alias("result")).to_native_df()
-        assert result["result"][0] is not None
-
-        expected_df = spark.createDataFrame([(date(2024, 1, 1),)], schema="result date")
-        result_spark_df = create_spark_df(spark, polars_df.select(try_to_date(col("d")).alias("result")))
-        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+        data = {"d": ["2024-01-01"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        expected_df = spark_df.select(spark_try_to_date("d").alias("result"))
+        result_df = polars_df.select(try_to_date(col("d")).alias("result"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
 
 class TestTryElementAt:

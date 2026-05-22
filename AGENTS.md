@@ -25,9 +25,6 @@ modules:
 - `sparkleframe/polarsdf/dataframe_helpers.py`
 - `sparkleframe/polarsdf/functions_helpers.py`
 
-`functions_utils.py` holds small shared types (e.g. `_RankWrapper`); prefer `*_helpers.py` for expression and behavior
-logic.
-
 ## Spark 4 cast and parse semantics
 
 Spark 4 defaults to ANSI-strict behavior (`spark.sql.ansi.enabled=true`). Malformed casts and parses **throw** (e.g.
