@@ -10,24 +10,18 @@ import pyarrow as pa
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.polarsdf import types as sft
 from sparkleframe.polarsdf.column import Column
-from sparkleframe.polarsdf.group import GroupedData
-from sparkleframe.polarsdf.types import (
-    BinaryType,
-    BooleanType,
-    ByteType,
-    DataType,
-    DateType,
-    DecimalType,
-    DoubleType,
-    FloatType,
-    IntegerType,
-    LongType,
-    ShortType,
-    StringType,
-    StructField,
-    StructType,
-    TimestampType,
+from sparkleframe.polarsdf.column_helpers import _polars_schema_for
+from sparkleframe.polarsdf.dataframe_helpers import (
+    PYSPARK_TO_POLARS_JOIN_MAP,
+    coalesce_outer_join_keys,
+    convert_pandas_value,
+    map_polars_dtype_to_spark_name,
+    perform_expression_join,
+    polars_dtype_to_spark_structfield,
+    resolve_equi_join_keys,
 )
+from sparkleframe.polarsdf.group import GroupedData
+from sparkleframe.polarsdf.types import DataType, StructField, StructType
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
 
 
@@ -60,6 +54,14 @@ class DataFrame(BaseDataFrame):
             # Wrap single logical type as a single-field StructType named "value" (Spark-like)
             wrapped = StructType([StructField("value", schema)])
             self.df = _MapTypeUtils.build_df_from_struct_rows(data, wrapped)
+
+        elif isinstance(schema, (list, tuple)) and all(isinstance(col_name, str) for col_name in schema):
+            # Spark-style createDataFrame(data=[(...), (...)], schema=["c1", "c2", ...]) provides row-oriented tuples.
+            # Force row orientation so Polars does not infer tuple values as column vectors.
+            if isinstance(data, (list, tuple)) and data and isinstance(data[0], (list, tuple)):
+                self.df = pl.DataFrame(data, schema=list(schema), orient="row")
+            else:
+                self.df = pl.DataFrame(data, schema=list(schema))
 
         elif isinstance(data, pd.DataFrame):
             # No (or non-StructType) schema: let Polars infer
@@ -112,18 +114,20 @@ class DataFrame(BaseDataFrame):
 
     def __getitem__(self, item: Union[int, str, Column, List, Tuple]) -> Union[Column, "DataFrame"]:
         if isinstance(item, str):
-            # Return a single column by name
-            return Column(self.df[item])
+            # Return a single column by name (``pl.col``, not a materialized Series, so ``Column`` ops work).
+            return Column(pl.col(item))
         elif isinstance(item, int):
             # Return a column by index
-            return Column(self.df[self.df.columns[item]])
+            return Column(pl.col(self.df.columns[item]))
         elif isinstance(item, Column):
             # Return a filtered DataFrame
-            return DataFrame(self.df.filter(item.to_native()))
+            with _polars_schema_for(self.df.schema):
+                return DataFrame(self.df.filter(item.to_native()))
         elif isinstance(item, (list, tuple)):
             # Return a DataFrame with selected columns
-            cols = [col.to_native() if isinstance(col, Column) else col for col in item]
-            return DataFrame(self.df.select(cols))
+            with _polars_schema_for(self.df.schema):
+                cols = [col.to_native() if isinstance(col, Column) else col for col in item]
+                return DataFrame(self.df.select(cols))
         else:
             raise TypeError(f"Unexpected type: {type(item)}")
 
@@ -138,6 +142,11 @@ class DataFrame(BaseDataFrame):
             List[str]: List of column names.
         """
         return self.df.columns
+
+    def __getattr__(self, item: str):
+        if item in self.df.columns:
+            return Column(pl.col(item))
+        raise AttributeError(f"'DataFrame' object has no attribute '{item}'")
 
     def alias(self, name: str) -> DataFrame:
         """
@@ -167,15 +176,53 @@ class DataFrame(BaseDataFrame):
             DataFrame: A new DataFrame containing only the rows that match the filter condition.
         """
         if isinstance(condition, str):
-            filtered_df = self.df.filter(pl.col(condition))
+            try:
+                # Support Spark-style SQL predicates, e.g. "rn = 1", "col is null and other is null".
+                filtered_df = self.df.filter(pl.sql_expr(condition))
+            except Exception:
+                filtered_df = self.df.filter(pl.col(condition))
         elif isinstance(condition, Column):
-            filtered_df = self.df.filter(condition.to_native())
+            with _polars_schema_for(self.df.schema):
+                filtered_df = self.df.filter(condition.to_native())
         else:
             raise TypeError("filter() expects a string column name or a Column expression")
 
         return DataFrame(filtered_df)
 
     where = filter  # Alias for .filter()
+
+    def union(self, other: "DataFrame") -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.union (UNION ALL by position).
+        """
+        if not isinstance(other, DataFrame):
+            raise TypeError("union() expects a DataFrame")
+
+        left_cols = self.columns
+        right_cols = other.columns
+        if len(left_cols) != len(right_cols):
+            raise ValueError(
+                f"union() requires same number of columns; left={len(left_cols)}, right={len(right_cols)}"
+            )
+
+        right_df = other.df.select([pl.col(col_name).alias(left_cols[idx]) for idx, col_name in enumerate(right_cols)])
+        return DataFrame(pl.concat([self.df, right_df], how="vertical_relaxed"))
+
+    unionAll = union
+
+    def distinct(self) -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.distinct.
+        """
+        return DataFrame(self.df.unique())
+
+    def dropDuplicates(self, subset: Optional[List[str]] = None) -> "DataFrame":
+        """
+        Mimics PySpark's DataFrame.dropDuplicates.
+        """
+        if subset is None:
+            return self.distinct()
+        return DataFrame(self.df.unique(subset=subset))
 
     def select(self, *cols: Union[str, Column, List[str], List[Column]]) -> "DataFrame":
         """
@@ -195,32 +242,32 @@ class DataFrame(BaseDataFrame):
         """
         cols = list(cols)
         cols = cols[0] if cols and isinstance(cols[0], list) else cols
-        pl_expressions = []
+        pl_expressions: List[Any] = []
 
-        for c in cols:
-            if isinstance(c, Column):
-                pl_expressions.append(c.to_native())
-                continue
+        with _polars_schema_for(self.df.schema):
+            for c in cols:
+                if isinstance(c, Column):
+                    pl_expressions.append(c.to_native())
+                    continue
 
-            if isinstance(c, str):
-                if "." in c:
-                    parts = c.split(".")
-                    base, tail = parts[0], parts[1:]
-                    expr = pl.col(base)
-                    for seg in tail:
-                        expr = expr.struct.field(seg)
-                    # Alias to the last segment ("id2" for "col.id.id2")
-                    expr = expr.alias(tail[-1])
-                    pl_expressions.append(expr)
-                else:
-                    pl_expressions.append(pl.col(c))
-                continue
+                if isinstance(c, str):
+                    if "." in c:
+                        parts = c.split(".")
+                        base, tail = parts[0], parts[1:]
+                        expr = pl.col(base)
+                        for seg in tail:
+                            expr = expr.struct.field(seg)
+                        # Alias to the last segment ("id2" for "col.id.id2")
+                        expr = expr.alias(tail[-1])
+                        pl_expressions.append(expr)
+                    else:
+                        pl_expressions.append(pl.col(c))
+                    continue
 
-            # fallback: assume it's already a polars expr or valid selector
-            pl_expressions.append(c)
+                # fallback: assume it's already a polars expr or valid selector
+                pl_expressions.append(c)
 
-        selected_df = self.df.select(*pl_expressions)
-        return DataFrame(selected_df)
+        return DataFrame(self.df.select(*pl_expressions))
 
     def withColumn(self, name: str, col: Any) -> DataFrame:
         """
@@ -233,8 +280,19 @@ class DataFrame(BaseDataFrame):
         Returns:
             A new DataFrame with the added or updated column.
         """
+        if hasattr(col, "branches") and hasattr(col, "otherwise"):
+            col = col.otherwise(None)
         col = Column(col) if not isinstance(col, Column) else col
-        expr = col.to_native().alias(name)
+        if getattr(col, "_is_explode", False):
+            source_name = getattr(col, "_explode_source_name", None)
+            if source_name and source_name in self.df.columns:
+                exploded_df = self.df.explode(source_name)
+                if name != source_name:
+                    exploded_df = exploded_df.rename({source_name: name})
+                return DataFrame(exploded_df)
+
+        with _polars_schema_for(self.df.schema):
+            expr = col._to_native_getitem_only().alias(name)
         updated_df = self.df.with_columns(expr)
         return DataFrame(updated_df)
 
@@ -249,11 +307,12 @@ class DataFrame(BaseDataFrame):
         Returns:
             A new DataFrame with the renamed column.
 
-        Raises:
-            ValueError: If the existing column name is not in the DataFrame.
+        Notes:
+            Matches PySpark behavior: if the source column does not exist, returns
+            the original DataFrame unchanged.
         """
         if existing not in self.df.columns:
-            raise ValueError(f"Column '{existing}' does not exist in the DataFrame.")
+            return DataFrame(self.df)
 
         renamed_df = self.df.rename({existing: new})
         return DataFrame(renamed_df)
@@ -300,80 +359,8 @@ class DataFrame(BaseDataFrame):
         Removes keys inside dicts where the value is None,
         but keeps the column and row structure intact.
         """
-        import math
-
-        import numpy as np
-        import pandas as pd
-
         df = self.df.to_arrow().to_pandas()
-
-        def is_null(x) -> bool:
-            try:
-                return pd.isna(x) and not isinstance(x, (str, bytes))
-            except Exception:
-                return False
-
-        def convert_number(x):
-            if isinstance(x, (np.integer,)):
-                return int(x)
-            if isinstance(x, int):
-                return x
-            if isinstance(x, (np.floating, float)):
-                if math.isnan(x):
-                    return None
-                return int(x) if float(x).is_integer() else float(x)
-            return x
-
-        # --- helpers to collapse Polars map layout(s) ---
-        def _is_kv(d) -> bool:
-            return isinstance(d, dict) and "key" in d and "value" in d
-
-        def _kv_list_to_dict(kv_list: list):
-            # [{"key":k,"value":v}, ...] -> {k: v}, skipping null values
-            out = {}
-            for item in kv_list:
-                k = convert(item["key"])
-                v = convert(item.get("value"))
-                if v is not None:
-                    out[k] = v
-            return out
-
-        def convert(val):
-            if is_null(val):
-                return None
-
-            # NumPy arrays -> list
-            if isinstance(val, np.ndarray):
-                return [convert(v) for v in val.tolist()]
-
-            # collapse map and array<map> encodings
-            if isinstance(val, list):
-                # Case 1: a single map encoded as a list of {"key","value"} dicts
-                if val and all(_is_kv(item) for item in val):
-                    return _kv_list_to_dict(val)
-
-                # Case 2: array<map<...>> encoded as list of kv-lists
-                if val and all(isinstance(item, list) and (not item or all(_is_kv(x) for x in item)) for item in val):
-                    return [_kv_list_to_dict(item) for item in val]
-
-                # General list -> recurse
-                return [convert(v) for v in val]
-
-            if isinstance(val, tuple):
-                return [convert(v) for v in val]
-
-            if isinstance(val, dict):
-                # Drop only keys whose converted value is None
-                out = {}
-                for k, v in val.items():
-                    cv = convert(v)
-                    if cv is not None:
-                        out[k] = cv
-                return out
-
-            return convert_number(val)
-
-        return df.map(convert)
+        return df.map(convert_pandas_value)
 
     def to_arrow(self) -> pa.Table:
         """
@@ -490,11 +477,12 @@ class DataFrame(BaseDataFrame):
         Returns:
             DataFrame: A new DataFrame resulting from the join.
         """
-        has_col = False
+        # True when the user wrapped keys in Column(...) (affects full-outer key coalescing).
+        on_column_wrappers = False
         if isinstance(on, str):
             on = [on]
         elif isinstance(on, Column):
-            has_col = True
+            on_column_wrappers = True
             on = [on.to_native()]
         elif isinstance(on, list):
 
@@ -507,31 +495,9 @@ class DataFrame(BaseDataFrame):
                     )
 
                 if isinstance(n, Column):
-                    has_col = True
+                    on_column_wrappers = True
                     break
             on = [n.to_native() if isinstance(n, Column) else n for n in on]
-
-        # Mapping of PySpark join types to Polars join types
-        PYSPARK_TO_POLARS_JOIN_MAP = {
-            "inner": "inner",
-            "cross": "cross",
-            "outer": "full",
-            "full": "full",
-            "fullouter": "full",
-            "full_outer": "full",
-            "left": "left",
-            "leftouter": "left",
-            "left_outer": "left",
-            "right": "right",
-            "rightouter": "right",
-            "right_outer": "right",
-            "semi": "semi",
-            "leftsemi": "semi",
-            "left_semi": "semi",
-            "anti": "anti",
-            "leftanti": "anti",
-            "left_anti": "anti",
-        }
 
         how = how.lower()
         if how not in PYSPARK_TO_POLARS_JOIN_MAP:
@@ -539,41 +505,23 @@ class DataFrame(BaseDataFrame):
 
         polars_join_type = PYSPARK_TO_POLARS_JOIN_MAP[how]
         suffix = "_" + str(uuid4()).replace("-", "")
-        result = self.df.join(other.df, on=on, how=polars_join_type, suffix=suffix)
+        use_expr_join = on is not None and len(on) == 1 and isinstance(on[0], pl.Expr) and not on[0].meta.is_column()
+        if use_expr_join:
+            if how not in {"inner", "left", "leftouter", "left_outer"}:
+                raise ValueError("Expression joins currently support only inner/left joins")
+            result = perform_expression_join(self.df, other.df, on[0], how, suffix)
+        else:
+            equi_on: Union[None, str, list[str]] = on
+            if on is not None:
+                equi_on = resolve_equi_join_keys(on)
+            result = self.df.join(other.df, on=equi_on, how=polars_join_type, suffix=suffix)
 
         if how == "outer":
-            """
-            Polars does not automatically coalesce join keys (e.g., id) in a full outer join because it retains both left and right keys explicitly, especially when:
-                * There are mismatches in the keys (e.g., id exists only on one side).
-                * It needs to distinguish between matching and non-matching keys.
+            result = coalesce_outer_join_keys(result, suffix, on_column_wrappers)
 
-            Why this happens?
-            Polars must preserve all information during a full (outer) join:
-                * If the key is missing on one side, it will still be included in the output, but with nulls on the missing side.
-                * Rather than overwrite or merge the column into one, it creates:
-                    - id from the left table
-                    - id_right (or similar suffix) from the right table
-
-            This ensures no loss of data or ambiguity, which is particularly important for:
-                * Asymmetric joins (like one-to-many).
-                * Duplicated key values or nulls.
-            """
-
-            for col in result.columns:
-                if col.endswith(suffix):
-
-                    # TODO: for some reason pyspark results from outer differs when `on_keys` are Column or str, wheter
-                    # the col is dropped or a coalesce happens
-                    if has_col:
-                        result = result.drop(col)
-                    else:
-                        result = result.with_columns(
-                            pl.coalesce(col.replace(suffix, ""), col).alias(col.replace(suffix, ""))
-                        ).drop(col)
-
-        for col in result.columns:
-            if col.endswith(suffix):
-                result = result.rename({col: col.replace(suffix, "") + "_right"})
+        for col_name in result.columns:
+            if col_name.endswith(suffix):
+                result = result.rename({col_name: col_name.replace(suffix, "") + "_right"})
 
         return DataFrame(result)
 
@@ -587,131 +535,19 @@ class DataFrame(BaseDataFrame):
         Returns:
             List[Tuple[str, str]]: List of (column name, data type) pairs.
         """
-        POLARS_TO_PYSPARK_DTYPE_MAP = {
-            pl.Int8: "tinyint",
-            pl.Int16: "smallint",
-            pl.Int32: "int",
-            pl.Int64: "bigint",
-            pl.UInt8: "tinyint",
-            pl.UInt16: "smallint",
-            pl.UInt32: "int",
-            pl.UInt64: "bigint",
-            pl.Float32: "float",
-            pl.Float64: "double",
-            pl.Boolean: "boolean",
-            pl.Utf8: "string",
-            pl.Date: "date",
-            pl.Datetime: "timestamp",
-            pl.Time: "time",
-            pl.Duration: "interval",
-            pl.Object: "binary",
-            pl.List: "array",
-            pl.Struct: "struct",
-            pl.Decimal: "decimal",
-            pl.Binary: "binary",
-        }
-
-        def map_dtype(dtype: pl.DataType) -> str:
-            if isinstance(dtype, pl.Decimal):
-                return f"decimal({dtype.precision},{dtype.scale})"
-
-            if isinstance(dtype, pl.Struct):
-                # Recursively describe fields
-                fields_str = ",".join(f"{field.name}:{map_dtype(field.dtype)}" for field in dtype.fields)
-                return f"struct<{fields_str}>"
-
-            for polars_type, spark_type in POLARS_TO_PYSPARK_DTYPE_MAP.items():
-                if isinstance(dtype, polars_type):
-                    return spark_type
-
-            return str(dtype)
-
-        return [(col, map_dtype(dtype)) for col, dtype in self.df.schema.items()]
+        return [(col, map_polars_dtype_to_spark_name(dtype)) for col, dtype in self.df.schema.items()]
 
     @property
     def schema(self) -> StructType:
         """
         Mimics pyspark.sql.DataFrame.schema by returning the schema as a StructType.
         """
-
-        def _declared_type_for(col_name: str) -> Optional[DataType]:
-            if isinstance(self._schema, StructType):
-                for f in self._schema:
-                    if f.name == col_name:
-                        return f.dataType
-            return None
-
-        def _to_spark_datatype(dtype: pl.DataType, col_name: Optional[str] = None) -> DataType:
-            # --- NEW: detect native map layout (List(Struct["key","value"])) ---
-            if _MapTypeUtils.is_map_dtype(dtype):
-                key_dt_pl = dtype.inner.fields[0].dtype
-                val_dt_pl = dtype.inner.fields[1].dtype
-                key_dt = _to_spark_datatype(key_dt_pl)  # typically StringType()
-                val_dt = _to_spark_datatype(val_dt_pl)  # may itself be a Map/Array/Struct/etc.
-
-                # preserve declared valueContainsNull if we have it
-                value_contains_null = True
-                if col_name is not None:
-                    decl = _declared_type_for(col_name)
-                    if isinstance(decl, sft.MapType):
-                        value_contains_null = decl.valueContainsNull
-
-                return sft.MapType(key_dt, val_dt, valueContainsNull=value_contains_null)
-
-            # Decimals
-            if isinstance(dtype, pl.Decimal):
-                return DecimalType(dtype.precision, dtype.scale)
-
-            # Structs (recursive)
-            if isinstance(dtype, pl.Struct):
-                nested_fields = [StructField(f.name, _to_spark_datatype(f.dtype)) for f in dtype.fields]
-                return StructType(nested_fields)
-
-            # Arrays
-            if isinstance(dtype, pl.List):
-                elem_dtype = _to_spark_datatype(dtype.inner)
-                contains_null = True
-                if col_name is not None:
-                    decl = _declared_type_for(col_name)
-                    if isinstance(decl, sft.ArrayType):
-                        contains_null = decl.containsNull
-                return sft.ArrayType(elem_dtype, containsNull=contains_null)
-
-            # Scalars
-            POLARS_TO_SPARK = {
-                pl.Utf8: StringType(),
-                pl.Int32: IntegerType(),
-                pl.UInt32: IntegerType(),
-                pl.Int64: LongType(),
-                pl.UInt64: LongType(),
-                pl.Float32: FloatType(),
-                pl.Float64: DoubleType(),
-                pl.Boolean: BooleanType(),
-                pl.Date: DateType(),
-                pl.Datetime: TimestampType(),
-                pl.Int8: ByteType(),
-                pl.UInt8: ByteType(),
-                pl.Int16: ShortType(),
-                pl.UInt16: ShortType(),
-                pl.Binary: BinaryType(),
-            }
-            for pl_type, spark_type in POLARS_TO_SPARK.items():
-                if isinstance(dtype, pl_type):
-                    return spark_type
-
-            raise TypeError(f"Unsupported dtype '{dtype}'")
-
-        def polars_dtype_to_spark_structfield(name: str, dtype: pl.DataType) -> StructField:
-            decl = _declared_type_for(name)
-            # Preserve declared ArrayType(MapType(...)) exactly as provided
-            if isinstance(decl, sft.ArrayType) and isinstance(decl.elementType, sft.MapType):
-                return StructField(name, decl)
-            # Preserve declared MapType exactly as provided
-            if isinstance(decl, sft.MapType):
-                return StructField(name, decl)
-            return StructField(name, _to_spark_datatype(dtype, col_name=name))
-
-        return StructType([polars_dtype_to_spark_structfield(name, dtype) for name, dtype in self.df.schema.items()])
+        return StructType(
+            [
+                polars_dtype_to_spark_structfield(name, dtype, declared_schema=self._schema)
+                for name, dtype in self.df.schema.items()
+            ]
+        )
 
     def sort(self, *cols: Union[str, Column, int, List[Union[str, Column, int]]]) -> DataFrame:
         """

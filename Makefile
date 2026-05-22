@@ -1,5 +1,5 @@
 SHELL           :=/usr/bin/env bash
-PYTEST_THREADS  ?=$(shell echo $$((`getconf _NPROCESSORS_ONLN` / 3)))
+PYTEST_THREADS  = auto
 LOCAL_DIR		:=./.docker
 MIN_COVERAGE	= 79
 version			?=

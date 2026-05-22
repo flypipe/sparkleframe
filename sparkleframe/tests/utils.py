@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import json
 import math
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Optional, Union
 
 import numpy as np
@@ -60,16 +63,12 @@ def _remove_nulls_from_dict_list(data):
     """Recursively remove keys with null/NaN values from a list of dicts."""
 
     def is_null(x):
-        # Handle None directly
         if x is None:
             return True
 
-        # Handle numpy/pandas array-like
         if isinstance(x, (np.ndarray, pd.Series, list)):
-            # if it's an array, consider it null only if *all* elements are null
             return all(is_null(el) for el in x)
 
-        # Handle NaN and pd.NA safely
         try:
             return bool(pd.isna(x)) or (isinstance(x, float) and math.isnan(x))
         except Exception:
@@ -85,11 +84,88 @@ def _remove_nulls_from_dict_list(data):
     return [clean_value(d) for d in data]
 
 
+_FLOAT_SIG_DIGITS = 12
+
+
+def _round_float_sigfigs(f: float) -> float:
+    """Round a float to ``_FLOAT_SIG_DIGITS`` significant figures.
+
+    This absorbs last-ULP differences between JVM (Spark) and Rust (Polars)
+    float64 math while still catching real divergences.
+    """
+    if f == 0.0:
+        return 0.0
+    magnitude = math.floor(math.log10(abs(f))) + 1
+    return round(f, _FLOAT_SIG_DIGITS - magnitude)
+
+
+def _normalize_compare_value(value: Any) -> Any:
+    """
+    Convert a Spark/Polars record value into a JSON-friendly form that preserves the
+    distinction between integers and floats (so ``2.5 * 2 = 5.0`` does not collapse to ``5``).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if v is None:
+                continue
+            normalized = _normalize_compare_value(v)
+            if normalized is None:
+                continue
+            out[k] = normalized
+        return out
+    if isinstance(value, (list, tuple)):
+        return [_normalize_compare_value(v) for v in value]
+    if isinstance(value, (bytes, bytearray)):
+        return base64.b64encode(bytes(value)).decode("ascii")
+    if isinstance(value, Decimal):
+        return _round_float_sigfigs(float(value))
+    if isinstance(value, timedelta):
+        return value.total_seconds()
+    if isinstance(value, datetime):
+        ts = value.replace(tzinfo=None) if value.tzinfo is not None else value
+        return ts.isoformat(sep=" ")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (np.floating,)):
+        f = float(value)
+        if math.isnan(f):
+            return None
+        return _round_float_sigfigs(f)
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return None
+        return _round_float_sigfigs(value)
+    if isinstance(value, int):
+        return value
+    return value
+
+
+def _records_from_spark(df: SparkDataFrame) -> list[Any]:
+    """Type-faithful record extraction from a Spark DataFrame (preserves int/float)."""
+    return [_normalize_compare_value(row.asDict(recursive=True)) for row in df.collect()]
+
+
+def _records_from_sparkle(df: Union[DataFrame, pl.DataFrame]) -> list[Any]:
+    """
+    Type-faithful record extraction from a sparkleframe / Polars DataFrame.
+    Uses Polars' ``to_dicts`` directly to avoid pandas dtype coercion (e.g. nullable int
+    columns becoming Float64 with NaN).
+    """
+    native = df.to_native_df() if isinstance(df, DataFrame) else df
+    return [_normalize_compare_value(row) for row in native.to_dicts()]
+
+
 def _get_json_from_dataframe(df):
     if isinstance(df, SparkDataFrame):
-        return json.dumps([json.loads(c) for c in df.toJSON().collect()], sort_keys=True)
-    else:
-        return json.dumps(_remove_nulls_from_dict_list(df.toPandas().to_dict(orient="records")), sort_keys=True)
+        return json.dumps(_records_from_spark(df), sort_keys=True)
+    return json.dumps(_records_from_sparkle(df), sort_keys=True)
 
 
 def assert_sparkle_spark_frame_are_equal(
