@@ -1,4 +1,4 @@
-FROM docker.io/apache/spark:4.0.2-scala2.13-java17-python3-ubuntu@sha256:87e5d6062e955a045b68376bbf97487d5057ecd8f4f896fb0590339981645de3
+FROM docker.io/apache/spark:4.1.2-scala2.13-java17-python3-ubuntu@sha256:7f44fcdd38baa7bb6fdf97f84bc12d282655d8258001a9f60287a70fb9e5033e
 
 # Base image ships Python 3.10; install 3.11 for parity with local / CI toolchains.
 USER root

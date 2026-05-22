@@ -37,7 +37,7 @@ coverage:
 .PHONY: coverage
 
 test:
-	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "pytest -n $(PYTEST_THREADS) -k '_test.py' -vv $(f)"
+	docker compose -f $(LOCAL_DIR)/docker-compose.yaml run --remove-orphans sparkleframe sh -c "pytest -n $(PYTEST_THREADS) -k '_test.py' -vv $(if $(f),$(f),sparkleframe)"
 .PHONY: test
 
 wheel:

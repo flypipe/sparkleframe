@@ -1,13 +1,13 @@
 import json
 
-import pytest
-import pyspark.sql.types as pst
-from sparkleframe.polarsdf import types as sft
 import polars as pl
-
 import pyspark.sql.functions as F
+import pyspark.sql.types as pst
+import pytest
+
 import sparkleframe.polarsdf.functions as SF
-from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal, _get_json_from_dataframe
+from sparkleframe.polarsdf import types as sft
+from sparkleframe.tests.utils import _get_json_from_dataframe, assert_sparkle_spark_frame_are_equal
 
 
 class TestTypes:
@@ -43,6 +43,18 @@ class TestTypes:
         assert spark_type.jsonValue() == sf_type.jsonValue()
         assert sf_type.precision == spark_type.precision
         assert sf_type.scale == spark_type.scale
+
+    @pytest.mark.parametrize(
+        "name, expected_precision, expected_scale",
+        [
+            ("decimal(10,2)", 10, 2),
+            ("decimal(5, 0)", 5, 0),
+            ("DECIMAL( 20 , 10 )", 20, 10),
+        ],
+    )
+    def test_spark_type_name_to_polars_decimal(self, name, expected_precision, expected_scale):
+        result = sft.spark_type_name_to_polars(name)
+        assert result == pl.Decimal(precision=expected_precision, scale=expected_scale)
 
     def test_struct_type_equivalence(self):
         sf_struct = sft.StructType(
