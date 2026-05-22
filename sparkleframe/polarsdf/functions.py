@@ -1,14 +1,26 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+import json
+from datetime import date
+from typing import Any, Callable, Optional, Union
 from uuid import uuid4
 
 import polars as pl
 
 from sparkleframe.polarsdf import WindowSpec
 from sparkleframe.polarsdf.column import Column, _to_expr
-from sparkleframe.polarsdf.column_helpers import _md5_sparklike, _now_batch, _re_split_sparklike
-from sparkleframe.polarsdf.functions_helpers import _RankWrapper, _to_datetime_column, _to_timestamp_no_format_column
+from sparkleframe.polarsdf.column_helpers import _md5_sparklike, _now_batch, _re_split_sparklike, _substring_sparklike
+from sparkleframe.polarsdf.functions_helpers import (
+    _as_date_sparklike_expr,
+    _coerce_json_value,
+    _RankWrapper,
+    _schema_from_string,
+    _to_date_column,
+    _to_datetime_column,
+    _to_timestamp_no_format_column,
+    element_at_column,
+)
+from sparkleframe.polarsdf.types import DataType
 
 
 def col(name: str) -> Column:
@@ -24,10 +36,12 @@ def col(name: str) -> Column:
     """
     if "." in name:
         parts = name.split(".")
-        expr = pl.col(parts[0])
+        # Defer struct navigation through Column so _apply_getitem_key runs under the
+        # active frame schema (null-safe / missing-field parity with Spark).
+        c: Column = Column(parts[0])
         for seg in parts[1:]:
-            expr = expr.struct.field(seg)
-        return Column(expr)  # pass a Polars Expr directly
+            c = c.getItem(seg)
+        return c
     return Column(pl.col(name))
 
 
@@ -48,6 +62,36 @@ def get_json_object(col: Union[str, Column], path: str) -> Column:
     col_expr = col.to_native() if isinstance(col, Column) else pl.col(col)
 
     return Column(col_expr.str.json_path_match(path))
+
+
+def from_json(col_name: Union[str, Column], schema: Union[DataType, str]) -> Column:
+    """
+    Mimics pyspark.sql.functions.from_json for common schemas.
+
+    Supports sparkleframe DataType schemas (ArrayType/MapType/StructType and primitives)
+    and simple Spark SQL schema strings (e.g. "array<string>", "map<string,string>",
+    "field_a STRING, field_b INT").
+    """
+    parsed_schema = _schema_from_string(schema) if isinstance(schema, str) else schema
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+
+    def _parse(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, (dict, list)):
+            raw = value
+        else:
+            try:
+                raw = json.loads(value)
+            except Exception:
+                return None
+        return _coerce_json_value(raw, parsed_schema)
+
+    if isinstance(parsed_schema, DataType):
+        return_dtype = parsed_schema.to_native()
+    else:
+        return_dtype = parsed_schema
+    return Column(expr.map_elements(_parse, return_dtype=return_dtype))
 
 
 def lit(value) -> Column:
@@ -174,6 +218,52 @@ def max(col_name: Union[str, Column]) -> Column:
     return Column(expr.max())
 
 
+def first(col_name: Union[str, Column], ignorenulls: bool = False) -> Column:
+    """Mimics pyspark.sql.functions.first."""
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.drop_nulls().first() if ignorenulls else expr.first())
+
+
+def map_from_entries(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.map_from_entries.
+
+    Expects an array of structs with ``key`` and ``value`` fields.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+
+    def _entries_to_map(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, list):
+            out: dict[Any, Any] = {}
+            for entry in value:
+                if isinstance(entry, dict) and "key" in entry and "value" in entry:
+                    out[entry["key"]] = entry["value"]
+            return out
+        return None
+
+    return Column(expr.map_elements(_entries_to_map, return_dtype=pl.Object))
+
+
+def map_keys(col_name: Union[str, Column]) -> Column:
+    """Mimics pyspark.sql.functions.map_keys."""
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+
+    def _keys(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return list(value.keys())
+        if isinstance(value, list):
+            return [entry.get("key") for entry in value if isinstance(entry, dict) and "key" in entry]
+        return None
+
+    return Column(expr.map_elements(_keys, return_dtype=pl.List(pl.String)))
+
+
 def collect_list(col_name: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.collect_list.
@@ -189,6 +279,30 @@ def collect_list(col_name: Union[str, Column]) -> Column:
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.filter(expr.is_not_null()).implode())
+
+
+def collect_set(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.collect_set.
+
+    Collects distinct non-null values per group when used with ``groupBy`` / ``agg``.
+    The order of elements in the result array is not guaranteed, matching PySpark.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.filter(expr.is_not_null()).implode().list.unique())
+
+
+def transform(col_name: Union[str, Column], func: Callable[[Column], Any]) -> Column:
+    """
+    Mimics pyspark.sql.functions.transform for array columns.
+
+    Applies a lambda expression to each element of an array and returns a new array.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    element_col = Column(pl.element())
+    transformed = func(element_col)
+    transformed_expr = transformed.to_native() if isinstance(transformed, Column) else _to_expr(transformed)
+    return Column(expr.list.eval(transformed_expr))
 
 
 def round(col_name: Union[str, Column], scale: int = 0) -> Column:
@@ -551,6 +665,21 @@ def split(col_name: Union[str, Column], pattern: str, limit: int = -1) -> Column
     return Column(expr.map_elements(_one, return_dtype=pl.List(pl.String)))
 
 
+def substring(col_name: Union[str, Column], pos: int, length: int) -> Column:
+    """
+    Mimics pyspark.sql.functions.substring.
+
+    ``pos`` is 1-based (negative values count from string end).
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    p, ln = pos, length
+
+    def _one(v: Any) -> str | None:
+        return _substring_sparklike(v, p, ln)
+
+    return Column(expr.map_elements(_one, return_dtype=pl.String))
+
+
 def now() -> Column:
     """
     Mimics pyspark.sql.functions.now: current timestamp (same value for all rows) at evaluation.
@@ -573,6 +702,90 @@ def monotonically_increasing_id() -> Column:
     partition id; multi-executor layout is not modeled.
     """
     return Column(pl.int_range(0, pl.len(), dtype=pl.Int64, eager=False))
+
+
+def current_date() -> Column:
+    """Mimics pyspark.sql.functions.current_date."""
+    return Column(pl.lit(date.today()))
+
+
+def date_sub(col_name: Union[str, Column], days: int) -> Column:
+    """
+    Mimics pyspark.sql.functions.date_sub.
+
+    String arguments use the same Spark-like string-to-date rules as :func:`datediff`.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(_as_date_sparklike_expr(expr) - pl.duration(days=int(days)))
+
+
+def datediff(end: Union[str, Column], start: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.datediff.
+
+    String end/start values are coerced to dates using rules closer to Spark ``cast(… as date)``.
+    """
+    end_expr = _to_expr(end) if isinstance(end, Column) else pl.col(end)
+    start_expr = _to_expr(start) if isinstance(start, Column) else pl.col(start)
+    e = _as_date_sparklike_expr(end_expr)
+    s = _as_date_sparklike_expr(start_expr)
+    return Column((e - s).dt.total_days().cast(pl.Int32))
+
+
+def months_between(end: Union[str, Column], start: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.months_between.
+
+    Uses a simplified Spark-like approximation for fractional months.
+    """
+    end_expr = _to_expr(end) if isinstance(end, Column) else pl.col(end)
+    start_expr = _to_expr(start) if isinstance(start, Column) else pl.col(start)
+    end_date = _as_date_sparklike_expr(end_expr)
+    start_date = _as_date_sparklike_expr(start_expr)
+    whole_months = (end_date.dt.year() - start_date.dt.year()) * 12 + (end_date.dt.month() - start_date.dt.month())
+    day_fraction = (end_date.dt.day() - start_date.dt.day()) / pl.lit(31.0)
+    return Column((whole_months + day_fraction).cast(pl.Float64))
+
+
+def broadcast(df: Any) -> Any:
+    """
+    Mimics pyspark.sql.functions.broadcast.
+
+    Sparkleframe runs in-process and has no join planner hints, so this is a no-op.
+    """
+    return df
+
+
+def array_contains(col_name: Union[str, Column], value: Union[str, Column, Any]) -> Column:
+    """Mimics pyspark.sql.functions.array_contains."""
+    array_expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    value_expr = _to_expr(value) if isinstance(value, Column) else pl.lit(value)
+    return Column(array_expr.list.contains(value_expr))
+
+
+def size(col_name: Union[str, Column]) -> Column:
+    """Mimics pyspark.sql.functions.size for array/map-like values."""
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(pl.when(expr.is_null()).then(pl.lit(None)).otherwise(expr.list.len()).cast(pl.Int32))
+
+
+def filter(col_name: Union[str, Column], func: Callable[[Column], Any]) -> Column:
+    """Mimics pyspark.sql.functions.filter for array columns."""
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    element_col = Column(pl.element())
+    predicate = func(element_col)
+    predicate_expr = predicate.to_native() if isinstance(predicate, Column) else _to_expr(predicate)
+    return Column(expr.list.eval(pl.when(predicate_expr).then(pl.element()).otherwise(pl.lit(None))).list.drop_nulls())
+
+
+def explode(col_name: Union[str, Column]) -> Column:
+    """Mimics pyspark.sql.functions.explode."""
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    column = Column(expr.explode())
+    setattr(column, "_is_explode", True)
+    if isinstance(col_name, str):
+        setattr(column, "_explode_source_name", col_name)
+    return column
 
 
 def _as_col_expr(col_name: Union[str, Column]) -> pl.Expr:
@@ -680,18 +893,22 @@ def try_to_timestamp(
     return _to_datetime_column(col_name, fmt, strict=False)
 
 
-_SPARK_DATE_FORMAT_MAP = [
-    ("yyyy", "%Y"),
-    ("MM", "%m"),
-    ("dd", "%d"),
-]
+def to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
+    """
+    Mimics pyspark.sql.functions.to_date.
 
+    Converts a string column to a date using the given Spark format pattern.
+    Malformed values raise under Spark 4 ANSI defaults (see :func:`try_to_date`).
 
-def _convert_spark_date_format(fmt: str) -> str:
-    """Translate a Spark-style date format string to strftime-style."""
-    for spark_fmt, strftime_fmt in _SPARK_DATE_FORMAT_MAP:
-        fmt = fmt.replace(spark_fmt, strftime_fmt)
-    return fmt
+    Args:
+        col_name (str or Column): Column with string values to convert to dates.
+        fmt (str, optional): The date format. Defaults to ``yyyy-MM-dd``.
+
+    Returns:
+        Column: A Column with values converted to Polars Date type.
+    """
+    fmt = fmt or "yyyy-MM-dd"
+    return _to_date_column(col_name, fmt, strict=True)
 
 
 def try_to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
@@ -708,11 +925,7 @@ def try_to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Colu
         Column: A Column with values converted to Polars Date type (null for failures).
     """
     fmt = fmt or "yyyy-MM-dd"
-    strftime_fmt = _convert_spark_date_format(fmt)
-    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-    # Spark applies the format to string inputs only; unparseable strings become null.
-    parsed = expr.cast(pl.String, strict=False).str.strptime(pl.Date, strftime_fmt, strict=False)
-    return Column(parsed)
+    return _to_date_column(col_name, fmt, strict=False)
 
 
 def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Column]) -> Column:
@@ -723,51 +936,31 @@ def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Col
     for out-of-bounds access instead of raising.
 
     For maps (materialized as List(Struct(key, value))): looks up the key and
-    returns null when absent.
+    returns null when absent. A string ``extraction`` is interpreted as a **column
+    name** (Spark SPARK-48766), not a literal key; use :func:`lit` wrapped in
+    :class:`~sparkleframe.polarsdf.column.Column` for a literal map key.
 
     Args:
         col_name (str or Column): The array or map column.
         extraction (str, int, or Column): The index (1-based int) for arrays,
-            or the key (str / Column) for maps.
+            or the key column name (str) / key expression (Column) for maps.
 
     Returns:
         Column: A Column with the extracted element, or null on failure.
     """
-    col_expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return element_at_column(col_name, extraction, strict=False)
 
-    if isinstance(extraction, Column):
-        extraction = extraction.to_native()
 
-    if isinstance(extraction, pl.Expr):
-        # Dynamic column-based key lookup for maps: list.eval pattern
-        return Column(
-            col_expr.list.eval(
-                pl.when(pl.element().struct.field("key") == extraction).then(pl.element().struct.field("value"))
-            )
-            .list.drop_nulls()
-            .list.first()
-        )
+def element_at(col_name: Union[str, Column], extraction: Union[str, int, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.element_at.
 
-    if isinstance(extraction, int):
-        # Spark uses 1-based indexing; index 0 is invalid -> null
-        if extraction == 0:
-            return Column(pl.lit(None))
-        polars_idx = extraction - 1 if extraction > 0 else extraction
-        return Column(col_expr.list.get(polars_idx, null_on_oob=True))
-
-    if isinstance(extraction, str):
-        # Map key lookup: List(Struct(key, value)) layout
-        return Column(
-            col_expr.list.eval(
-                pl.when(pl.element().struct.field("key") == pl.lit(extraction)).then(
-                    pl.element().struct.field("value")
-                )
-            )
-            .list.drop_nulls()
-            .list.first()
-        )
-
-    raise TypeError(f"try_element_at extraction must be int, str, or Column, got {type(extraction).__name__}")
+    Spark 4 with ANSI enabled: invalid array indices raise
+    ``SparkArrayIndexOutOfBoundsException``; use :func:`try_element_at` for null
+    on failure. A string ``extraction`` on a map is a **literal key** (unlike
+    :func:`try_element_at`, which treats a string as a column name).
+    """
+    return element_at_column(col_name, extraction, strict=True)
 
 
 def uuid() -> Column:

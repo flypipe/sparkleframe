@@ -412,13 +412,7 @@ class TestColumnComparisonCoercion:
 
     def test_ordering_iso_datetime_string_vs_date_sub_offer_age(self) -> None:
         """``created >= date_sub(current_date(), 30)`` must be boolean, not null."""
-        import importlib
-
-        _fn = importlib.import_module("sparkleframe.polarsdf.functions")
-        if not hasattr(_fn, "current_date") or not hasattr(_fn, "date_sub"):
-            pytest.skip("requires current_date/date_sub (merged with functions PR in stack)")
-        current_date = _fn.current_date
-        date_sub = _fn.date_sub
+        from sparkleframe.polarsdf.functions import current_date, date_sub
 
         today = date.today()
         recent = pl.DataFrame({"created": [f"{today.isoformat()}T12:00:00Z"]})

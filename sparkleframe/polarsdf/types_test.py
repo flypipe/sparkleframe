@@ -10,6 +10,20 @@ from sparkleframe.polarsdf import types as sft
 from sparkleframe.tests.utils import _get_json_from_dataframe, assert_sparkle_spark_frame_are_equal
 
 
+class TestScalarTypeRegistry:
+    def test_registry_roundtrip_consistency(self) -> None:
+        canonical_spark_names = {entry.spark_name for entry in sft._SCALAR_TYPE_REGISTRY}
+        assert canonical_spark_names == set(sft._POLARS_TO_SPARK_NAME.values())
+        assert canonical_spark_names <= set(sft._SPARK_NAME_TO_POLARS.keys())
+
+        for entry in sft._SCALAR_TYPE_REGISTRY:
+            assert sft.spark_type_name_to_polars(entry.spark_name) == entry.polars_dtype
+            assert entry.datatype_cls().to_native() == entry.polars_dtype
+            for alias in entry.aliases:
+                assert sft.spark_type_name_to_polars(alias) == entry.polars_dtype
+                assert sft.spark_name_to_datatype(alias).typeName() == entry.datatype_cls().typeName()
+
+
 class TestTypes:
 
     @pytest.mark.parametrize(

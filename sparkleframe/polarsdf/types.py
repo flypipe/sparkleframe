@@ -1,39 +1,9 @@
 import json
 import re
-from typing import Any, Dict, Iterator, List, Optional, Union
+from dataclasses import dataclass
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 import polars as pl
-
-SPARK_TYPE_NAME_MAP: dict[str, pl.DataType] = {
-    "string": pl.Utf8,
-    "int": pl.Int32,
-    "integer": pl.Int32,
-    "bigint": pl.Int64,
-    "long": pl.Int64,
-    "short": pl.Int16,
-    "smallint": pl.Int16,
-    "tinyint": pl.Int8,
-    "byte": pl.Int8,
-    "float": pl.Float32,
-    "double": pl.Float64,
-    "boolean": pl.Boolean,
-    "date": pl.Date,
-    "timestamp": pl.Datetime,
-    "binary": pl.Binary,
-}
-
-
-def spark_type_name_to_polars(name: str) -> pl.DataType:
-    key = name.strip().lower()
-    decimal_match = re.match(r"decimal\(\s*(\d+)\s*,\s*(\d+)\s*\)", key)
-    if decimal_match:
-        precision = int(decimal_match.group(1))
-        scale = int(decimal_match.group(2))
-        return pl.Decimal(precision=precision, scale=scale)
-    try:
-        return SPARK_TYPE_NAME_MAP[key]
-    except KeyError:
-        raise ValueError(f"Unsupported Spark type name for try_cast: '{name}'") from None
 
 
 class DataType:
@@ -159,6 +129,188 @@ class BinaryType(DataType):
 
     def to_native(self):
         return pl.Binary
+
+
+# ---------------------------------------------------------------------------
+# Scalar type registry (single source of truth for Spark SQL name <-> Polars <-> DataType)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ScalarTypeEntry:
+    """One scalar Spark/Polars/SparkleFrame type triple."""
+
+    spark_name: str
+    polars_dtype: Type[pl.DataType]
+    datatype_cls: Type[DataType]
+    aliases: tuple[str, ...] = ()
+    ddl_name: Optional[str] = None
+
+
+def _scalar_registry_entries() -> list[_ScalarTypeEntry]:
+    """Build registry after scalar DataType classes are defined."""
+    return [
+        _ScalarTypeEntry("tinyint", pl.Int8, ByteType, aliases=("byte",)),
+        _ScalarTypeEntry("smallint", pl.Int16, ShortType, aliases=("short",)),
+        _ScalarTypeEntry("int", pl.Int32, IntegerType, aliases=("integer",)),
+        _ScalarTypeEntry("bigint", pl.Int64, LongType, aliases=("long",)),
+        _ScalarTypeEntry("float", pl.Float32, FloatType),
+        _ScalarTypeEntry("double", pl.Float64, DoubleType),
+        _ScalarTypeEntry("boolean", pl.Boolean, BooleanType),
+        _ScalarTypeEntry("string", pl.Utf8, StringType),
+        _ScalarTypeEntry("date", pl.Date, DateType),
+        _ScalarTypeEntry("timestamp", pl.Datetime, TimestampType),
+        _ScalarTypeEntry("binary", pl.Binary, BinaryType),
+    ]
+
+
+_SCALAR_TYPE_REGISTRY: list[_ScalarTypeEntry] = _scalar_registry_entries()
+
+
+def _build_spark_name_to_polars() -> dict[str, pl.DataType]:
+    out: dict[str, pl.DataType] = {}
+    for entry in _SCALAR_TYPE_REGISTRY:
+        out[entry.spark_name] = entry.polars_dtype
+        for alias in entry.aliases:
+            out[alias] = entry.polars_dtype
+    return out
+
+
+def _build_spark_name_to_datatype_cls() -> dict[str, Type[DataType]]:
+    out: dict[str, Type[DataType]] = {}
+    for entry in _SCALAR_TYPE_REGISTRY:
+        out[entry.spark_name] = entry.datatype_cls
+        for alias in entry.aliases:
+            out[alias] = entry.datatype_cls
+    return out
+
+
+def _build_polars_to_spark_name() -> dict[Type[pl.DataType], str]:
+    return {entry.polars_dtype: entry.spark_name for entry in _SCALAR_TYPE_REGISTRY}
+
+
+def _build_polars_to_datatype_cls() -> dict[Type[pl.DataType], Type[DataType]]:
+    return {entry.polars_dtype: entry.datatype_cls for entry in _SCALAR_TYPE_REGISTRY}
+
+
+_SPARK_NAME_TO_POLARS: dict[str, pl.DataType] = _build_spark_name_to_polars()
+_SPARK_NAME_TO_DATATYPE_CLS: dict[str, Type[DataType]] = _build_spark_name_to_datatype_cls()
+_POLARS_TO_SPARK_NAME: dict[Type[pl.DataType], str] = _build_polars_to_spark_name()
+_POLARS_TO_DATATYPE_CLS: dict[Type[pl.DataType], Type[DataType]] = _build_polars_to_datatype_cls()
+
+# Backward-compatible alias used by column tests and casts.
+SPARK_TYPE_NAME_MAP: dict[str, pl.DataType] = _SPARK_NAME_TO_POLARS
+
+# Unsigned Polars dtypes (not in the scalar registry; used for display / schema coercion).
+_POLARS_UNSIGNED_TO_SPARK_NAME: dict[Type[pl.DataType], str] = {
+    pl.UInt8: "tinyint",
+    pl.UInt16: "smallint",
+    pl.UInt32: "int",
+    pl.UInt64: "bigint",
+}
+
+_POLARS_UNSIGNED_TO_DATATYPE_CLS: dict[Type[pl.DataType], Type[DataType]] = {
+    pl.UInt8: ByteType,
+    pl.UInt16: ShortType,
+    pl.UInt32: IntegerType,
+    pl.UInt64: LongType,
+}
+
+# DDL-only: Polars dtype -> Spark SQL type for ``createDataFrame([], ddl)``.
+_POLARS_DDL_SPARK_NAME_OVERRIDES: dict[Type[pl.DataType], str] = {
+    pl.Null: "void",
+    pl.UInt8: "smallint",
+    pl.UInt16: "int",
+    pl.UInt32: "bigint",
+    pl.UInt64: "decimal(20,0)",
+    pl.Duration: "bigint",
+}
+
+
+def spark_type_name_to_polars(name: str) -> pl.DataType:
+    key = name.strip().lower()
+    decimal_match = re.match(r"decimal\(\s*(\d+)\s*,\s*(\d+)\s*\)", key)
+    if decimal_match:
+        precision = int(decimal_match.group(1))
+        scale = int(decimal_match.group(2))
+        return pl.Decimal(precision=precision, scale=scale)
+    try:
+        return _SPARK_NAME_TO_POLARS[key]
+    except KeyError:
+        raise ValueError(f"Unsupported Spark type name for try_cast: '{name}'") from None
+
+
+def spark_name_to_datatype(name: str) -> DataType:
+    """Instantiate a SparkleFrame ``DataType`` from a Spark SQL type name."""
+    key = name.strip().lower()
+    decimal_match = re.match(r"decimal\(\s*(\d+)\s*,\s*(\d+)\s*\)", key)
+    if decimal_match:
+        precision = int(decimal_match.group(1))
+        scale = int(decimal_match.group(2))
+        return DecimalType(precision, scale)
+    try:
+        return _SPARK_NAME_TO_DATATYPE_CLS[key]()
+    except KeyError:
+        raise ValueError(f"Unsupported Spark type name: '{name}'") from None
+
+
+def polars_dtype_to_spark_sql_name(dtype: pl.DataType) -> str:
+    """
+    Map a Polars dtype to a Spark SQL type name for ``DataFrame.dtypes``.
+
+    Complex types (struct/list/decimal) are formatted recursively; unknown types fall back to ``str(dtype)``.
+    """
+    if isinstance(dtype, pl.Decimal):
+        return f"decimal({dtype.precision},{dtype.scale})"
+    if isinstance(dtype, pl.Struct):
+        fields_str = ",".join(f"{field.name}:{polars_dtype_to_spark_sql_name(field.dtype)}" for field in dtype.fields)
+        return f"struct<{fields_str}>"
+    if isinstance(dtype, (pl.List, pl.Array)):
+        return "array"
+    for polars_type, spark_name in _POLARS_UNSIGNED_TO_SPARK_NAME.items():
+        if isinstance(dtype, polars_type):
+            return spark_name
+    for polars_type, spark_name in _POLARS_TO_SPARK_NAME.items():
+        if isinstance(dtype, polars_type):
+            return spark_name
+    if dtype == pl.Time:
+        return "time"
+    if dtype == pl.Duration:
+        return "interval"
+    if dtype == pl.Object:
+        return "binary"
+    if dtype in (pl.Utf8, pl.String):
+        return "string"
+    return str(dtype)
+
+
+def polars_dtype_to_spark_ddl_name(dtype: pl.DataType) -> str:
+    """Map a Polars dtype to Spark SQL for empty-frame ``createDataFrame([], ddl)``."""
+    if isinstance(dtype, (pl.List, pl.Array, pl.Struct, pl.Object)):
+        return "string"
+    if dtype in _POLARS_DDL_SPARK_NAME_OVERRIDES:
+        return _POLARS_DDL_SPARK_NAME_OVERRIDES[dtype]
+    if isinstance(dtype, pl.Decimal):
+        return f"decimal({dtype.precision},{dtype.scale})"
+    if isinstance(dtype, pl.Datetime):
+        return "timestamp"
+    for polars_type, spark_name in _POLARS_TO_SPARK_NAME.items():
+        if isinstance(dtype, polars_type):
+            return spark_name
+    return "string"
+
+
+def polars_dtype_to_spark_datatype(dtype: pl.DataType) -> DataType:
+    """Instantiate a scalar SparkleFrame ``DataType`` from a Polars dtype (no nested types)."""
+    if dtype == pl.Null:
+        return StringType()
+    for polars_type, cls in _POLARS_UNSIGNED_TO_DATATYPE_CLS.items():
+        if isinstance(dtype, polars_type):
+            return cls()
+    for polars_type, cls in _POLARS_TO_DATATYPE_CLS.items():
+        if isinstance(dtype, polars_type):
+            return cls()
+    raise TypeError(f"Unsupported dtype '{dtype}'")
 
 
 class StructField(DataType):

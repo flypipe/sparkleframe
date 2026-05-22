@@ -1004,3 +1004,31 @@ def _now_batch(s: pl.Series) -> pl.Series:
         return pl.Series("now", [], dtype=pl.Datetime("us"))
     ts = datetime.now(timezone.utc).replace(tzinfo=None)
     return pl.Series("now", [ts] * s.len(), dtype=pl.Datetime("us"))
+
+
+def _substring_sparklike(value: Any, pos: int, length: int) -> str | None:
+    """Replicate Spark substring semantics (1-based indexing; negative ``pos`` from end)."""
+    if value is None:
+        return None
+    if length <= 0:
+        return ""
+
+    s = value if isinstance(value, str) else str(value)
+    n = len(s)
+
+    if pos > 0:
+        start = pos - 1
+    elif pos < 0:
+        start = n + pos
+    else:
+        start = 0
+
+    if start < 0:
+        start = 0
+    if start >= n:
+        return ""
+
+    end = start + length
+    if end > n:
+        end = n
+    return s[start:end]

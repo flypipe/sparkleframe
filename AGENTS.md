@@ -37,6 +37,7 @@ error.
 | Timestamps | `to_timestamp` | `try_to_timestamp` |
 | Dates | `to_date` (where strict) | `try_to_date` |
 | Boolean from string | `cast` / strict helpers | `try_cast` / lenient helpers |
+| Array index / map lookup | `element_at` | `try_element_at` |
 
 When adding or changing behavior:
 
@@ -45,6 +46,12 @@ When adding or changing behavior:
 - Strict string→boolean casting uses `_string_to_bool_expr_strict`; lenient uses `_string_to_bool_expr` in
   `column_helpers.py`.
 - Do not reintroduce Spark 3–style silent nulls for strict APIs.
+- **Never implement a strict API as a one-line delegate to its `try_*` sibling** (e.g. `element_at` must not call
+  `try_element_at`). Spark 4 ANSI strictness is the default; the lenient function is the exception.
+- Shared logic belongs in `*_helpers.py` with a `strict` flag (see `element_at_column` in `functions_helpers.py`).
+- **`element_at` vs `try_element_at` string `extraction`:** for maps, Spark documents different semantics (SPARK-48766):
+  `element_at(col, "key")` uses the literal string `"key"`; `try_element_at(col, "key")` uses the column named `key`.
+  Use `lit("key")` (or a `Column` wrapping a literal) when a lenient map lookup needs a literal key.
 
 ## Testing requirements
 
@@ -86,6 +93,9 @@ What to assert depends on the API:
 2. **Lenient APIs** (`try_cast`, `try_to_timestamp`, `try_to_date`, …): include malformed rows; bad values become
    `null`, then compare the full result frame to Spark with `assert_sparkle_spark_frame_are_equal`.
 3. **Valid inputs:** still required — same pipeline on Spark and SparkleFrame, then frame parity.
+4. **Strict/lenient pairs:** add at least one test where Spark **raises** on the strict API (confirm on Spark first,
+   then `pytest.raises` on SparkleFrame evaluation), and a matching test that the lenient API returns `null` on the
+   same input. See `TestElementAt::test_array_oob_raises_like_spark` in `functions_test.py`.
 
 ```python
 import pytest

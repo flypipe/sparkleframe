@@ -1,8 +1,10 @@
+import json
 from dataclasses import dataclass, field
-from typing import List, Optional, Iterable, Any, Dict
-from sparkleframe.polarsdf import types as sft
+from typing import Any, Dict, Iterable, List, Optional
+
 import polars as pl
 
+from sparkleframe.polarsdf import types as sft
 from sparkleframe.polarsdf.types import StructType
 
 
@@ -387,7 +389,14 @@ class _MapTypeUtils:
                     for sf in dt.fields
                 }
 
-            # leaf
+            # leaf — Spark semantics: explicit StringType coerces non-null values to str.
+            if isinstance(dt, sft.StringType):
+                if val is None:
+                    return None
+                if isinstance(val, (dict, list)):
+                    return json.dumps(val, default=str)
+                return str(val)
+
             return val
 
         cols = {name: [] for name in colnames}
