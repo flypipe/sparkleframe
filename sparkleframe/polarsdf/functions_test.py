@@ -1,3 +1,4 @@
+import builtins
 import json
 import re
 import uuid as std_uuid
@@ -20,17 +21,24 @@ from pyspark.sql.functions import desc as spark_desc
 from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
 from pyspark.sql.functions import desc_nulls_last as spark_desc_nulls_last
 from pyspark.sql.functions import get_json_object as spark_get_json_object
+from pyspark.sql.functions import initcap as spark_initcap
 from pyspark.sql.functions import length as spark_length
 from pyspark.sql.functions import lit as spark_lit
 from pyspark.sql.functions import lower as spark_lower
+from pyspark.sql.functions import md5 as spark_md5
+from pyspark.sql.functions import monotonically_increasing_id as spark_monotonically_increasing_id
+from pyspark.sql.functions import now as spark_now
 from pyspark.sql.functions import rank as spark_rank
 from pyspark.sql.functions import regexp_replace as spark_regexp_replace
 from pyspark.sql.functions import round as spark_round
 from pyspark.sql.functions import row_number as spark_row_number
+from pyspark.sql.functions import split as spark_split
 from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import to_timestamp as spark_to_timestamp
+from pyspark.sql.functions import trim as spark_trim
 from pyspark.sql.functions import try_element_at as spark_try_element_at
 from pyspark.sql.functions import try_to_timestamp as spark_try_to_timestamp
+from pyspark.sql.functions import unix_millis as spark_unix_millis
 from pyspark.sql.functions import when as spark_when
 from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import DoubleType as SparkDoubleType
@@ -56,15 +64,21 @@ from sparkleframe.polarsdf.functions import (
     desc_nulls_first,
     desc_nulls_last,
     get_json_object,
+    initcap,
     length,
     lit,
     lower,
+    md5,
+    monotonically_increasing_id,
+    now,
     rank,
     regexp_replace,
     round,
     row_number,
+    split,
     struct,
     to_timestamp,
+    trim,
     try_element_at,
     try_to_date,
     try_to_timestamp,
@@ -72,7 +86,7 @@ from sparkleframe.polarsdf.functions import (
     when,
 )
 from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import create_spark_df, spark_rows_from_dict
+from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal, create_spark_df, spark_rows_from_dict
 
 sample_data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
 
@@ -408,6 +422,33 @@ class TestFunctions:
         assert_pyspark_df_equal(result_df, expected_df)
 
     @pytest.mark.parametrize(
+        "datetime_strs",
+        [
+            ["2023-01-01 12:34:56", "2024-02-02 23:45:01"],
+            ["2024-05-31T20:14:19", "2023-12-12T11:11:11"],
+        ],
+    )
+    def test_to_timestamp_no_format_against_spark(self, spark, datetime_strs):
+        data = {"ts": datetime_strs}
+        polars_df = DataFrame(pl.DataFrame(data))
+
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        expected_df = spark_df.select(spark_to_timestamp("ts").alias("result"))
+        result_df = polars_df.select(to_timestamp("ts").alias("result"))
+
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_to_timestamp_no_format_malformed_raises(self, spark):
+        """Spark 4 to_timestamp(col) without format is ANSI-strict and raises on malformed input."""
+        polars_df = DataFrame(pl.DataFrame({"ts": ["2023-01-01 12:34:56", "not-a-date"]}))
+        with pytest.raises(Exception):
+            polars_df.select(to_timestamp("ts").alias("result")).to_native_df()
+
+        spark_df = spark.createDataFrame([("not-a-date",)], ["ts"])
+        with pytest.raises(Exception):
+            spark_df.select(spark_to_timestamp("ts").alias("result")).collect()
+
+    @pytest.mark.parametrize(
         "sparkle_col_type, spark_col_type",
         [
             (str, str),
@@ -708,6 +749,109 @@ class TestUuid:
             assert std_uuid.UUID(s).version == 4
 
 
+class TestInitcap:
+    """Parity with PySpark for initcap."""
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            ["hello world", "FOO BAR", "already Title"],
+            [None, "", "café latte"],
+            ["UPPER", "lower", "mIxEd CaSe"],
+        ],
+    )
+    def test_initcap_against_spark(self, spark, values) -> None:
+        data = {"s": values}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_df = polars_df.select(initcap("s").alias("out"))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_initcap(spark_col("s")).alias("out")
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestMd5:
+    def test_md5_string_against_spark(self, spark) -> None:
+        data = {"s": ["abc", "", None, "café"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_df = polars_df.select(md5("s").alias("h"))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_md5(spark_col("s")).alias("h")
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_md5_binary_against_spark(self, spark) -> None:
+        data = {"b": [b"abc", None, b"", b"\x00\xff"]}
+        polars_df = DataFrame(pl.DataFrame(data, schema={"b": pl.Binary}))
+        result_df = polars_df.select(md5("b").alias("h"))
+        spark_in = spark.createDataFrame(spark_rows_from_dict(data), ["b"])
+        expected_df = spark_in.select(spark_md5(spark_col("b")).alias("h"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestTrimAndSplit:
+    """Parity with PySpark for trim and split."""
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            ["  a  ", "b\t", " c \n"],
+            [None, "  x  ", ""],
+        ],
+    )
+    def test_trim_against_spark(self, spark, values) -> None:
+        data = {"s": values}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_df = polars_df.select(trim("s").alias("out"))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_trim(spark_col("s")).alias("out")
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    @pytest.mark.parametrize(
+        "values, pattern, limit",
+        [
+            (["a-b-c", "x-y-z", None], r"-", -1),
+            (["a1b1c", "nope"], r"\d", -1),
+            (["a-b-c-d", "p.q"], r"-", 2),
+        ],
+    )
+    def test_split_against_spark(self, spark, values: list, pattern: str, limit: int) -> None:
+        data = {"s": values}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_df = polars_df.select(split("s", pattern, limit).alias("parts"))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_split(spark_col("s"), spark_lit(pattern), limit).alias("parts")
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestNowAndMonotonicallyIncreasingId:
+    """Parity with PySpark for now and monotonically_increasing_id."""
+
+    def test_now_all_rows_equal_and_close_to_spark(self, spark) -> None:
+        data = {"x": [1, 2, 3]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_spark_df = create_spark_df(spark, polars_df.select(now().alias("t")))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_now().alias("t")
+        )
+        ms1 = [r[0] for r in result_spark_df.select(spark_unix_millis("t").alias("m")).collect()]
+        ms2 = [r[0] for r in expected_df.select(spark_unix_millis("t").alias("m")).collect()]
+        assert len(set(ms1)) == 1
+        assert len(set(ms2)) == 1
+        assert builtins.abs(ms1[0] - ms2[0]) < 3_000
+
+    def test_monotonically_increasing_id_against_spark(self, spark) -> None:
+        data = {"k": ["a", "b", "c", "d"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        result_df = polars_df.select(monotonically_increasing_id().alias("id"))
+        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
+            spark_monotonically_increasing_id().alias("id")
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
 class TestTryToTimestamp:
     """Tests for try_to_timestamp — verifies null-safe parsing behaviour."""
 
@@ -730,8 +874,8 @@ class TestTryToTimestamp:
 
         spark_df = spark.createDataFrame(df)
         expected_df = spark_df.select(spark_try_to_timestamp(spark_col("ts"), spark_lit(fmt)).alias("result"))
-        result_spark_df = create_spark_df(spark, polars_df.select(try_to_timestamp("ts", fmt).alias("result")))
-        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+        result_df = polars_df.select(try_to_timestamp("ts", fmt).alias("result"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
     def test_try_to_timestamp_malformed_returns_null(self, spark):
         df = pl.DataFrame({"ts": ["2023-01-01 12:34:56", "not-a-date", None]})
@@ -743,11 +887,9 @@ class TestTryToTimestamp:
         assert result["result"][2] is None
 
         spark_df = spark.createDataFrame(df.to_pandas())
-        expected_df = spark_df.select(
-            spark_try_to_timestamp(spark_col("ts"), spark_lit("yyyy-MM-dd HH:mm:ss")).alias("result")
-        )
-        result_spark_df = create_spark_df(spark, polars_df.select(try_to_timestamp("ts").alias("result")))
-        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+        expected_df = spark_df.select(spark_try_to_timestamp("ts").alias("result"))
+        result_df = polars_df.select(try_to_timestamp("ts").alias("result"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
     def test_try_to_timestamp_accepts_column_input(self, spark):
         df = pl.DataFrame({"ts": ["2023-01-01 12:34:56"]})
@@ -757,11 +899,9 @@ class TestTryToTimestamp:
         assert result["result"][0] is not None
 
         spark_df = spark.createDataFrame(df.to_pandas())
-        expected_df = spark_df.select(
-            spark_try_to_timestamp(spark_col("ts"), spark_lit("yyyy-MM-dd HH:mm:ss")).alias("result")
-        )
-        result_spark_df = create_spark_df(spark, polars_df.select(try_to_timestamp(col("ts")).alias("result")))
-        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+        expected_df = spark_df.select(spark_try_to_timestamp("ts").alias("result"))
+        result_df = polars_df.select(try_to_timestamp(col("ts")).alias("result"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
 
 class TestTryToDate:

@@ -7,6 +7,8 @@ import polars as pl
 
 from sparkleframe.polarsdf import WindowSpec
 from sparkleframe.polarsdf.column import Column, _to_expr
+from sparkleframe.polarsdf.column_helpers import _md5_sparklike, _now_batch, _re_split_sparklike
+from sparkleframe.polarsdf.functions_helpers import _to_datetime_column, _to_timestamp_no_format_column
 from sparkleframe.polarsdf.functions_utils import _RankWrapper
 
 
@@ -233,65 +235,27 @@ def when(condition: Any, value) -> WhenBuilder:
     return WhenBuilder(condition, value)
 
 
-_SPARK_TS_FORMAT_MAP = [
-    ("yyyy", "%Y"),
-    ("MM", "%m"),
-    ("dd", "%d"),
-    ("HH", "%H"),
-    ("mm", "%M"),
-    ("ss", "%S"),
-    (".SSSSSS", ".%6f"),
-    (".SSSSS", ".%6f"),
-    (".SSSS", ".%6f"),
-    (".SSS", ".%6f"),
-    (".SS", ".%6f"),
-    (".S", ".%6f"),
-]
-
-
-def _convert_spark_ts_format(fmt: str) -> str:
-    """Translate a Spark-style timestamp format string to strftime-style."""
-    for spark_fmt, strftime_fmt in _SPARK_TS_FORMAT_MAP:
-        fmt = fmt.replace(spark_fmt, strftime_fmt)
-    return fmt
-
-
-def _pad_microseconds_expr(expr: pl.Expr) -> pl.Expr:
-    """Normalize fractional seconds to 6 digits (microseconds)."""
-
-    def pad_microseconds(val: Optional[str]) -> Optional[str]:
-        if val is None:
-            return None
-        if "." in val:
-            prefix, suffix = val.split(".", 1)
-            suffix = (suffix + "000000")[:6]
-            return f"{prefix}.{suffix}"
-        return val
-
-    return expr.map_elements(pad_microseconds, return_dtype=pl.String)
-
-
-def _to_datetime_column(col_name: Union[str, Column], fmt: str, *, strict: bool = True) -> Column:
-    strftime_fmt = _convert_spark_ts_format(fmt)
-    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-    if "%6f" in strftime_fmt:
-        expr = _pad_microseconds_expr(expr)
-    return Column(expr.str.strptime(pl.Datetime, strftime_fmt, strict=strict))
-
-
-def to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss") -> Column:
+def to_timestamp(
+    col_name: Union[str, Column],
+    fmt: Optional[str] = None,
+) -> Column:
     """
     Mimics pyspark.sql.functions.to_timestamp.
 
-    Converts a string column to a timestamp using the specified format.
+    If ``fmt`` is omitted, uses :func:`_to_timestamp_no_format_column` to mirror PySpark
+    "cast" semantics while covering layouts Polars cannot parse via cast alone. If
+    ``fmt`` is provided, only that Spark datetime pattern is used (as in SQL
+    ``to_timestamp(s, fmt)``), via :func:`_to_datetime_column`.
 
     Args:
         col_name (str or Column): Column with string values to convert to timestamps.
-        fmt (str): The timestamp format to parse the strings. Defaults to 'yyyy-MM-dd HH:mm:ss'.
+        fmt (str, optional): Spark datetime pattern, or ``None`` to use one-arg rules.
 
     Returns:
         Column: A Column with values converted to Polars datetime type.
     """
+    if fmt is None:
+        return _to_timestamp_no_format_column(col_name, strict=True)
     return _to_datetime_column(col_name, fmt, strict=True)
 
 
@@ -541,6 +505,77 @@ def lower(col_name: Union[str, Column]) -> Column:
     return Column(expr.str.to_lowercase())
 
 
+def initcap(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.initcap.
+
+    Converts the first letter of each word to uppercase and the rest to lowercase.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.str.to_titlecase())
+
+
+def md5(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.md5.
+
+    Returns the MD5 hash of a string (UTF-8) or binary column as a 32-character hex string.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.map_elements(_md5_sparklike, return_dtype=pl.String))
+
+
+def trim(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.trim (single-argument form).
+
+    Removes leading and trailing **ASCII space** (U+0020) only, matching Spark.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.str.strip_chars(" "))
+
+
+def split(col_name: Union[str, Column], pattern: str, limit: int = -1) -> Column:
+    """
+    Mimics pyspark.sql.functions.split.
+
+    Splits a string on a *regex* ``pattern`` (Python :mod:`re` dialect; subtle differences
+    from Spark's Java engine are possible). A non-positive ``limit`` applies the pattern
+    as many times as possible; a positive limit caps splits like Spark (``limit - 1``).
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    pat, lim = pattern, limit
+
+    def _one(s: Any) -> list[str] | None:
+        return _re_split_sparklike(s, pat, lim)
+
+    return Column(expr.map_elements(_one, return_dtype=pl.List(pl.String)))
+
+
+def now() -> Column:
+    """
+    Mimics pyspark.sql.functions.now: current timestamp (same value for all rows) at evaluation.
+
+    Uses UTC wall time without tzinfo, comparable to many Spark :class:`TimestampType` outputs.
+    """
+    return Column(
+        pl.int_range(0, pl.len(), dtype=pl.Int64, eager=False).map_batches(
+            _now_batch,
+            return_dtype=pl.Datetime("us"),
+        )
+    )
+
+
+def monotonically_increasing_id() -> Column:
+    """
+    Mimics pyspark.sql.functions.monotonically_increasing_id for a single in-memory partition.
+
+    Yields 0, 1, 2, … in **current row order** (row index). Does not bit-pack a Spark
+    partition id; multi-executor layout is not modeled.
+    """
+    return Column(pl.int_range(0, pl.len(), dtype=pl.Int64, eager=False))
+
+
 def _as_col_expr(col_name: Union[str, Column]) -> pl.Expr:
     return _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
 
@@ -623,19 +658,26 @@ def struct(*cols: Any) -> Column:
     return Column(pl.struct(parts))
 
 
-def try_to_timestamp(col_name: Union[str, Column], fmt: str = "yyyy-MM-dd HH:mm:ss") -> Column:
+def try_to_timestamp(
+    col_name: Union[str, Column],
+    fmt: Optional[str] = None,
+) -> Column:
     """
     Mimics pyspark.sql.functions.try_to_timestamp (Spark 4+).
 
-    Same as to_timestamp but returns null instead of raising on malformed strings.
+    If ``fmt`` is omitted, uses the same expression as one-arg :func:`to_timestamp`
+    (see :func:`_to_timestamp_no_format_column`). If ``fmt`` is given, uses the same
+    format-based parsing as :func:`to_timestamp`.
 
     Args:
         col_name (str or Column): Column with string values to convert to timestamps.
-        fmt (str): The timestamp format to parse the strings. Defaults to 'yyyy-MM-dd HH:mm:ss'.
+        fmt (str, optional): Spark datetime pattern, or ``None`` for one-arg rules.
 
     Returns:
         Column: A Column with values converted to Polars datetime type (null for failures).
     """
+    if fmt is None:
+        return _to_timestamp_no_format_column(col_name, strict=False)
     return _to_datetime_column(col_name, fmt, strict=False)
 
 
@@ -669,7 +711,9 @@ def try_to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Colu
     fmt = fmt or "yyyy-MM-dd"
     strftime_fmt = _convert_spark_date_format(fmt)
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-    return Column(expr.str.strptime(pl.Date, strftime_fmt, strict=False))
+    parsed_from_string = expr.cast(pl.String, strict=False).str.strptime(pl.Date, strftime_fmt, strict=False)
+    cast_direct = expr.cast(pl.Date, strict=False)
+    return Column(pl.coalesce(cast_direct, parsed_from_string))
 
 
 def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Column]) -> Column:
