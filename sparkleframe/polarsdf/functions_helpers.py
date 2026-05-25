@@ -388,7 +388,7 @@ def _map_key_lookup_expr(col_expr: pl.Expr, key_expr: pl.Expr) -> pl.Expr:
     if uses_named_column:
         return pl.struct([col_expr.alias("_map"), key_expr.alias("_key")]).map_elements(
             lambda row: _lookup_map_value_by_key(row["_map"], row["_key"]),
-            return_dtype=pl.Object,
+            return_dtype=None,
         )
 
     return (
@@ -418,19 +418,32 @@ def element_at_column(
     col_expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
 
     if isinstance(extraction, Column):
-        key_expr = extraction.to_native()
-        return Column(_map_key_lookup_expr(col_expr, key_expr))
+        extraction = extraction.to_native()
+
+    if isinstance(extraction, pl.Expr):
+        try:
+            lit_value = pl.DataFrame({"_x": [0]}).select(extraction.alias("_v"))["_v"][0]
+            if isinstance(lit_value, int):
+                extraction = lit_value
+        except Exception:
+            pass
 
     if isinstance(extraction, pl.Expr):
         return Column(_map_key_lookup_expr(col_expr, extraction))
 
     if isinstance(extraction, int):
-        idx = extraction
+        if extraction == 0:
+            if strict:
+                raise ValueError("element_at: index 0 is invalid (Spark uses 1-based indexing)")
+            return Column(pl.lit(None))
+        polars_idx = extraction - 1 if extraction > 0 else extraction
+        if strict:
 
-        def _one(arr: Any) -> Any:
-            return _array_element_at_value(arr, idx, strict=strict)
+            def _strict_get(arr: Any) -> Any:
+                return _array_element_at_value(arr, extraction, strict=True)
 
-        return Column(col_expr.map_elements(_one, return_dtype=pl.Object))
+            return Column(col_expr.map_elements(_strict_get, return_dtype=pl.String))
+        return Column(col_expr.list.get(polars_idx, null_on_oob=True))
 
     if isinstance(extraction, str):
         if strict:
@@ -582,3 +595,128 @@ def _size_sparklike_value(v: Any) -> int | None:
     if isinstance(v, dict):
         return len(v)
     return None
+
+
+def _transform_produces_struct(expr: pl.Expr) -> bool:
+    """Return True when the expression contains ``pl.struct`` (Polars ``AsStruct``).
+
+    Polars cannot evaluate ``pl.struct`` inside ``list.eval``, so ``transform``
+    must fall back to a Python-side row-wise approach.  Serialization may fail
+    when the expression tree contains Python UDFs, so we fall back to the
+    string representation.
+    """
+    try:
+        return b"AsStruct" in expr.meta.serialize()
+    except Exception:
+        try:
+            return "as_struct(" in str(expr)
+        except Exception:
+            return False
+
+
+def _transform_struct_batch(s: pl.Series, func: Any) -> pl.Series:
+    """Apply *func* element-wise to each list cell, returning a list-of-dicts series.
+
+    Used as the ``map_batches`` callback when :func:`transform`'s lambda produces a
+    struct — Polars' ``list.eval`` cannot handle ``pl.struct`` natively.
+
+    Each element is placed in a 1-row DataFrame and referenced via ``pl.col("_x")``
+    so that nested types (lists, structs) are preserved correctly — ``pl.lit()``
+    flattens lists into separate rows.
+
+    Polars also rejects ``as_struct`` wrapping Python UDFs (``nested objects are not
+    allowed``), so struct fields are evaluated individually and combined into a dict.
+
+    The returned series has a concrete ``List(Struct(...))`` dtype inferred from the
+    first non-null result so that ``map_batches`` produces a properly-typed column.
+    """
+    from sparkleframe.polarsdf.column import Column as _Col
+
+    results: list[list[dict] | None] = []
+    for cell in s:
+        if cell is None:
+            results.append(None)
+            continue
+        row_results: list[dict] = []
+        for elem in cell:
+            elem_col = _Col(pl.col("_x"))
+            out = func(elem_col)
+            tiny_df = pl.DataFrame({"_x": [elem]})
+            if isinstance(out, _Col) and out._struct_parts is not None:
+                row_dict: dict[str, Any] = {}
+                for part_expr in out._struct_parts:
+                    name = part_expr.meta.output_name()
+                    val = tiny_df.select(part_expr.alias("_r"))["_r"][0]
+                    row_dict[name] = val
+                row_results.append(row_dict)
+            else:
+                out_expr = out.to_native() if isinstance(out, _Col) else _to_expr(out)
+                val = tiny_df.select(out_expr.alias("_r"))["_r"][0]
+                row_results.append(val)
+        results.append(row_results)
+
+    struct_dtype = _infer_list_struct_dtype(results)
+    if struct_dtype is not None:
+        return pl.Series(results, dtype=struct_dtype)
+    return pl.Series(results)
+
+
+def _infer_list_struct_dtype(results: list) -> Optional[pl.DataType]:
+    """Infer ``List(Struct(...))`` dtype from the first non-null dict in *results*."""
+    for cell in results:
+        if cell is None:
+            continue
+        for row in cell:
+            if isinstance(row, dict) and row:
+                fields: list[pl.Field] = []
+                for k, v in row.items():
+                    if isinstance(v, bool):
+                        fields.append(pl.Field(k, pl.Boolean))
+                    elif isinstance(v, int):
+                        fields.append(pl.Field(k, pl.Int64))
+                    elif isinstance(v, float):
+                        fields.append(pl.Field(k, pl.Float64))
+                    else:
+                        fields.append(pl.Field(k, pl.Utf8))
+                return pl.List(pl.Struct(fields))
+    return None
+
+
+def _infer_struct_return_dtype_from_expr(expr: pl.Expr) -> pl.DataType:
+    """Extract struct field names from an expression's string representation.
+
+    When ``_struct_parts`` is unavailable (e.g. struct wrapped in ``when/otherwise``),
+    this parses ``.alias("name")`` patterns from the expression tree to build a
+    ``List(Struct(...))`` dtype.  Falls back to a single-field struct rather than
+    ``pl.Object``, which causes Polars panics in ``map_batches``.
+    """
+    try:
+        expr_str = str(expr)
+        aliases = re.findall(r'\.alias\(["\']([^"\']+)["\']\)', expr_str)
+        if aliases:
+            seen: list[str] = []
+            for a in aliases:
+                if a not in seen:
+                    seen.append(a)
+            fields = [pl.Field(name, pl.Utf8) for name in seen]
+            return pl.List(pl.Struct(fields))
+    except Exception:
+        pass
+    return pl.List(pl.Struct([pl.Field("value", pl.Utf8)]))
+
+
+def _struct_return_dtype_from_parts(struct_parts: list[pl.Expr]) -> pl.DataType:
+    """Build a ``List(Struct(...))`` dtype from struct part expressions.
+
+    Field types default to ``Utf8`` since they cannot be determined without data.
+    The actual batch function infers concrete types from the data; Polars casts
+    the result if the declared ``return_dtype`` doesn't match exactly.
+    """
+    fields: list[pl.Field] = []
+    for part_expr in struct_parts:
+        try:
+            name = part_expr.meta.output_name()
+        except Exception:
+            name = f"col{len(fields) + 1}"
+        fields.append(pl.Field(name, pl.Utf8))
+    return pl.List(pl.Struct(fields))

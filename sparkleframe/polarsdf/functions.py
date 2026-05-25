@@ -14,6 +14,7 @@ from sparkleframe.polarsdf.functions_helpers import (
     _as_date_sparklike_expr,
     _coerce_json_value,
     _convert_spark_datetime_pattern_to_strftime,
+    _infer_struct_return_dtype_from_expr,
     _md5_sparklike,
     _now_batch,
     _rand_batch,
@@ -21,11 +22,14 @@ from sparkleframe.polarsdf.functions_helpers import (
     _re_split_sparklike,
     _schema_from_string,
     _size_sparklike_value,
+    _struct_return_dtype_from_parts,
     _substring_sparklike,
     _to_date_column,
     _to_datetime_column,
     _to_json_batch,
     _to_timestamp_no_format_column,
+    _transform_produces_struct,
+    _transform_struct_batch,
     element_at_column,
 )
 from sparkleframe.polarsdf.types import DataType
@@ -136,8 +140,11 @@ def lit(value) -> Column:
         Column: A Column object wrapping a literal Polars expression.
     """
     if value is None:
-        # Spark ``lit(None)`` has ``StringType`` by default; mirror that.
-        return Column(pl.repeat(None, pl.len(), dtype=pl.String))
+        # Use ``pl.Null`` so Polars infers the type from sibling branches in
+        # ``when/then/otherwise`` instead of forcing ``String``.  PySpark's
+        # ``lit(None)`` defaults to ``StringType`` when used standalone, but
+        # inside a conditional it adopts the type of the non-null branch.
+        return Column(pl.repeat(None, pl.len(), dtype=pl.Null))
     return Column(pl.repeat(value, pl.len()))
 
 
@@ -315,23 +322,13 @@ def map_from_entries(col_name: Union[str, Column]) -> Column:
     Mimics pyspark.sql.functions.map_from_entries.
 
     Expects an array of structs with ``key`` and ``value`` fields.
+    Spark maps are represented as ``List(Struct(key, value))`` so that
+    ``element_at`` / ``getItem`` map-by-key lookup works natively.
+
+    The input types are preserved; no forced cast to String is applied.
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-
-    def _entries_to_map(value: Any) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, dict):
-            return value
-        if isinstance(value, list):
-            out: dict[Any, Any] = {}
-            for entry in value:
-                if isinstance(entry, dict) and "key" in entry and "value" in entry:
-                    out[entry["key"]] = entry["value"]
-            return out
-        return None
-
-    return Column(expr.map_elements(_entries_to_map, return_dtype=pl.Object))
+    return Column(expr)
 
 
 def create_map(*cols: Any) -> Column:
@@ -436,11 +433,21 @@ def transform(col_name: Union[str, Column], func: Callable[[Column], Any]) -> Co
     Mimics pyspark.sql.functions.transform for array columns.
 
     Applies a lambda expression to each element of an array and returns a new array.
+
+    When the lambda produces a struct (``pl.struct`` inside ``list.eval`` is unsupported
+    by Polars), falls back to a Python-side row-wise approach via ``map_batches``.
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     element_col = Column(pl.element())
     transformed = func(element_col)
     transformed_expr = transformed.to_native() if isinstance(transformed, Column) else _to_expr(transformed)
+
+    if _transform_produces_struct(transformed_expr):
+        if isinstance(transformed, Column) and transformed._struct_parts is not None:
+            return_dtype = _struct_return_dtype_from_parts(transformed._struct_parts)
+        else:
+            return_dtype = _infer_struct_return_dtype_from_expr(transformed_expr)
+        return Column(expr.map_batches(lambda s: _transform_struct_batch(s, func), return_dtype=return_dtype))
     return Column(expr.list.eval(transformed_expr))
 
 
@@ -464,17 +471,22 @@ def round(col_name: Union[str, Column], scale: int = 0) -> Column:
 class WhenBuilder:
     def __init__(self, condition: Column, value):
         self.branches = [(condition.to_native(), _to_expr(value))]
+        self._struct_parts: Optional[list[pl.Expr]] = None
+        if isinstance(value, Column) and value._struct_parts is not None:
+            self._struct_parts = value._struct_parts
 
     def when(self, condition: Any, value) -> "WhenBuilder":
         condition = Column(condition) if not isinstance(condition, Column) else condition
         self.branches.append((condition.to_native(), _to_expr(value)))
+        if self._struct_parts is None and isinstance(value, Column) and value._struct_parts is not None:
+            self._struct_parts = value._struct_parts
         return self
 
     def otherwise(self, value) -> Column:
         expr = pl.when(self.branches[0][0]).then(self.branches[0][1])
         for cond, val in self.branches[1:]:
             expr = expr.when(cond).then(val)
-        return Column(expr.otherwise(_to_expr(value)))
+        return Column(expr.otherwise(_to_expr(value)), struct_parts=self._struct_parts)
 
 
 def when(condition: Any, value) -> WhenBuilder:
@@ -1136,16 +1148,23 @@ def _struct_child_field_name(arg: Union[str, Column], expr: pl.Expr, index: int)
         # without ``cloudpickle`` installed. Such expressions are never plain
         # broadcast literals, so fall through to the regular naming rules.
         pass
-    undone = expr.meta.undo_aliases()
-    # Explicit Alias (nested struct(...).alias("nested_x"), col().alias("z"), …): Spark uses output_name.
-    # Do not use serialize() inequality — Polars versions disagree for bare struct(); compare output names instead.
-    if expr.meta.output_name() != undone.meta.output_name():
-        return expr.meta.output_name().split(".")[-1]
-    # Alias-of-column (e.g. col("a").alias("z")) is not is_column() in Polars; Spark uses the alias name.
-    if undone.meta.is_column():
-        return expr.meta.output_name().split(".")[-1]
-    if expr.meta.is_literal():
-        return f"col{index + 1}"
+    try:
+        undone = expr.meta.undo_aliases()
+        # Explicit Alias (nested struct(...).alias("nested_x"), col().alias("z"), …): Spark uses output_name.
+        # Do not use serialize() inequality — Polars versions disagree for bare struct(); compare output names instead.
+        if expr.meta.output_name() != undone.meta.output_name():
+            return expr.meta.output_name().split(".")[-1]
+        # Alias-of-column (e.g. col("a").alias("z")) is not is_column() in Polars; Spark uses the alias name.
+        if undone.meta.is_column():
+            return expr.meta.output_name().split(".")[-1]
+        if expr.meta.is_literal():
+            return f"col{index + 1}"
+    except Exception:
+        # Expressions derived from ``pl.element()`` (inside ``transform`` lambdas)
+        # have no root column name, so ``output_name()`` raises.  Fall back to the
+        # alias set on the Column wrapper if available.
+        if isinstance(arg, Column) and arg._output_alias is not None:
+            return arg._output_alias
     return f"col{index + 1}"
 
 
@@ -1175,7 +1194,7 @@ def struct(*cols: Any) -> Column:
     if not expanded:
         raise ValueError("struct requires at least one column")
     parts = [_struct_named_child(c, i) for i, c in enumerate(expanded)]
-    return Column(pl.struct(parts))
+    return Column(pl.struct(parts), struct_parts=parts)
 
 
 def try_to_timestamp(

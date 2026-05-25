@@ -1468,13 +1468,19 @@ class TestMapFunctions:
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
     def test_map_from_entries_against_spark(self, spark) -> None:
+        """map_from_entries produces a map that getItem can look up by key,
+        matching Spark's MapType semantics."""
         from pyspark.sql import Row
 
         entries = [Row(key="a", value=1), Row(key="b", value=2)]
         spark_df = spark.createDataFrame([Row(entries=entries)])
         polars_df = DataFrame(pl.DataFrame({"entries": [[{"key": "a", "value": 1}, {"key": "b", "value": 2}]]}))
-        expected_df = spark_df.select(spark_map_from_entries("entries").alias("m"))
-        result_df = polars_df.select(map_from_entries("entries").alias("m"))
+        expected_df = spark_df.select(spark_map_from_entries("entries").alias("m")).select(
+            spark_col("m").getItem("a").alias("val_a")
+        )
+        result_df = polars_df.select(map_from_entries("entries").alias("m")).select(
+            col("m").getItem("a").alias("val_a")
+        )
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
 
@@ -1535,6 +1541,40 @@ class TestBroadcast:
     def test_broadcast_returns_same_dataframe(self) -> None:
         d = DataFrame(pl.DataFrame({"x": [1]}))
         assert broadcast(d) is d
+
+
+class TestWhenLitNonePreservesType:
+    def test_when_lit_none_preserves_double_type(self, spark) -> None:
+        """lit(None) inside when/then must not force the result to String.
+        PySpark infers the type from the non-null branch; sparkleframe must match."""
+        data = {"price": [10.0, -1.0, 5.0]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.withColumn("price", when(col("price") <= 0, lit(None)).otherwise(col("price")))
+        expected_df = spark_df.withColumn(
+            "price", spark_when(spark_col("price") <= 0, spark_lit(None)).otherwise(spark_col("price"))
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_when_lit_none_preserves_integer_type(self, spark) -> None:
+        data = {"v": [1, -2, 3]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.withColumn("v", when(col("v") < 0, lit(None)).otherwise(col("v")))
+        expected_df = spark_df.withColumn(
+            "v", spark_when(spark_col("v") < 0, spark_lit(None)).otherwise(spark_col("v"))
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_when_lit_none_preserves_string_type(self, spark) -> None:
+        data = {"s": ["hello", "", "world"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.withColumn("s", when(col("s") == "", lit(None)).otherwise(col("s")))
+        expected_df = spark_df.withColumn(
+            "s", spark_when(spark_col("s") == "", spark_lit(None)).otherwise(spark_col("s"))
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
 
 class TestToJsonParity:
@@ -1753,3 +1793,350 @@ class TestCount:
         result_df = polars_df.select(count("*").alias("cnt"))
         expected_df = spark_df.select(spark_count("*").alias("cnt"))
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestAbs:
+    def test_abs_against_spark(self, spark) -> None:
+        data = {"v": [-3.5, 0.0, 2.1, -7.0, None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(abs(col("v")).alias("a"))
+        expected_df = spark_df.select(spark_abs(spark_col("v")).alias("a"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_abs_integer_against_spark(self, spark) -> None:
+        data = {"v": [-10, 0, 5, -1, None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(abs("v").alias("a"))
+        expected_df = spark_df.select(spark_abs("v").alias("a"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_abs_expression_against_spark(self, spark) -> None:
+        data = {"a": [1.0, 5.0, 3.0], "b": [4.0, 2.0, 3.0]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.withColumn("diff", abs(col("a") - col("b")))
+        expected_df = spark_df.withColumn("diff", spark_abs(spark_col("a") - spark_col("b")))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_abs_of_subtraction_withcolumn_against_spark(self, spark) -> None:
+        """Regression: arithmetic with unresolved dtypes chained with abs() via withColumn
+        must not produce an untyped UDF (Polars rejects map_batches without return_dtype)."""
+        data = {"x": [1.0, 5.0, 3.0], "y": [4.0, 2.0, 3.0]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.withColumn("d", abs(col("x") - col("y")))
+        expected_df = spark_df.withColumn("d", spark_abs(spark_col("x") - spark_col("y")))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestStructFieldNaming:
+    def test_struct_child_field_name_with_alias_on_element_expr(self) -> None:
+        """Regression: _struct_child_field_name must not crash on expressions derived
+        from pl.element() (no root column name). The alias set on the Column wrapper
+        should be used as the field name."""
+        from sparkleframe.polarsdf.functions import _struct_child_field_name
+
+        elem_col = col("x").alias("key")
+        expr = elem_col.to_native()
+        name = _struct_child_field_name(elem_col, expr, 0)
+        assert name == "key"
+
+    def test_struct_child_field_name_fallback_without_alias(self) -> None:
+        """When output_name() fails and no alias is set, fall back to col{N+1}."""
+        from sparkleframe.polarsdf.functions import _struct_child_field_name
+
+        class _FakeExprMeta:
+            def output_name(self):
+                raise Exception("no root column")
+
+            def undo_aliases(self):
+                raise Exception("no root column")
+
+            def serialize(self):
+                raise Exception("no root column")
+
+        class _FakeExpr:
+            meta = _FakeExprMeta()
+
+        plain_col = col("x")
+        plain_col._output_alias = None
+        name = _struct_child_field_name(plain_col, _FakeExpr(), 2)
+        assert name == "col3"
+
+    def test_struct_from_aliased_columns_against_spark(self, spark) -> None:
+        from pyspark.sql.functions import struct as spark_struct
+
+        data = {"a": [1, 2], "b": ["x", "y"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(struct(col("a").alias("k"), col("b").alias("v")).alias("s"))
+        expected_df = spark_df.select(spark_struct(spark_col("a").alias("k"), spark_col("b").alias("v")).alias("s"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestTransformStruct:
+    def test_transform_struct_and_explode_against_spark(self, spark) -> None:
+        """Regression: transform with a struct-producing lambda must not produce
+        FixedSizeBinary. The result must be explodable and match PySpark."""
+        data = {"items": [["a=1", "b=2"], ["c=3"]]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+
+        sf = polars_df.withColumn("items", transform(col("items"), lambda x: split(x, "=", 2)))
+        sp = spark_df.withColumn("items", spark_transform(spark_col("items"), lambda x: spark_split(x, "=", 2)))
+
+        sf = sf.withColumn(
+            "items",
+            transform(
+                col("items"),
+                lambda x: struct(element_at(x, 1).alias("key"), element_at(x, 2).alias("value")),
+            ),
+        )
+        sp = sp.withColumn(
+            "items",
+            spark_transform(
+                spark_col("items"),
+                lambda x: spark_struct(spark_element_at(x, 1).alias("key"), spark_element_at(x, 2).alias("value")),
+            ),
+        )
+
+        sf_exploded = sf.withColumn("item", explode("items")).select("item")
+        sp_exploded = sp.withColumn("item", spark_explode_outer(spark_col("items"))).select("item")
+        assert_sparkle_spark_frame_are_equal(sf_exploded, sp_exploded)
+
+    def test_transform_struct_inside_when_otherwise_against_spark(self, spark) -> None:
+        """Regression: transform+struct wrapped in when/otherwise must preserve
+        List(Struct) type — lit(None) must not collapse the column to Null."""
+        data = {"items": [["a=1", "b=2"], None, ["c=3"]]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+
+        def struct_lambda_sf(x):
+            return struct(element_at(x, 1).alias("key"), element_at(x, 2).alias("value"))
+
+        def struct_lambda_sp(x):
+            return spark_struct(spark_element_at(x, 1).alias("key"), spark_element_at(x, 2).alias("value"))
+
+        sf = polars_df.withColumn("items", transform(col("items"), lambda x: split(x, "=", 2)))
+        sp = spark_df.withColumn("items", spark_transform(spark_col("items"), lambda x: spark_split(x, "=", 2)))
+
+        sf = sf.withColumn(
+            "items",
+            when(col("items").isNotNull(), transform(col("items"), struct_lambda_sf)).otherwise(lit(None)),
+        )
+        sp = sp.withColumn(
+            "items",
+            spark_when(
+                spark_col("items").isNotNull(), spark_transform(spark_col("items"), struct_lambda_sp)
+            ).otherwise(spark_lit(None)),
+        )
+
+        sf = sf.withColumn("items", filter(col("items"), lambda x: x.isNotNull()))
+        sp = sp.withColumn("items", spark_filter(spark_col("items"), lambda x: x.isNotNull()))
+        assert_sparkle_spark_frame_are_equal(sf, sp)
+
+
+class TestFilterStructField:
+    def test_filter_by_struct_field_equality_against_spark(self, spark) -> None:
+        """Regression: filter lambda using getItem + == on a List(Struct) column must
+        produce native expressions (not Object-typed UDFs) so list.eval works."""
+        data = {
+            "pairs": [
+                [{"key": "utm_source", "value": "google"}, {"key": "utm_medium", "value": "cpc"}],
+                [{"key": "other", "value": "x"}],
+            ]
+        }
+        from pyspark.sql.types import ArrayType as SparkArrayType
+        from pyspark.sql.types import StringType as SparkStringType
+        from pyspark.sql.types import StructField as SparkStructField
+        from pyspark.sql.types import StructType as SparkStructType
+
+        spark_schema = SparkStructType(
+            [
+                SparkStructField(
+                    "pairs",
+                    SparkArrayType(
+                        SparkStructType(
+                            [SparkStructField("key", SparkStringType()), SparkStructField("value", SparkStringType())]
+                        )
+                    ),
+                )
+            ]
+        )
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), schema=spark_schema)
+
+        sf = polars_df.withColumn("pairs", filter(col("pairs"), lambda x: x.getItem("key") == lit("utm_source")))
+        sp = spark_df.withColumn(
+            "pairs",
+            spark_filter(spark_col("pairs"), lambda x: x.getItem("key") == spark_lit("utm_source")),
+        )
+        assert_sparkle_spark_frame_are_equal(sf, sp)
+
+    def test_getitem_on_struct_inside_transform_against_spark(self, spark) -> None:
+        """getItem on a struct element inside transform must return typed values,
+        not Object-typed UDF results."""
+        data = {
+            "pairs": [
+                [{"key": "a", "value": "1"}, {"key": "b", "value": "2"}],
+            ]
+        }
+        from pyspark.sql.types import ArrayType as SparkArrayType
+        from pyspark.sql.types import StringType as SparkStringType
+        from pyspark.sql.types import StructField as SparkStructField
+        from pyspark.sql.types import StructType as SparkStructType
+
+        spark_schema = SparkStructType(
+            [
+                SparkStructField(
+                    "pairs",
+                    SparkArrayType(
+                        SparkStructType(
+                            [SparkStructField("key", SparkStringType()), SparkStructField("value", SparkStringType())]
+                        )
+                    ),
+                )
+            ]
+        )
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), schema=spark_schema)
+
+        sf = polars_df.withColumn("keys", transform(col("pairs"), lambda x: x.getItem("key")))
+        sp = spark_df.withColumn("keys", spark_transform(spark_col("pairs"), lambda x: x.getItem("key")))
+        assert_sparkle_spark_frame_are_equal(sf, sp)
+
+
+class TestMapFromEntries:
+    """Parity tests for map_from_entries and related map operations."""
+
+    def test_map_from_entries_against_spark(self, spark) -> None:
+        """map_from_entries on List(Struct(key, value)) should produce a map
+        that getItem can look up by key."""
+        data = {
+            "entries": [
+                [{"key": "utm_source", "value": "google"}, {"key": "utm_medium", "value": "cpc"}],
+                [{"key": "plan", "value": "premium"}],
+            ]
+        }
+        spark_schema = SparkStructType(
+            [
+                SparkStructField(
+                    "entries",
+                    SparkArrayType(
+                        SparkStructType(
+                            [SparkStructField("key", SparkStringType()), SparkStructField("value", SparkStringType())]
+                        )
+                    ),
+                )
+            ]
+        )
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), schema=spark_schema)
+
+        sf = polars_df.withColumn("m", map_from_entries(col("entries"))).withColumn(
+            "src", col("m").getItem("utm_source")
+        )
+        sp = spark_df.withColumn("m", spark_map_from_entries(spark_col("entries"))).withColumn(
+            "src", spark_col("m").getItem("utm_source")
+        )
+        assert_sparkle_spark_frame_are_equal(
+            sf.select("src"),
+            sp.select("src"),
+        )
+
+    def test_create_map_getitem_against_spark(self, spark) -> None:
+        """create_map + getItem should look up a value by key."""
+        polars_df = DataFrame(pl.DataFrame({"x": ["hello"], "y": ["world"]}))
+        spark_df = spark.createDataFrame(pd.DataFrame({"x": ["hello"], "y": ["world"]}))
+
+        sf = polars_df.withColumn("m", create_map(lit("x_val"), col("x"), lit("y_val"), col("y"))).withColumn(
+            "got", col("m").getItem("x_val")
+        )
+        sp = spark_df.withColumn(
+            "m", spark_create_map(spark_lit("x_val"), spark_col("x"), spark_lit("y_val"), spark_col("y"))
+        ).withColumn("got", spark_col("m").getItem("x_val"))
+        assert_sparkle_spark_frame_are_equal(
+            sf.select("got"),
+            sp.select("got"),
+        )
+
+
+class TestElementAtWithLitIndex:
+    """Parity tests for element_at / try_element_at with F.lit(int) index."""
+
+    def test_try_element_at_with_lit_int_against_spark(self, spark) -> None:
+        """try_element_at(array, F.lit(1)) should extract the first element."""
+        spark_schema = SparkStructType([SparkStructField("arr", SparkArrayType(SparkStringType()))])
+        polars_df = DataFrame(pl.DataFrame({"arr": [["a", "b", "c"]]}))
+        spark_df = spark.createDataFrame([(["a", "b", "c"],)], schema=spark_schema)
+
+        sf = polars_df.withColumn("first", try_element_at(col("arr"), lit(1)))
+        sp = spark_df.withColumn("first", spark_try_element_at(spark_col("arr"), spark_lit(1)))
+        assert_sparkle_spark_frame_are_equal(sf.select("first"), sp.select("first"))
+
+    def test_element_at_with_lit_int_against_spark(self, spark) -> None:
+        """element_at(array, F.lit(2)) should extract the second element."""
+        spark_schema = SparkStructType([SparkStructField("arr", SparkArrayType(SparkStringType()))])
+        polars_df = DataFrame(pl.DataFrame({"arr": [["x", "y", "z"]]}))
+        spark_df = spark.createDataFrame([(["x", "y", "z"],)], schema=spark_schema)
+
+        sf = polars_df.withColumn("second", element_at(col("arr"), lit(2)))
+        sp = spark_df.withColumn("second", spark_element_at(spark_col("arr"), spark_lit(2)))
+        assert_sparkle_spark_frame_are_equal(sf.select("second"), sp.select("second"))
+
+
+class TestGetItemOnListInFilter:
+    """Parity tests for getItem on a list column used inside filter."""
+
+    def test_getitem_int_in_filter_against_spark(self, spark) -> None:
+        """filter(col('arr').getItem(0).isNotNull()) should keep non-null first elements."""
+        spark_schema = SparkStructType([SparkStructField("arr", SparkArrayType(SparkStringType()))])
+        polars_df = DataFrame(pl.DataFrame({"arr": [["a", "b"], None, ["c"]]}))
+        spark_df = spark.createDataFrame(
+            [(["a", "b"],), (None,), (["c"],)],
+            schema=spark_schema,
+        )
+
+        sf = polars_df.filter(col("arr").getItem(0).isNotNull())
+        sp = spark_df.filter(spark_col("arr").getItem(0).isNotNull())
+        assert_sparkle_spark_frame_are_equal(sf, sp)
+
+    def test_getitem_string_key_on_map_in_filter_against_spark(self, spark) -> None:
+        """getItem on a map-as-struct column inside filter must resolve values."""
+        data = {
+            "entries": [
+                [{"key": "a", "value": "1"}],
+                [{"key": "b", "value": "2"}],
+            ]
+        }
+        spark_schema = SparkStructType(
+            [
+                SparkStructField(
+                    "entries",
+                    SparkArrayType(
+                        SparkStructType(
+                            [SparkStructField("key", SparkStringType()), SparkStructField("value", SparkStringType())]
+                        )
+                    ),
+                )
+            ]
+        )
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), schema=spark_schema)
+
+        sf = (
+            polars_df.withColumn("m", map_from_entries(col("entries")))
+            .withColumn("got", col("m").getItem("a"))
+            .filter(col("got").isNotNull())
+        )
+        sp = (
+            spark_df.withColumn("m", spark_map_from_entries(spark_col("entries")))
+            .withColumn("got", spark_col("m").getItem("a"))
+            .filter(spark_col("got").isNotNull())
+        )
+        assert_sparkle_spark_frame_are_equal(
+            sf.select("got"),
+            sp.select("got"),
+        )

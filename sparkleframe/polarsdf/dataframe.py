@@ -330,6 +330,7 @@ class DataFrame(BaseDataFrame):
         if hasattr(col, "branches") and hasattr(col, "otherwise"):
             col = col.otherwise(None)
         col = Column(col) if not isinstance(col, Column) else col
+
         if getattr(col, "_is_explode", False):
             source_name = getattr(col, "_explode_source_name", None)
             if source_name and source_name in self.df.columns:

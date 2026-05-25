@@ -39,7 +39,7 @@ from sparkleframe.polarsdf.types import (
     ShortType,
     TimestampType,
 )
-from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal
+from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal, spark_rows_from_dict
 
 
 def _functions_pow_optional():
@@ -907,3 +907,25 @@ class TestCastParityWithSpark:
         spark_result = spark_df.select(F.col("s").cast(spark_dtype).alias("v"))
         sparkle_result = sparkle_df.select(col("s").cast(sparkle_dtype).alias("v"))
         assert_sparkle_spark_frame_are_equal(sparkle_result, spark_result)
+
+    def test_try_cast_inside_when_then_against_spark(self, spark):
+        """Polars evaluates all when/then branches eagerly, so strict cast fails on
+        non-matching rows.  Use try_cast inside when/then as a workaround; the result
+        matches PySpark's short-circuit cast behavior."""
+        from pyspark.sql.functions import when as spark_when
+
+        from sparkleframe.polarsdf.functions import when
+
+        data = {"v": ["1", "2", "N/A"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+
+        sf_result = polars_df.withColumn(
+            "num",
+            when(col("v").rlike(r"^\d+$"), col("v").try_cast(IntegerType())).otherwise(lit(-1)),
+        )
+        sp_result = spark_df.withColumn(
+            "num",
+            spark_when(F.col("v").rlike(r"^\d+$"), F.col("v").cast(SparkIntegerType())).otherwise(F.lit(-1)),
+        )
+        assert_sparkle_spark_frame_are_equal(sf_result, sp_result)
