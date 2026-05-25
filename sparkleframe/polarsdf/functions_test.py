@@ -1573,7 +1573,6 @@ class TestLeastGreatest:
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
     def test_least_all_nulls_returns_null(self, spark) -> None:
-        data = {"a": [None, None], "b": [None, None]}
         polars_df = DataFrame(
             pl.DataFrame({"a": pl.Series([None, None], dtype=pl.Int64), "b": pl.Series([None, None], dtype=pl.Int64)})
         )
