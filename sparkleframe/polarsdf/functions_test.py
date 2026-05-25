@@ -16,6 +16,7 @@ from pyspark.sql.functions import asc_nulls_last as spark_asc_nulls_last
 from pyspark.sql.functions import coalesce as spark_coalesce
 from pyspark.sql.functions import col as spark_col
 from pyspark.sql.functions import concat as spark_concat
+from pyspark.sql.functions import count as spark_count
 from pyspark.sql.functions import create_map as spark_create_map
 from pyspark.sql.functions import current_date as spark_current_date
 from pyspark.sql.functions import current_timestamp as spark_current_timestamp
@@ -91,6 +92,7 @@ from sparkleframe.polarsdf.functions import (
     coalesce,
     col,
     concat,
+    count,
     create_map,
     current_date,
     current_timestamp,
@@ -1724,4 +1726,30 @@ class TestSortArray:
         spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         result_df = polars_df.select(sort_array("arr", asc=False).alias("s"))
         expected_df = spark_df.select(spark_sort_array("arr", asc=False).alias("s"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+
+class TestCount:
+    def test_count_star_against_spark(self, spark) -> None:
+        data = {"g": ["a", "a", "b", "b", "b"], "v": [1, None, 3, 4, None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.groupBy("g").agg(count("*").alias("cnt")).orderBy("g")
+        expected_df = spark_df.groupBy("g").agg(spark_count("*").alias("cnt")).orderBy("g")
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_count_column_against_spark(self, spark) -> None:
+        data = {"g": ["a", "a", "b", "b", "b"], "v": [1, None, 3, 4, None]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.groupBy("g").agg(count("v").alias("cnt")).orderBy("g")
+        expected_df = spark_df.groupBy("g").agg(spark_count("v").alias("cnt")).orderBy("g")
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_count_star_no_groupby_against_spark(self, spark) -> None:
+        data = {"v": [1, None, 3]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(count("*").alias("cnt"))
+        expected_df = spark_df.select(spark_count("*").alias("cnt"))
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)

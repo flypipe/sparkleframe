@@ -224,6 +224,9 @@ def count(col_name: Union[str, Column]) -> Column:
     Mimics pyspark.sql.functions.count.
 
     Counts the number of non-null elements for the specified column.
+    When ``col_name`` is ``"*"``, returns the total row count (like SQL ``COUNT(*)``),
+    using ``pl.len()`` instead of ``pl.col("*").count()`` to avoid Polars expanding
+    ``"*"`` into every column and producing duplicates.
 
     Args:
         col_name (str or Column): The column to count non-null values in.
@@ -231,6 +234,8 @@ def count(col_name: Union[str, Column]) -> Column:
     Returns:
         Column: A Column representing the count aggregation expression.
     """
+    if isinstance(col_name, str) and col_name == "*":
+        return Column(pl.len())
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.count())
 
