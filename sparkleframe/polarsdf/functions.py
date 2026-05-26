@@ -1133,9 +1133,14 @@ def _struct_child_field_name(arg: Union[str, Column], expr: pl.Expr, index: int)
     """
     Spark ``CreateStruct`` naming: plain column refs keep their name (last segment if qualified);
     literals and non-trivial expressions become ``col1``, ``col2``, ...
+
+    An explicit ``.alias()`` on the Column wrapper always wins — even for literals.
+    Spark treats ``lit("v").alias("name")`` inside ``struct()`` as field ``"name"``.
     """
     if isinstance(arg, str):
         return arg.split(".")[-1]
+    if isinstance(arg, Column) and arg._output_alias is not None:
+        return arg._output_alias
     try:
         serialized = expr.meta.serialize()
         # ``lit(value)`` builds either ``pl.repeat(value, pl.len())`` (current) or the
