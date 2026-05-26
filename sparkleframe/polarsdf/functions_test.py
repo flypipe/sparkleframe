@@ -1843,6 +1843,15 @@ class TestStructFieldNaming:
         name = _struct_child_field_name(elem_col, expr, 0)
         assert name == "key"
 
+    def test_struct_child_field_name_aliased_literal(self) -> None:
+        """lit(...).alias('name') must use the alias, not col{N+1}."""
+        from sparkleframe.polarsdf.functions import _struct_child_field_name
+
+        aliased_lit = lit("hello").alias("greeting")
+        expr = aliased_lit.to_native()
+        name = _struct_child_field_name(aliased_lit, expr, 0)
+        assert name == "greeting"
+
     def test_struct_child_field_name_fallback_without_alias(self) -> None:
         """When output_name() fails and no alias is set, fall back to col{N+1}."""
         from sparkleframe.polarsdf.functions import _struct_child_field_name
@@ -1873,6 +1882,71 @@ class TestStructFieldNaming:
         spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         result_df = polars_df.select(struct(col("a").alias("k"), col("b").alias("v")).alias("s"))
         expected_df = spark_df.select(spark_struct(spark_col("a").alias("k"), spark_col("b").alias("v")).alias("s"))
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_struct_from_aliased_literals_against_spark(self, spark) -> None:
+        """lit(...).alias('name') inside struct must use the alias as the field name."""
+        data = {"x": [1, 2]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(
+            struct(
+                lit("aaa").alias("f1"),
+                lit("bbb").alias("f2"),
+                lit("ccc").alias("f3"),
+            ).alias("s")
+        )
+        expected_df = spark_df.select(
+            spark_struct(
+                spark_lit("aaa").alias("f1"),
+                spark_lit("bbb").alias("f2"),
+                spark_lit("ccc").alias("f3"),
+            ).alias("s")
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_to_json_struct_aliased_literals_against_spark(self, spark) -> None:
+        """to_json(struct(lit(...).alias(...), ...)) must use alias names as JSON keys."""
+        data = {"x": [1, 2]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(
+            to_json(
+                struct(
+                    lit("aaa").alias("f1"),
+                    lit("bbb").alias("f2"),
+                    lit("ccc").alias("f3"),
+                )
+            ).alias("j")
+        )
+        expected_df = spark_df.select(
+            spark_to_json(
+                spark_struct(
+                    spark_lit("aaa").alias("f1"),
+                    spark_lit("bbb").alias("f2"),
+                    spark_lit("ccc").alias("f3"),
+                )
+            ).alias("j")
+        )
+        assert_sparkle_spark_frame_are_equal(result_df, expected_df)
+
+    def test_struct_mixed_aliased_lit_and_plain_col_against_spark(self, spark) -> None:
+        """Struct with a mix of aliased literals and plain column references."""
+        data = {"a": [1, 2], "b": ["x", "y"]}
+        polars_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        result_df = polars_df.select(
+            struct(
+                col("b"),
+                lit("fixed").alias("tag"),
+            ).alias("s")
+        )
+        expected_df = spark_df.select(
+            spark_struct(
+                spark_col("b"),
+                spark_lit("fixed").alias("tag"),
+            ).alias("s")
+        )
         assert_sparkle_spark_frame_are_equal(result_df, expected_df)
 
 
