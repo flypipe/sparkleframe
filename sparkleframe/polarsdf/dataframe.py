@@ -344,6 +344,21 @@ class DataFrame(BaseDataFrame):
         updated_df = self.df.with_columns(expr)
         return DataFrame(updated_df)
 
+    def withColumns(self, colsMap: dict[str, "Column"]) -> DataFrame:
+        """
+        Mimics PySpark's withColumns method using Polars.
+
+        Args:
+            colsMap: A dict mapping column names to Column expressions.
+
+        Returns:
+            A new DataFrame with all columns added or replaced.
+        """
+        result = self
+        for name, col_expr in colsMap.items():
+            result = result.withColumn(name, col_expr)
+        return result
+
     def withColumnRenamed(self, existing: str, new: str) -> DataFrame:
         """
         Mimics PySpark's withColumnRenamed method using Polars.

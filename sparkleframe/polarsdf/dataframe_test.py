@@ -236,6 +236,75 @@ class TestDataFrame:
 
         assert_pyspark_df_equal(result_spark_df, expected_spark_df)
 
+    def test_with_columns_add_multiple_against_spark(self, spark, sparkle_df, spark_df) -> None:
+        sf_result = sparkle_df.withColumns(
+            {
+                "bonus": PF.col("salary") * 0.1,
+                "tag": PF.lit("v1"),
+            }
+        )
+        spark_result = spark_df.withColumns(
+            {
+                "bonus": F.col("salary") * 0.1,
+                "tag": F.lit("v1"),
+            }
+        )
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    def test_with_columns_replace_existing_against_spark(self, spark, sparkle_df, spark_df) -> None:
+        sf_result = sparkle_df.withColumns(
+            {
+                "salary": PF.col("salary") * 2,
+                "age": PF.col("age") + 1,
+            }
+        )
+        spark_result = spark_df.withColumns(
+            {
+                "salary": F.col("salary") * 2,
+                "age": F.col("age") + 1,
+            }
+        )
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    def test_with_columns_mix_add_and_replace_against_spark(self, spark, sparkle_df, spark_df) -> None:
+        sf_result = sparkle_df.withColumns(
+            {
+                "salary": PF.col("salary") + 1000,
+                "new_flag": PF.lit(True),
+            }
+        )
+        spark_result = spark_df.withColumns(
+            {
+                "salary": F.col("salary") + 1000,
+                "new_flag": F.lit(True),
+            }
+        )
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    def test_with_columns_single_entry_against_spark(self, spark, sparkle_df, spark_df) -> None:
+        sf_result = sparkle_df.withColumns({"doubled": PF.col("age") * 2})
+        spark_result = spark_df.withColumns({"doubled": F.col("age") * 2})
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
+    def test_with_columns_references_prior_column_against_spark(self, spark) -> None:
+        """A later entry can reference a column created by an earlier entry (Spark 3.4+ behavior)."""
+        data = {"x": [10, 20]}
+        sparkle_df = DataFrame(pl.DataFrame(data))
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        sf_result = sparkle_df.withColumns(
+            {
+                "y": PF.col("x") + 1,
+                "z": PF.col("y") * 2,
+            }
+        )
+        spark_result = spark_df.withColumns(
+            {
+                "y": F.col("x") + 1,
+                "z": F.col("y") * 2,
+            }
+        )
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
     def test_with_column_renamed(self, spark, sparkle_df, spark_df):
         # Apply renaming using DataFrame
         renamed_polars_df = sparkle_df.withColumnRenamed("name", "employee_name")
