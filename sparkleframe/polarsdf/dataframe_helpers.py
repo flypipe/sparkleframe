@@ -9,21 +9,12 @@ import polars as pl
 
 from sparkleframe.polarsdf import types as sft
 from sparkleframe.polarsdf.types import (
-    BinaryType,
-    BooleanType,
-    ByteType,
     DataType,
-    DateType,
     DecimalType,
-    DoubleType,
-    FloatType,
-    IntegerType,
-    LongType,
-    ShortType,
-    StringType,
     StructField,
     StructType,
-    TimestampType,
+    polars_dtype_to_spark_datatype,
+    polars_dtype_to_spark_sql_name,
 )
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
 
@@ -186,65 +177,10 @@ def coalesce_outer_join_keys(
 # Schema / dtypes helpers
 # ---------------------------------------------------------------------------
 
-POLARS_TO_PYSPARK_DTYPE_MAP = {
-    pl.Int8: "tinyint",
-    pl.Int16: "smallint",
-    pl.Int32: "int",
-    pl.Int64: "bigint",
-    pl.UInt8: "tinyint",
-    pl.UInt16: "smallint",
-    pl.UInt32: "int",
-    pl.UInt64: "bigint",
-    pl.Float32: "float",
-    pl.Float64: "double",
-    pl.Boolean: "boolean",
-    pl.Utf8: "string",
-    pl.Date: "date",
-    pl.Datetime: "timestamp",
-    pl.Time: "time",
-    pl.Duration: "interval",
-    pl.Object: "binary",
-    pl.List: "array",
-    pl.Struct: "struct",
-    pl.Decimal: "decimal",
-    pl.Binary: "binary",
-}
-
 
 def map_polars_dtype_to_spark_name(dtype: pl.DataType) -> str:
     """Map a Polars dtype to PySpark-style string name (for ``DataFrame.dtypes``)."""
-    if isinstance(dtype, pl.Decimal):
-        return f"decimal({dtype.precision},{dtype.scale})"
-
-    if isinstance(dtype, pl.Struct):
-        fields_str = ",".join(f"{field.name}:{map_polars_dtype_to_spark_name(field.dtype)}" for field in dtype.fields)
-        return f"struct<{fields_str}>"
-
-    for polars_type, spark_type in POLARS_TO_PYSPARK_DTYPE_MAP.items():
-        if isinstance(dtype, polars_type):
-            return spark_type
-
-    return str(dtype)
-
-
-POLARS_TO_SPARK_SCALARS = {
-    pl.Null: StringType(),
-    pl.Utf8: StringType(),
-    pl.Int32: IntegerType(),
-    pl.UInt32: IntegerType(),
-    pl.Int64: LongType(),
-    pl.UInt64: LongType(),
-    pl.Float32: FloatType(),
-    pl.Float64: DoubleType(),
-    pl.Boolean: BooleanType(),
-    pl.Date: DateType(),
-    pl.Datetime: TimestampType(),
-    pl.Int8: ByteType(),
-    pl.UInt8: ByteType(),
-    pl.Int16: ShortType(),
-    pl.UInt16: ShortType(),
-    pl.Binary: BinaryType(),
-}
+    return polars_dtype_to_spark_sql_name(dtype)
 
 
 def _declared_type_for(
@@ -295,11 +231,7 @@ def to_spark_datatype(
                 contains_null = decl.containsNull
         return sft.ArrayType(elem_dtype, containsNull=contains_null)
 
-    for pl_type, spark_type in POLARS_TO_SPARK_SCALARS.items():
-        if isinstance(dtype, pl_type):
-            return spark_type
-
-    raise TypeError(f"Unsupported dtype '{dtype}'")
+    return polars_dtype_to_spark_datatype(dtype)
 
 
 def polars_dtype_to_spark_structfield(

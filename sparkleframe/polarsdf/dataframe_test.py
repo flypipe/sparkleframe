@@ -211,6 +211,13 @@ class TestDataFrame:
         assert sf_result.count() == 0 == spark_result.count()
         assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
 
+    def test_with_column_null_lit_empty_rows_matches_spark(self, spark) -> None:
+        empty_sparkle = DataFrame(pl.DataFrame({"id": pl.Series("id", [], dtype=pl.Int64)}))
+        empty_spark = spark.createDataFrame([], schema=SparkStructType([SparkStructField("id", SparkLongType())]))
+        sf_result = empty_sparkle.withColumn("n", PF.lit(None))
+        spark_result = empty_spark.withColumn("n", F.lit(None).cast("string"))
+        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+
     def test_with_column_add(self, spark, sparkle_df, spark_df):
         result_spark_df = spark.createDataFrame(
             sparkle_df.withColumn("bonus", (PF.col("salary") * 0.1)).toPandas()
@@ -616,6 +623,43 @@ class TestDataFrame:
 
         result_spark_df = spark.createDataFrame(result_df.toPandas())
         assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
+
+    @pytest.mark.parametrize("use_alias", [False, True])
+    def test_groupby_collect_set(self, spark, use_alias) -> None:
+        """collect_set matches Spark; sort_array makes order comparable (sets are unordered)."""
+        from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal
+
+        data = {
+            "group": ["A", "A", "A", "B", "B"],
+            "value": [3, None, 1, 2, None],
+        }
+        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).orderBy(
+            "group", F.asc_nulls_last("value")
+        )
+        pl_df = DataFrame(pl.DataFrame(data)).sort("group", PF.asc_nulls_last("value"))
+
+        if not use_alias:
+            expected_df = spark_df.groupBy("group")
+            result_df = pl_df.groupBy("group")
+        else:
+            expected_df = spark_df.groupby("group")
+            result_df = pl_df.groupby("group")
+
+        expected_df = expected_df.agg(F.collect_set("value").alias("agg_result"))
+        result_df = result_df.agg(PF.collect_set("value").alias("agg_result"))
+
+        spark_sorted = expected_df.select(
+            F.col("group"),
+            F.sort_array(F.col("agg_result")).alias("agg_result"),
+        ).orderBy("group")
+        native = result_df.to_native_df()
+        sf_sorted = DataFrame(
+            native.select(
+                pl.col("group"),
+                pl.col("agg_result").list.sort().alias("agg_result"),
+            ).sort("group")
+        )
+        assert_sparkle_spark_frame_are_equal(sf_sorted, spark_sorted)
 
     def test_groupby_collect_list_nested_aliased_struct(self, spark):
         """collect_list(struct(...)) preserves aliased nested struct field names (not col1/col2)."""

@@ -14,6 +14,15 @@ from pyspark.sql.dataframe import DataFrame as SparkDataFrame
 from pyspark.sql.types import StructType as SparkStructType
 
 from sparkleframe.polarsdf import DataFrame
+from sparkleframe.polarsdf.types import polars_dtype_to_spark_ddl_name
+
+
+def _ddl_schema_from_polars_frame(frame: pl.DataFrame) -> str:
+    parts: list[str] = []
+    for name in frame.columns:
+        sql_type = polars_dtype_to_spark_ddl_name(frame.schema[name])
+        parts.append(f"{name} {sql_type}")
+    return ", ".join(parts)
 
 
 def spark_rows_from_dict(data: dict[str, list[Any]]) -> list[tuple[Any, ...]]:
@@ -51,6 +60,8 @@ def create_spark_df(
     if not rows:
         if schema is not None:
             return spark.createDataFrame([], schema)
+        if cols:
+            return spark.createDataFrame([], _ddl_schema_from_polars_frame(native))
         return spark.createDataFrame(pd.DataFrame(native.to_arrow().to_pandas()))
 
     row_tuples = [tuple(r[c] for c in cols) for r in rows]
