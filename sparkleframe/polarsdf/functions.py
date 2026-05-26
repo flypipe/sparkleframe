@@ -9,18 +9,27 @@ import polars as pl
 
 from sparkleframe.polarsdf import WindowSpec
 from sparkleframe.polarsdf.column import Column, _to_expr
+from sparkleframe.polarsdf.column_helpers import _output_dtype_of_expr, _polars_schema_ctx
 from sparkleframe.polarsdf.functions_helpers import (
     _as_date_sparklike_expr,
     _coerce_json_value,
+    _convert_spark_datetime_pattern_to_strftime,
+    _infer_struct_return_dtype_from_expr,
     _md5_sparklike,
     _now_batch,
+    _rand_batch,
     _RankWrapper,
     _re_split_sparklike,
     _schema_from_string,
+    _size_sparklike_value,
+    _struct_return_dtype_from_parts,
     _substring_sparklike,
     _to_date_column,
     _to_datetime_column,
+    _to_json_batch,
     _to_timestamp_no_format_column,
+    _transform_produces_struct,
+    _transform_struct_batch,
     element_at_column,
 )
 from sparkleframe.polarsdf.types import DataType
@@ -97,6 +106,21 @@ def from_json(col_name: Union[str, Column], schema: Union[DataType, str]) -> Col
     return Column(expr.map_elements(_parse, return_dtype=return_dtype))
 
 
+def to_json(col_name: Union[str, Column], options: Any = None) -> Column:
+    """
+    Mimics pyspark.sql.functions.to_json for struct, array, and map-like columns.
+
+    Map columns produced by :func:`create_map` / :func:`map_from_entries` (encoded as
+    ``list<struct<key,value>>``) are serialized as JSON objects, like Spark ``MapType``.
+
+    Supports only ``options={"ignoreNullFields": False}`` from Spark's options map.
+    """
+    if options is not None and options != {"ignoreNullFields": False}:
+        raise ValueError('sparkleframe to_json only supports options={"ignoreNullFields": False}')
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.map_batches(_to_json_batch, return_dtype=pl.String))
+
+
 def lit(value) -> Column:
     """
     Mimics pyspark.sql.functions.lit.
@@ -116,8 +140,11 @@ def lit(value) -> Column:
         Column: A Column object wrapping a literal Polars expression.
     """
     if value is None:
-        # Spark ``lit(None)`` has ``StringType`` by default; mirror that.
-        return Column(pl.repeat(None, pl.len(), dtype=pl.String))
+        # Use ``pl.Null`` so Polars infers the type from sibling branches in
+        # ``when/then/otherwise`` instead of forcing ``String``.  PySpark's
+        # ``lit(None)`` defaults to ``StringType`` when used standalone, but
+        # inside a conditional it adopts the type of the non-null branch.
+        return Column(pl.repeat(None, pl.len(), dtype=pl.Null))
     return Column(pl.repeat(value, pl.len()))
 
 
@@ -141,11 +168,72 @@ def coalesce(*cols: Union[str, Column]) -> Column:
     return Column(pl.coalesce(*expressions))
 
 
+def least(*cols: Any) -> Column:
+    """
+    Mimics pyspark.sql.functions.least.
+
+    Returns the smallest value per row across the given columns or literals. Null
+    inputs are skipped; the result is null when every argument is null for that row.
+
+    Note:
+        Spark also skips IEEE-754 ``NaN`` in floating-point ``least``; Polars
+        ``min_horizontal`` may return ``NaN`` when any argument is ``NaN``. Prefer
+        nulls for missing floats, or normalize ``NaN`` before calling :func:`least`,
+        if you need Spark-identical behaviour on ``NaN``.
+
+    Args:
+        *cols: Column names (``str``), :class:`~sparkleframe.polarsdf.column.Column`
+            expressions, literals, or ``pl.Expr``.
+
+    Returns:
+        Column: Row-wise minimum in the promoted common type.
+
+    Raises:
+        ValueError: If fewer than two arguments are provided.
+    """
+    if len(cols) < 2:
+        raise ValueError("least requires at least two arguments")
+    expressions: list[pl.Expr] = [pl.col(c) if isinstance(c, str) else _to_expr(c) for c in cols]
+    return Column(pl.min_horizontal(*expressions))
+
+
+def greatest(*cols: Any) -> Column:
+    """
+    Mimics pyspark.sql.functions.greatest.
+
+    Returns the largest value per row across the given columns or literals. Null
+    inputs are skipped; the result is null when every argument is null for that row.
+
+    Note:
+        Spark skips IEEE-754 ``NaN`` in floating-point ``greatest``; Polars
+        ``max_horizontal`` may return ``NaN`` when any argument is ``NaN``. Prefer
+        nulls for missing floats, or normalize ``NaN`` before calling :func:`greatest`,
+        if you need Spark-identical behaviour on ``NaN``.
+
+    Args:
+        *cols: Column names (``str``), :class:`~sparkleframe.polarsdf.column.Column`
+            expressions, literals, or ``pl.Expr``.
+
+    Returns:
+        Column: Row-wise maximum in the promoted common type.
+
+    Raises:
+        ValueError: If fewer than two arguments are provided.
+    """
+    if len(cols) < 2:
+        raise ValueError("greatest requires at least two arguments")
+    expressions: list[pl.Expr] = [pl.col(c) if isinstance(c, str) else _to_expr(c) for c in cols]
+    return Column(pl.max_horizontal(*expressions))
+
+
 def count(col_name: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.count.
 
     Counts the number of non-null elements for the specified column.
+    When ``col_name`` is ``"*"``, returns the total row count (like SQL ``COUNT(*)``),
+    using ``pl.len()`` instead of ``pl.col("*").count()`` to avoid Polars expanding
+    ``"*"`` into every column and producing duplicates.
 
     Args:
         col_name (str or Column): The column to count non-null values in.
@@ -153,6 +241,8 @@ def count(col_name: Union[str, Column]) -> Column:
     Returns:
         Column: A Column representing the count aggregation expression.
     """
+    if isinstance(col_name, str) and col_name == "*":
+        return Column(pl.len())
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.count())
 
@@ -232,23 +322,66 @@ def map_from_entries(col_name: Union[str, Column]) -> Column:
     Mimics pyspark.sql.functions.map_from_entries.
 
     Expects an array of structs with ``key`` and ``value`` fields.
+    Spark maps are represented as ``List(Struct(key, value))`` so that
+    ``element_at`` / ``getItem`` map-by-key lookup works natively.
+
+    The input types are preserved; no forced cast to String is applied.
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr)
 
-    def _entries_to_map(value: Any) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, dict):
-            return value
-        if isinstance(value, list):
-            out: dict[Any, Any] = {}
-            for entry in value:
-                if isinstance(entry, dict) and "key" in entry and "value" in entry:
-                    out[entry["key"]] = entry["value"]
-            return out
-        return None
 
-    return Column(expr.map_elements(_entries_to_map, return_dtype=pl.Object))
+def create_map(*cols: Any) -> Column:
+    """
+    Mimics pyspark.sql.functions.create_map.
+
+    Builds a map column from alternating key and value arguments. Keys and values may
+    be column names (``str``), :class:`~sparkleframe.polarsdf.column.Column` expressions,
+    or literals. The result uses sparkleframe's map encoding (``list<struct<key,value>>``),
+    consistent with :func:`map_from_entries` and map helpers.
+
+    Args:
+        *cols: Even-length sequence ``k1, v1, k2, v2, ...``.
+
+    Returns:
+        Column: One map per row.
+
+    Raises:
+        ValueError: If the number of arguments is odd.
+    """
+    if len(cols) % 2 != 0:
+        raise ValueError("create_map requires an even number of arguments (key, value pairs)")
+    if not cols:
+        empty_dtype = pl.List(
+            pl.Struct([pl.Field("key", pl.String), pl.Field("value", pl.String)]),
+        )
+        return Column(pl.lit([], dtype=empty_dtype))
+    parts: list[pl.Expr] = []
+    for i in range(0, len(cols), 2):
+        key_expr = pl.col(cols[i]) if isinstance(cols[i], str) else _to_expr(cols[i])
+        val_expr = pl.col(cols[i + 1]) if isinstance(cols[i + 1], str) else _to_expr(cols[i + 1])
+        parts.append(pl.struct([key_expr.alias("key"), val_expr.alias("value")]))
+    return Column(pl.concat_list(parts))
+
+
+def array(*cols: Any) -> Column:
+    """
+    Mimics pyspark.sql.functions.array.
+
+    Builds a list column from column names (``str``), :class:`~sparkleframe.polarsdf.column.Column`
+    values, or literals. Spark requires a common element type; Polars may infer a supertype or
+    object list when mixing incompatible types.
+
+    Args:
+        *cols: Zero or more arguments (empty ``array()`` yields an empty list column).
+
+    Returns:
+        Column: One list value per row.
+    """
+    if not cols:
+        return Column(pl.lit([], dtype=pl.List(pl.Null)))
+    parts: list[pl.Expr] = [pl.col(c) if isinstance(c, str) else _to_expr(c) for c in cols]
+    return Column(pl.concat_list(parts))
 
 
 def map_keys(col_name: Union[str, Column]) -> Column:
@@ -300,11 +433,21 @@ def transform(col_name: Union[str, Column], func: Callable[[Column], Any]) -> Co
     Mimics pyspark.sql.functions.transform for array columns.
 
     Applies a lambda expression to each element of an array and returns a new array.
+
+    When the lambda produces a struct (``pl.struct`` inside ``list.eval`` is unsupported
+    by Polars), falls back to a Python-side row-wise approach via ``map_batches``.
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     element_col = Column(pl.element())
     transformed = func(element_col)
     transformed_expr = transformed.to_native() if isinstance(transformed, Column) else _to_expr(transformed)
+
+    if _transform_produces_struct(transformed_expr):
+        if isinstance(transformed, Column) and transformed._struct_parts is not None:
+            return_dtype = _struct_return_dtype_from_parts(transformed._struct_parts)
+        else:
+            return_dtype = _infer_struct_return_dtype_from_expr(transformed_expr)
+        return Column(expr.map_batches(lambda s: _transform_struct_batch(s, func), return_dtype=return_dtype))
     return Column(expr.list.eval(transformed_expr))
 
 
@@ -328,17 +471,22 @@ def round(col_name: Union[str, Column], scale: int = 0) -> Column:
 class WhenBuilder:
     def __init__(self, condition: Column, value):
         self.branches = [(condition.to_native(), _to_expr(value))]
+        self._struct_parts: Optional[list[pl.Expr]] = None
+        if isinstance(value, Column) and value._struct_parts is not None:
+            self._struct_parts = value._struct_parts
 
     def when(self, condition: Any, value) -> "WhenBuilder":
         condition = Column(condition) if not isinstance(condition, Column) else condition
         self.branches.append((condition.to_native(), _to_expr(value)))
+        if self._struct_parts is None and isinstance(value, Column) and value._struct_parts is not None:
+            self._struct_parts = value._struct_parts
         return self
 
     def otherwise(self, value) -> Column:
         expr = pl.when(self.branches[0][0]).then(self.branches[0][1])
         for cond, val in self.branches[1:]:
             expr = expr.when(cond).then(val)
-        return Column(expr.otherwise(_to_expr(value)))
+        return Column(expr.otherwise(_to_expr(value)), struct_parts=self._struct_parts)
 
 
 def when(condition: Any, value) -> WhenBuilder:
@@ -373,6 +521,27 @@ def to_timestamp(
     if fmt is None:
         return _to_timestamp_no_format_column(col_name, strict=True)
     return _to_datetime_column(col_name, fmt, strict=True)
+
+
+def date_format(col_name: Union[str, Column], fmt: str) -> Column:
+    """
+    Mimics pyspark.sql.functions.date_format.
+
+    Formats date or timestamp values as strings using Spark datetime pattern letters
+    (``yyyy``, ``MM``, ``dd``, ``HH``, ``mm``, ``ss``). Inputs are cast to microsecond
+    timestamps like Spark; :class:`date` values use midnight for time-of-day fields.
+
+    Args:
+        col_name (str or Column): Temporal column (or values castable to timestamp).
+        fmt (str): Spark datetime pattern.
+
+    Returns:
+        Column: Utf8 formatted strings; null when the input is null.
+    """
+    strftime_fmt = _convert_spark_datetime_pattern_to_strftime(fmt)
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    dt_expr = expr.cast(pl.Datetime("us"), strict=False)
+    return Column(dt_expr.dt.strftime(strftime_fmt))
 
 
 def regexp_replace(col_name: Union[str, Column], pattern: str, replacement: str) -> Column:
@@ -604,6 +773,71 @@ def abs(col_name: Union[str, Column]) -> Column:
     return Column(expr.abs())
 
 
+def floor(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.floor.
+
+    Rounds numeric values down to the nearest integer. Non-numeric strings follow
+    Spark-like casting via ``cast(..., strict=False)`` before ``floor``.
+
+    Args:
+        col_name (str or Column): Numeric or string-castable column.
+
+    Returns:
+        Column: Floored values (``Float64`` after rounding when the input was fractional).
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.cast(pl.Float64, strict=False).floor().cast(pl.Int64))
+
+
+def pow(base: Any, exponent: Any) -> Column:
+    """
+    Mimics pyspark.sql.functions.pow (``base`` ** ``exponent``).
+
+    Both sides may be column names (``str``), :class:`~sparkleframe.polarsdf.column.Column`,
+    ``pl.Expr``, or scalar literals (e.g. ``F.pow(1 + col('rate'), -36)``).
+
+    Args:
+        base: Base expression or column name.
+        exponent: Exponent expression, column name, or scalar.
+
+    Returns:
+        Column: ``base ** exponent``; null if either operand is null.
+    """
+    base_expr = pl.col(base) if isinstance(base, str) else _to_expr(base)
+    exp_expr = pl.col(exponent) if isinstance(exponent, str) else _to_expr(exponent)
+    return Column(base_expr.pow(exp_expr))
+
+
+def isnan(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.isnan.
+
+    Returns false for null inputs (Spark behaviour). Non-float values are evaluated
+    after casting to ``Float64`` with ``strict=False``; values that cannot be cast
+    yield false here, whereas Spark with ANSI enabled may fail the stage on invalid casts.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    as_float = expr.cast(pl.Float64, strict=False)
+    return Column(
+        pl.when(expr.is_null()).then(pl.lit(False)).otherwise(as_float.is_nan().fill_null(False)).cast(pl.Boolean)
+    )
+
+
+def try_divide(left: Union[str, Column], right: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.try_divide (Spark 3.4+).
+
+    Returns null when the divisor is zero or null, or when the dividend is null.
+    Otherwise returns ``left / right`` as ``Float64``.
+    """
+    l_expr = _to_expr(left) if isinstance(left, Column) else pl.col(left)
+    r_expr = _to_expr(right) if isinstance(right, Column) else pl.col(right)
+    l64 = l_expr.cast(pl.Float64, strict=False)
+    r64 = r_expr.cast(pl.Float64, strict=False)
+    return Column(pl.when(l_expr.is_null() | r_expr.is_null() | (r64 == 0)).then(pl.lit(None)).otherwise(l64 / r64))
+
+
 def lower(col_name: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.lower.
@@ -649,6 +883,19 @@ def trim(col_name: Union[str, Column]) -> Column:
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     return Column(expr.str.strip_chars(" "))
+
+
+def nullif(e1: Union[str, Column], e2: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.nullif.
+
+    Returns null when both operands are non-null and equal; otherwise returns ``e1``.
+    Matches Spark ``CASE WHEN e1 = e2 THEN NULL ELSE e1 END`` (equality unknown when
+    either side is null yields ``e1``).
+    """
+    a = _to_expr(e1) if isinstance(e1, Column) else pl.col(e1)
+    b = _to_expr(e2) if isinstance(e2, Column) else pl.col(e2)
+    return Column(pl.when(a.is_not_null() & b.is_not_null() & (a == b)).then(None).otherwise(a))
 
 
 def split(col_name: Union[str, Column], pattern: str, limit: int = -1) -> Column:
@@ -707,6 +954,16 @@ def monotonically_increasing_id() -> Column:
     return Column(pl.int_range(0, pl.len(), dtype=pl.Int64, eager=False))
 
 
+def current_timestamp() -> Column:
+    """
+    Mimics pyspark.sql.functions.current_timestamp.
+
+    Same semantics as :func:`now` in sparkleframe: one UTC wall-clock timestamp shared by
+    all rows in the batch at evaluation (microsecond precision, no tzinfo).
+    """
+    return now()
+
+
 def current_date() -> Column:
     """Mimics pyspark.sql.functions.current_date."""
     return Column(pl.lit(date.today()))
@@ -750,6 +1007,26 @@ def months_between(end: Union[str, Column], start: Union[str, Column]) -> Column
     return Column((whole_months + day_fraction).cast(pl.Float64))
 
 
+def rand(seed: Optional[int] = None) -> Column:
+    """
+    Mimics pyspark.sql.functions.rand: uniform random in ``[0.0, 1.0)`` per row.
+
+    Without ``seed``, each evaluation uses an independent :class:`random.Random` instance
+    (system-entropy seed). With ``seed``, draws are deterministic for a given row count within
+    one process; values do not match Spark's JVM PRNG for the same seed.
+    """
+
+    def _batch(series: pl.Series) -> pl.Series:
+        return _rand_batch(series, seed)
+
+    return Column(
+        pl.int_range(0, pl.len(), dtype=pl.Int64, eager=False).map_batches(
+            _batch,
+            return_dtype=pl.Float64,
+        )
+    )
+
+
 def broadcast(df: Any) -> Any:
     """
     Mimics pyspark.sql.functions.broadcast.
@@ -757,6 +1034,25 @@ def broadcast(df: Any) -> Any:
     Sparkleframe runs in-process and has no join planner hints, so this is a no-op.
     """
     return df
+
+
+def sort_array(col_name: Union[str, Column], asc: bool = True) -> Column:
+    """
+    Mimics pyspark.sql.functions.sort_array.
+
+    Sorts each array in the column in ascending or descending order. Null arrays stay
+    null; empty arrays stay empty.
+
+    Args:
+        col_name (str or Column): Array column.
+        asc (bool): If true (default), sort ascending; if false, descending. PySpark 4's
+            Python ``sort_array`` expects a boolean here (not a ``Column``).
+
+    Returns:
+        Column: Array column of sorted lists.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.list.sort(descending=not asc))
 
 
 def array_contains(col_name: Union[str, Column], value: Union[str, Column, Any]) -> Column:
@@ -767,9 +1063,30 @@ def array_contains(col_name: Union[str, Column], value: Union[str, Column, Any])
 
 
 def size(col_name: Union[str, Column]) -> Column:
-    """Mimics pyspark.sql.functions.size for array/map-like values."""
+    """
+    Mimics pyspark.sql.functions.size for array/map-like values.
+
+    Uses native ``list.len`` when the column resolves to a Polars ``List`` dtype (including
+    under an active frame schema in :meth:`DataFrame.select` / :meth:`DataFrame.filter`).
+    For ``Object`` columns that store Python ``list``/``dict`` cells — common for nested
+    struct fields built from semi-structured data — falls back to a row-wise length so
+    Spark-style ``size`` on dotted struct paths matches Spark behaviour instead of raising
+    Polars' \"expected List data type for list operation, got: Object\".
+    """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-    return Column(pl.when(expr.is_null()).then(pl.lit(None)).otherwise(expr.list.len()).cast(pl.Int32))
+    sch = _polars_schema_ctx.get()
+    use_list_fastpath = False
+    if sch is not None:
+        dt = _output_dtype_of_expr(expr, sch)
+        if isinstance(dt, pl.List):
+            use_list_fastpath = True
+    if use_list_fastpath:
+        return Column(pl.when(expr.is_null()).then(pl.lit(None)).otherwise(expr.list.len()).cast(pl.Int32))
+    return Column(
+        pl.when(expr.is_null())
+        .then(pl.lit(None))
+        .otherwise(expr.map_elements(_size_sparklike_value, return_dtype=pl.Int32))
+    )
 
 
 def filter(col_name: Union[str, Column], func: Callable[[Column], Any]) -> Column:
@@ -831,16 +1148,23 @@ def _struct_child_field_name(arg: Union[str, Column], expr: pl.Expr, index: int)
         # without ``cloudpickle`` installed. Such expressions are never plain
         # broadcast literals, so fall through to the regular naming rules.
         pass
-    undone = expr.meta.undo_aliases()
-    # Explicit Alias (nested struct(...).alias("nested_x"), col().alias("z"), …): Spark uses output_name.
-    # Do not use serialize() inequality — Polars versions disagree for bare struct(); compare output names instead.
-    if expr.meta.output_name() != undone.meta.output_name():
-        return expr.meta.output_name().split(".")[-1]
-    # Alias-of-column (e.g. col("a").alias("z")) is not is_column() in Polars; Spark uses the alias name.
-    if undone.meta.is_column():
-        return expr.meta.output_name().split(".")[-1]
-    if expr.meta.is_literal():
-        return f"col{index + 1}"
+    try:
+        undone = expr.meta.undo_aliases()
+        # Explicit Alias (nested struct(...).alias("nested_x"), col().alias("z"), …): Spark uses output_name.
+        # Do not use serialize() inequality — Polars versions disagree for bare struct(); compare output names instead.
+        if expr.meta.output_name() != undone.meta.output_name():
+            return expr.meta.output_name().split(".")[-1]
+        # Alias-of-column (e.g. col("a").alias("z")) is not is_column() in Polars; Spark uses the alias name.
+        if undone.meta.is_column():
+            return expr.meta.output_name().split(".")[-1]
+        if expr.meta.is_literal():
+            return f"col{index + 1}"
+    except Exception:
+        # Expressions derived from ``pl.element()`` (inside ``transform`` lambdas)
+        # have no root column name, so ``output_name()`` raises.  Fall back to the
+        # alias set on the Column wrapper if available.
+        if isinstance(arg, Column) and arg._output_alias is not None:
+            return arg._output_alias
     return f"col{index + 1}"
 
 
@@ -870,7 +1194,7 @@ def struct(*cols: Any) -> Column:
     if not expanded:
         raise ValueError("struct requires at least one column")
     parts = [_struct_named_child(c, i) for i, c in enumerate(expanded)]
-    return Column(pl.struct(parts))
+    return Column(pl.struct(parts), struct_parts=parts)
 
 
 def try_to_timestamp(

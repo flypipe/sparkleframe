@@ -437,9 +437,14 @@ def _validate_and_cast_float64_lenient(s: pl.Series) -> pl.Series:
 
 def _validated_arithmetic_expr(expr: pl.Expr, resolved_dt: Optional[pl.DataType]) -> pl.Expr:
     """
-    For +, -, *: validate if dtype is known at build time; otherwise embed a
-    runtime check via ``map_batches`` (without ``return_dtype`` so Polars keeps
-    the natural output type, e.g. ``Int32 + Int32`` stays ``Int32``).
+    For +, -, *: validate if dtype is known at build time; defer to runtime otherwise.
+
+    When the dtype is resolved, ``_assert_arithmetic_compatible`` rejects
+    non-numeric types immediately.  When it cannot be resolved (bare
+    ``pl.col("name")`` without a schema context), the expression is wrapped in
+    ``map_batches`` so that ``_assert_arithmetic_series`` validates the actual
+    Series dtype at evaluation time.  Polars can infer ``return_dtype`` from the
+    returned Series in eager context (SparkleFrame always evaluates eagerly).
     """
     if resolved_dt is not None:
         _assert_arithmetic_compatible(resolved_dt)
@@ -897,6 +902,12 @@ def _equality_comparison_expr(left: pl.Expr, right: pl.Expr, equal: bool) -> pl.
         return (left == right) if equal else (left != right)
     if _is_complex_polars_dtype(ld) or _is_complex_polars_dtype(rd):
         return (left == right) if equal else (left != right)
+    if ld is not None and rd is not None:
+        both_string = _is_string_polars_dtype(ld) and _is_string_polars_dtype(rd)
+        both_numeric = _is_numeric_polars_dtype(ld) and _is_numeric_polars_dtype(rd)
+        both_boolean = ld == pl.Boolean and rd == pl.Boolean
+        if both_string or both_numeric or both_boolean:
+            return (left == right) if equal else (left != right)
     left_num, right_num, left_str, right_str = _numeric_compare_operands(left, right)
     numeric_valid = left_num.is_not_null() & right_num.is_not_null()
     if equal:
@@ -937,38 +948,58 @@ def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
                     .list.first()
                 )
 
-        def _extract_by_key(value: Any) -> Any:
+        if dtype is None:
+            try:
+                refs = expr.meta.root_names()
+            except Exception:
+                refs = []
+            if not refs:
+                return expr.struct.field(key)
+
+        def _extract_by_key(value: Any) -> Optional[str]:
             if value is None:
                 return None
-            if isinstance(value, dict):
-                return value.get(key)
-            if isinstance(value, list):
+            raw: Any = None
+            if isinstance(value, pl.Series):
+                for row in value.to_list():
+                    if isinstance(row, dict) and row.get("key") == key:
+                        raw = row.get("value")
+                        break
+            elif isinstance(value, dict):
+                raw = value.get(key)
+            elif isinstance(value, list):
                 for entry in value:
                     if isinstance(entry, dict) and entry.get("key") == key:
-                        return entry.get("value")
-                return None
-            getter = getattr(value, "get", None)
-            if callable(getter):
-                try:
-                    return getter(key)
-                except Exception:
-                    return None
-            return None
+                        raw = entry.get("value")
+                        break
+            else:
+                getter = getattr(value, "get", None)
+                if callable(getter):
+                    try:
+                        raw = getter(key)
+                    except Exception:
+                        pass
+            return None if raw is None else str(raw)
 
-        return expr.map_elements(_extract_by_key, return_dtype=pl.Object)
+        return expr.map_elements(_extract_by_key, return_dtype=pl.String)
     if isinstance(key, int):
         dtype = _resolve_expr_output_dtype(expr)
         if isinstance(dtype, pl.List):
             return expr.list.get(key)
 
-        def _index_at(v: Any) -> Any:
+        def _index_at(v: Any) -> Optional[str]:
             if v is None:
                 return None
-            if isinstance(v, (list, tuple)):
-                if key < 0 or key >= len(v):
+            items: Any = v
+            if isinstance(v, pl.Series):
+                items = v.to_list()
+            if isinstance(items, (list, tuple)):
+                polars_idx = key
+                if polars_idx < 0 or polars_idx >= len(items):
                     return None
-                return v[key]
+                raw = items[polars_idx]
+                return None if raw is None else str(raw)
             return None
 
-        return expr.map_elements(_index_at, return_dtype=pl.Object)
+        return expr.map_elements(_index_at, return_dtype=pl.String)
     raise TypeError(f"getItem key must be str or int, got {type(key).__name__}")

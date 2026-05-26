@@ -69,6 +69,69 @@ early when either dtype is `None`.
    the unknown-dtype path to avoid regressions in same-type operations (a
    previous broad attempt was reverted for this reason).
 
+## `transform` with struct-producing lambdas
+
+**Affected operations:** `F.transform(col, lambda x: F.struct(...))`
+
+Polars' `list.eval` does not support `pl.struct` expressions, so SparkleFrame
+falls back to `map_batches`.  The batch callback infers the struct dtype at
+runtime from the data, and the `return_dtype` hint is constructed from the
+struct field names (defaulting unknown types to `Utf8`).
+
+This means:
+
+- **`_struct_parts` metadata propagation is required:** `WhenBuilder`
+  (`when/otherwise`) propagates `_struct_parts` from the struct branch so that
+  `transform` can build the return dtype.  If this metadata is lost (e.g.
+  through a chain not yet covered), the fallback parses `.alias("name")`
+  patterns from the expression's string representation.
+
+- **Performance:** `map_batches` processes one row at a time in the struct
+  path.  This is acceptable for typical transform+struct patterns (e.g. UTM
+  parsing) but will be slower than native `list.eval` for very large datasets.
+
+## `getItem` resolution outside schema context
+
+**Affected operations:** `col("arr").getItem(0)` used inside `filter()` or
+other contexts where `to_native()` is called before a schema is available.
+
+SparkleFrame stores `getItem` operations as a lazy chain (`_getitem_chain`)
+resolved during `to_native()`.  When `to_native()` runs outside a schema
+context (e.g. inside `isNotNull()` before `filter()` evaluates), the dtype
+resolver returns `None`, forcing a UDF fallback.
+
+The UDF fallbacks (`_extract_by_key`, `_index_at`) now handle `pl.Series`
+inputs correctly, but the resolution is less efficient than the native
+`list.get` / `struct.field` paths used when dtype is known.
+
+## `element_at` with `F.lit(int)` indices
+
+**Affected operations:** `element_at(col, F.lit(n))`, `try_element_at(col, F.lit(n))`
+
+`F.lit(value)` wraps the value in `pl.repeat(value, pl.len())`, which is a
+`pl.Expr` rather than a plain Python `int`.  SparkleFrame resolves this by
+evaluating the expression against a dummy DataFrame to extract the integer.
+This works but adds a small overhead per call.
+
+## `when/otherwise` with `F.lit(None)` type coercion
+
+**Affected operations:** `F.when(cond, expr).otherwise(F.lit(None))`
+
+PySpark infers the result type from the non-null branch; SparkleFrame now
+uses `pl.Null` dtype for `lit(None)`, which Polars correctly super-types with
+the non-null branch.  This is resolved for standard types but may still
+surface for complex nested types not yet tested.
+
+## Equality comparison dtype resolution
+
+**Affected operations:** `==`, `!=` between columns where both dtypes are
+unresolvable at expression build time.
+
+SparkleFrame includes a same-family short-circuit (both string, both numeric,
+or both boolean) that uses native Polars comparisons.  For cross-type
+comparisons (e.g. `col(int) == lit(string)`), the full coercion logic applies,
+which may use `map_batches` with a UDF.
+
 ## Map type detection
 
 **Affected operations:** all comparisons and arithmetic involving `MapType`

@@ -32,9 +32,12 @@ class Column:
         *,
         getitem_chain: Tuple[Union[str, int], ...] = (),
         output_alias: Optional[str] = None,
+        struct_parts: Optional[list[pl.Expr]] = None,
     ):
         self._getitem_chain = getitem_chain
         self._output_alias = output_alias
+        self._struct_parts: Optional[list[pl.Expr]] = struct_parts
+        self._deferred_struct_transform: Optional[tuple] = None
         if isinstance(expr_or_name, str):
             self.expr = pl.col(expr_or_name)
         else:
@@ -223,7 +226,7 @@ class Column:
         return Column(~self.to_native())
 
     def __neg__(self):
-        """Unary minus (PySpark ``-col``), e.g. ``F.pow(1 + rate, -number_of_periods)`` when ``number_of_periods`` is a column."""
+        """Unary minus (PySpark ``-col``)."""
         return Column(-self.to_native())
 
     def __pos__(self):
@@ -278,8 +281,12 @@ class Column:
         ``"maybe".cast(boolean)``) instead of silently returning null. Use
         :meth:`try_cast` for the lenient variant that returns null.
 
-        Numeric / boolean coercions that Spark accepts (e.g. ``int -> bool`` via
-        nonzero -> true) still flow through Polars' native cast.
+        .. warning::
+
+           Polars evaluates **all** ``when/then/otherwise`` branches eagerly,
+           unlike PySpark which short-circuits.  A strict ``cast`` inside a
+           ``when`` branch will fail on rows that don't match the condition.
+           Use :meth:`try_cast` inside ``when/then`` branches instead.
 
         Args:
             data_type (DataType): A sparkleframe-defined DataType object.
@@ -291,12 +298,7 @@ class Column:
             raise TypeError(f"cast() expects a DataType, got {type(data_type)}")
         native = self.to_native()
         if isinstance(data_type, BooleanType):
-            # The helper dispatches at runtime: string source -> strict literal
-            # parse (CAST_INVALID_INPUT on unknown); numeric / bool source -> native
-            # Polars cast (which already matches Spark for those types).
             return Column(_string_to_bool_expr_strict(native))
-        # ``strict=True`` mirrors Spark 4 ANSI: Polars raises (wrapped) when any
-        # row fails the cast, where Spark raises ``CAST_INVALID_INPUT``.
         return Column(native.cast(data_type.to_native(), strict=True))
 
     def try_cast(self, data_type: Union[DataType, str]) -> "Column":

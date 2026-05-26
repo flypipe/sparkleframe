@@ -140,4 +140,6 @@ When editing Python in this repo:
 - Add type hints on all function parameters and return types.
 - Run `make black` and `make lint` to validate code structure.
 - Avoid leaving dead code or dead methods.
+- **Always run tests inside Docker** via `make test` (not bare `pytest`). The Docker container
+  sets required env vars (e.g. `TIMEZONE`) that the Spark fixture depends on.
 - Run affected tests, e.g. `make test f=sparkleframe/polarsdf/functions_test.py`.
