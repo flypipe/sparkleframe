@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextvars
-import hashlib
 import re
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
@@ -973,62 +972,3 @@ def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
 
         return expr.map_elements(_index_at, return_dtype=pl.Object)
     raise TypeError(f"getItem key must be str or int, got {type(key).__name__}")
-
-
-def _md5_sparklike(value: Any) -> str | None:
-    """MD5 digest as 32-char hex (Spark: UTF-8 for strings, raw bytes for binary)."""
-    if value is None:
-        return None
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        b = bytes(value)
-    else:
-        b = str(value).encode("utf-8")
-    return hashlib.md5(b, usedforsecurity=False).hexdigest()
-
-
-def _re_split_sparklike(value: Any, pattern: str, limit: int) -> list[str] | None:
-    """Replicate PySpark ``split`` limit semantics; uses Python :mod:`re` (not the JVM)."""
-    if value is None:
-        return None
-    s = value if isinstance(value, str) else str(value)
-    if limit == 0 or limit < 0:
-        return re.split(pattern, s)
-    if limit == 1:
-        return [s]
-    return re.split(pattern, s, maxsplit=limit - 1)
-
-
-def _now_batch(s: pl.Series) -> pl.Series:
-    """Batch function producing a constant ``now()`` timestamp for all rows."""
-    if s.len() == 0:
-        return pl.Series("now", [], dtype=pl.Datetime("us"))
-    ts = datetime.now(timezone.utc).replace(tzinfo=None)
-    return pl.Series("now", [ts] * s.len(), dtype=pl.Datetime("us"))
-
-
-def _substring_sparklike(value: Any, pos: int, length: int) -> str | None:
-    """Replicate Spark substring semantics (1-based indexing; negative ``pos`` from end)."""
-    if value is None:
-        return None
-    if length <= 0:
-        return ""
-
-    s = value if isinstance(value, str) else str(value)
-    n = len(s)
-
-    if pos > 0:
-        start = pos - 1
-    elif pos < 0:
-        start = n + pos
-    else:
-        start = 0
-
-    if start < 0:
-        start = 0
-    if start >= n:
-        return ""
-
-    end = start + length
-    if end > n:
-        end = n
-    return s[start:end]
