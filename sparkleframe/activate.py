@@ -27,7 +27,14 @@ NAME_TO_FILE_OVERRIDE = {
 ACTIVATE_CONFIG = {}
 
 
-def activate() -> None:
+def activate(engine: str = "polarsdf") -> None:
+    """Monkey-patch ``pyspark`` to dispatch to the named sparkleframe backend.
+
+    Args:
+        engine: ``"polarsdf"`` (default) or ``"pythondf"``.
+    """
+    if engine not in ("polarsdf", "pythondf"):
+        raise ValueError(f"engine must be 'polarsdf' or 'pythondf', got {engine!r}")
 
     pyspark_mock = MagicMock()
     pyspark_mock.__file__ = "pyspark"
@@ -35,8 +42,7 @@ def activate() -> None:
     # pyspark_mock.testing = testing
     # sys.modules["pyspark.testing"] = testing
 
-    engine = "polarsdf"
-    prefix = "Polars"
+    prefix = "Polars" if engine == "polarsdf" else "Python"
     engine_module = importlib.import_module(f"sparkleframe.{engine}")
 
     sys.modules["pyspark.sql"] = engine_module

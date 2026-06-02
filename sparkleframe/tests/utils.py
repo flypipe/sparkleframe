@@ -15,6 +15,7 @@ from pyspark.sql.types import StructType as SparkStructType
 
 from sparkleframe.polarsdf import DataFrame
 from sparkleframe.polarsdf.types import polars_dtype_to_spark_ddl_name
+from sparkleframe.pythondf.dataframe import DataFrame as PythonDataFrame
 
 
 def _ddl_schema_from_polars_frame(frame: pl.DataFrame) -> str:
@@ -163,27 +164,50 @@ def _records_from_spark(df: SparkDataFrame) -> list[Any]:
     return [_normalize_compare_value(row.asDict(recursive=True)) for row in df.collect()]
 
 
-def _records_from_sparkle(df: Union[DataFrame, pl.DataFrame]) -> list[Any]:
+def _records_from_sparkle(df: Union[DataFrame, pl.DataFrame, PythonDataFrame]) -> list[Any]:
     """
-    Type-faithful record extraction from a sparkleframe / Polars DataFrame.
-    Uses Polars' ``to_dicts`` directly to avoid pandas dtype coercion (e.g. nullable int
+    Type-faithful record extraction from a sparkleframe (polarsdf or pythondf) or Polars DataFrame.
+    Uses each backend's native row iterator to avoid pandas dtype coercion (e.g. nullable int
     columns becoming Float64 with NaN).
     """
+    if isinstance(df, PythonDataFrame):
+        return [_normalize_compare_value(row) for row in df.collect()]
     native = df.to_native_df() if isinstance(df, DataFrame) else df
     return [_normalize_compare_value(row) for row in native.to_dicts()]
 
 
-def _get_json_from_dataframe(df):
+def _frame_row_count(df) -> int:
+    if isinstance(df, PythonDataFrame):
+        return len(df)
+    return df.count()
+
+
+def _get_records(df) -> list[Any]:
     if isinstance(df, SparkDataFrame):
-        return json.dumps(_records_from_spark(df), sort_keys=True)
-    return json.dumps(_records_from_sparkle(df), sort_keys=True)
+        return _records_from_spark(df)
+    return _records_from_sparkle(df)
+
+
+def _sorted_records_json(records: list[Any]) -> str:
+    """Stringify records and sort for set-equality comparison (order-insensitive)."""
+    per_row = [json.dumps(r, sort_keys=True, default=str) for r in records]
+    per_row.sort()
+    return "[" + ",".join(per_row) + "]"
+
+
+def _get_json_from_dataframe(df):
+    """Order-insensitive JSON representation of a DataFrame for parity comparison."""
+    return _sorted_records_json(_get_records(df))
 
 
 def assert_sparkle_spark_frame_are_equal(
-    df1: Union[SparkDataFrame, DataFrame], df2: Union[SparkDataFrame, DataFrame]
+    df1: Union[SparkDataFrame, DataFrame, PythonDataFrame],
+    df2: Union[SparkDataFrame, DataFrame, PythonDataFrame],
 ) -> bool:
     assert type(df1) is not type(df2)
-    assert df1.count() == df2.count()
+    assert _frame_row_count(df1) == _frame_row_count(df2), (
+        f"row count mismatch: {_frame_row_count(df1)} vs {_frame_row_count(df2)}"
+    )
     json_df1 = _get_json_from_dataframe(df1)
     json_df2 = _get_json_from_dataframe(df2)
     assert json_df1 == json_df2, f"""
@@ -191,4 +215,22 @@ def assert_sparkle_spark_frame_are_equal(
 vs
 {json_df2}"""
 
+    return True
+
+
+def assert_frame_ordered_equal(
+    df1: Union[SparkDataFrame, DataFrame, PythonDataFrame],
+    df2: Union[SparkDataFrame, DataFrame, PythonDataFrame],
+) -> bool:
+    """Strict positional equality — use when row order is significant (after orderBy)."""
+    assert type(df1) is not type(df2)
+    assert _frame_row_count(df1) == _frame_row_count(df2), (
+        f"row count mismatch: {_frame_row_count(df1)} vs {_frame_row_count(df2)}"
+    )
+    json_df1 = json.dumps(_get_records(df1), sort_keys=True, default=str)
+    json_df2 = json.dumps(_get_records(df2), sort_keys=True, default=str)
+    assert json_df1 == json_df2, f"""
+{json_df1}
+vs
+{json_df2}"""
     return True
