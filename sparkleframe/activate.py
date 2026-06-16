@@ -27,7 +27,7 @@ NAME_TO_FILE_OVERRIDE = {
 ACTIVATE_CONFIG = {}
 
 
-def activate() -> None:
+def activate(engine: Engine = Engine.POLARS) -> None:
 
     pyspark_mock = MagicMock()
     pyspark_mock.__file__ = "pyspark"
@@ -35,9 +35,15 @@ def activate() -> None:
     # pyspark_mock.testing = testing
     # sys.modules["pyspark.testing"] = testing
 
-    engine = "polarsdf"
-    prefix = "Polars"
-    engine_module = importlib.import_module(f"sparkleframe.{engine}")
+    prefix = engine.class_prefix
+    engine = engine.module
+    try:
+        engine_module = importlib.import_module(f"sparkleframe.{engine}")
+    except ModuleNotFoundError as exc:
+        raise NotImplementedError(
+            f"The '{engine}' backend is not available yet. Currently only the Polars backend "
+            f"(Engine.POLARS) is implemented."
+        ) from exc
 
     sys.modules["pyspark.sql"] = engine_module
     pyspark_mock.sql = engine_module
@@ -89,6 +95,6 @@ def deactivate() -> None:
 
 
 @contextmanager
-def activate_context():
-    activate()
+def activate_context(engine: Engine = Engine.POLARS):
+    activate(engine)
     yield
