@@ -3,6 +3,7 @@ from enum import Enum
 
 class Engine(Enum):
     POLARS = ("polarsdf", "Polars")
+    PYTHON = ("python", "Python")
 
     @property
     def module(self):
