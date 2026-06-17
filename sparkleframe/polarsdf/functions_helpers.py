@@ -367,6 +367,15 @@ def _array_element_at_value(arr: Any, idx_1based: int, *, strict: bool) -> Any:
 
 
 def _lookup_map_value_by_key(map_value: Any, key: Any) -> Any:
+    """Resolve ``map_value[key]`` for whatever shape ``pl.Expr.map_elements`` hands us.
+
+    The polars engine represents a Spark ``map<k,v>`` column in two ways depending on
+    construction — see ``MapType.to_native`` (raw ``List(Struct(key, value))``) and the
+    schema-driven auto-materialization in ``DataFrame.__init__`` (``Struct(<union_keys>)``).
+    Plus, ``pl.struct(...).map_elements`` can hand the inner cell through as a ``dict``,
+    a ``pl.Series``, a pyarrow ``StructScalar``, or another dict-like wrapper depending
+    on polars version and dtype. Probe each shape rather than assume one layout.
+    """
     if map_value is None or key is None:
         return None
     if isinstance(map_value, dict):
@@ -375,28 +384,85 @@ def _lookup_map_value_by_key(map_value: Any, key: Any) -> Any:
         for entry in map_value:
             if isinstance(entry, dict) and entry.get("key") == key:
                 return entry.get("value")
+        return None
+    if isinstance(map_value, pl.Series):
+        for row in map_value.to_list():
+            if isinstance(row, dict) and row.get("key") == key:
+                return row.get("value")
+        return None
+    # Fall through: try common conversions for polars/pyarrow scalar wrappers.
+    for conv in (
+        lambda v: v.as_py() if hasattr(v, "as_py") else None,
+        lambda v: v.to_dict() if hasattr(v, "to_dict") else None,
+        lambda v: dict(v.items()) if hasattr(v, "items") else None,
+        lambda v: dict(v) if hasattr(v, "keys") else None,
+    ):
+        try:
+            converted = conv(map_value)
+        except Exception:
+            converted = None
+        if isinstance(converted, dict):
+            return converted.get(key)
+        if isinstance(converted, list):
+            for entry in converted:
+                if isinstance(entry, dict) and entry.get("key") == key:
+                    return entry.get("value")
+            return None
     return None
 
 
 def _map_key_lookup_expr(col_expr: pl.Expr, key_expr: pl.Expr) -> pl.Expr:
-    """Lookup a key in Spark map layout ``List(Struct(key, value))``."""
+    """Lookup a key in a Spark-style map column, layout-agnostic.
+
+    Polars stores a map in one of two layouts (see ``MapType.to_native`` and the
+    auto-materialization in ``DataFrame.__init__``):
+
+    - ``List(Struct(key, value))`` — the canonical Spark layout, kept verbatim when no
+      ``MapType`` schema is supplied at construction.
+    - ``Struct(<union_keys>)`` — produced when a ``MapType`` schema *is* supplied; the
+      engine auto-materializes the map as a struct keyed by the ordered union of keys.
+
+    ``list.eval`` works only on the first layout; ``struct.field`` only on the second.
+    Dispatch by dtype isn't reliable here because expressions are built outside
+    ``_polars_schema_for`` (``select`` only enters that context at evaluation), so we
+    use a row-wise ``map_elements`` that works on the actual value regardless of
+    layout. ``_lookup_map_value_by_key`` accepts dict, list-of-{k,v}, ``pl.Series``,
+    and pyarrow/struct-scalar wrappers.
+    """
     try:
         uses_named_column = len(key_expr.meta.root_names()) > 0
     except Exception:
         uses_named_column = True
 
     if uses_named_column:
+        # Probe both layouts: ``row["_map"]`` for nested ``List(Struct(k,v))`` maps and
+        # the flattened union (no ``_map`` key) for materialized ``Struct(<union_keys>)``
+        # maps. ``return_dtype=pl.Object`` is required because polars probes with a
+        # sentinel ``_key=""`` row for dtype inference; that probe lookup returns null,
+        # polars would otherwise infer ``Null`` and discard the real value.
+        def _resolve_row(row: Any) -> Any:
+            if not isinstance(row, dict):
+                return _lookup_map_value_by_key(row, None)
+            key = row.get("_key")
+            if key is None:
+                return None
+            if "_map" in row:
+                return _lookup_map_value_by_key(row["_map"], key)
+            return _lookup_map_value_by_key({k: v for k, v in row.items() if k != "_key"}, key)
+
         return pl.struct([col_expr.alias("_map"), key_expr.alias("_key")]).map_elements(
-            lambda row: _lookup_map_value_by_key(row["_map"], row["_key"]),
-            return_dtype=None,
+            _resolve_row,
+            return_dtype=pl.Object,
         )
 
-    return (
-        col_expr.list.eval(
-            pl.when(pl.element().struct.field("key") == key_expr).then(pl.element().struct.field("value"))
-        )
-        .list.drop_nulls()
-        .list.first()
+    # Literal key: extract once at expression-build time, then row-wise apply.
+    try:
+        lit_value = pl.DataFrame({"_x": [0]}).select(key_expr.alias("_v"))["_v"][0]
+    except Exception:
+        lit_value = None
+    return col_expr.map_elements(
+        lambda map_value: _lookup_map_value_by_key(map_value, lit_value),
+        return_dtype=None,
     )
 
 

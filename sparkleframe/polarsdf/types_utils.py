@@ -378,7 +378,13 @@ class _MapTypeUtils:
 
             # struct
             if isinstance(dt, sft.StructType):
-                src = val if isinstance(val, dict) else {}
+                # Accept struct values as a dict (by field name) or as a positional
+                # tuple/list, mirroring ``spark.createDataFrame(rows, schema)`` which
+                # takes struct fields as tuples/Rows.
+                if isinstance(val, (list, tuple)):
+                    src = {sf.name: (val[i] if i < len(val) else None) for i, sf in enumerate(dt.fields)}
+                else:
+                    src = val if isinstance(val, dict) else {}
                 return {
                     sf.name: coerce_value(
                         src.get(sf.name, None),
