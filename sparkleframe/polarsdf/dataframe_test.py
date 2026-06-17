@@ -43,8 +43,10 @@ from sparkleframe.polarsdf.types import (
     TimestampType,
 )
 from sparkleframe.polarsdf.types_utils import _MapTypeUtils
-from sparkleframe.tests.pyspark_test import assert_pyspark_df_equal
-from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal, create_spark_df, spark_rows_from_dict
+from sparkleframe.engine import Engine
+from sparkleframe.tests.parity.engines import ENGINES
+from sparkleframe.tests.parity.oracle import assert_matches_spark
+from sparkleframe.tests.utils import create_spark_df, spark_rows_from_dict
 
 sample_data = {
     "name": ["Alice", "Bob", "Charlie"],
@@ -123,7 +125,7 @@ class TestDataFrame:
             data = data.to_pylist()
 
         df_spark = spark.createDataFrame(data, schema=schema_spark)
-        assert assert_sparkle_spark_frame_are_equal(df_sparkle, df_spark)
+        assert assert_matches_spark(df_sparkle, df_spark, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "cols",
@@ -133,9 +135,9 @@ class TestDataFrame:
         ],
     )
     def test_select_by_list_str(self, spark, sparkle_df, spark_df, cols):
-        result_spark_df = spark.createDataFrame(sparkle_df.select(cols).toPandas())
+        result = sparkle_df.select(cols)
         expected_spark_df = spark_df.select(cols)
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "cols",
@@ -146,30 +148,28 @@ class TestDataFrame:
     )
     def test_select_by_list_columns(self, spark, sparkle_df, spark_df, cols):
         cols = [cols] if isinstance(cols, str) else cols
-        result_spark_df = spark.createDataFrame(sparkle_df.select([PF.col(col) for col in cols]).toPandas())
+        result = sparkle_df.select([PF.col(col) for col in cols])
         expected_spark_df = spark_df.select([F.col(col) for col in cols])
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_select_by_column_name(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(sparkle_df.select("name").toPandas())
+        result = sparkle_df.select("name")
         expected_spark_df = spark_df.select("name")
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_select_by_pointer_list(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(sparkle_df.select(*["name", "age"]).toPandas())
+        result = sparkle_df.select(*["name", "age"])
         expected_spark_df = spark_df.select(*["name", "age"])
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_select_by_expression(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(
-            sparkle_df.select(PF.col("name"), PF.col("salary") * 1.1).df.to_dicts()
-        )
+        result = sparkle_df.select(PF.col("name"), PF.col("salary") * 1.1)
 
         expected_spark_df = spark_df.select(spark_col("name"), (spark_col("salary") * 1.1).alias("salary"))
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, precision=5)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_select_all_columns_with_aliases(self, spark, sparkle_df, spark_df):
         # Define aliases
@@ -177,12 +177,11 @@ class TestDataFrame:
 
         # Apply aliases using DataFrame
         polars_selected = sparkle_df.select(*(PF.col(col).alias(alias) for col, alias in aliases.items()))
-        result_spark_df = spark.createDataFrame(polars_selected.toPandas())
 
         # Apply the same aliases using PySpark
         expected_spark_df = spark_df.select(*(spark_col(col).alias(alias) for col, alias in aliases.items()))
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+        assert_matches_spark(polars_selected, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_select_literal_only_broadcasts_to_source_row_count(self, spark, sparkle_df, spark_df):
         """
@@ -198,7 +197,7 @@ class TestDataFrame:
         spark_result = spark_df.select(F.lit("constant").alias("c"), F.lit(42).alias("n"))
 
         assert sf_result.count() == sparkle_df.count() == spark_result.count()
-        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+        assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 
     def test_select_literal_broadcast_with_empty_dataframe(self, spark):
         """Spark parity edge case: selecting a literal against an empty frame yields zero rows."""
@@ -209,32 +208,30 @@ class TestDataFrame:
         spark_result = empty_spark.select(F.lit("constant").alias("c"))
 
         assert sf_result.count() == 0 == spark_result.count()
-        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+        assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 
     def test_with_column_null_lit_empty_rows_matches_spark(self, spark) -> None:
         empty_sparkle = DataFrame(pl.DataFrame({"id": pl.Series("id", [], dtype=pl.Int64)}))
         empty_spark = spark.createDataFrame([], schema=SparkStructType([SparkStructField("id", SparkLongType())]))
         sf_result = empty_sparkle.withColumn("n", PF.lit(None))
         spark_result = empty_spark.withColumn("n", F.lit(None).cast("string"))
-        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+        assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 
     def test_with_column_add(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(
-            sparkle_df.withColumn("bonus", (PF.col("salary") * 0.1)).toPandas()
-        ).withColumn("bonus", F.col("bonus").cast(SparkFloatType()))
+        result = sparkle_df.withColumn("bonus", (PF.col("salary") * 0.1))
 
         expected_spark_df = spark_df.withColumn("bonus", spark_col("salary") * 0.1).withColumn(
             "bonus", F.col("bonus").cast(SparkFloatType())
         )
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, precision=5)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_with_column_replace(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(sparkle_df.withColumn("salary", PF.col("salary") * 2).toPandas())
+        result = sparkle_df.withColumn("salary", PF.col("salary") * 2)
 
         expected_spark_df = spark_df.withColumn("salary", spark_col("salary") * 2)
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_with_columns_add_multiple_against_spark(self, spark, sparkle_df, spark_df) -> None:
         sf_result = sparkle_df.withColumns(
@@ -249,7 +246,7 @@ class TestDataFrame:
                 "tag": F.lit("v1"),
             }
         )
-        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+        assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 
     def test_with_columns_replace_existing_against_spark(self, spark, sparkle_df, spark_df) -> None:
         sf_result = sparkle_df.withColumns(
@@ -264,7 +261,7 @@ class TestDataFrame:
                 "age": F.col("age") + 1,
             }
         )
-        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+        assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 
     def test_with_columns_mix_add_and_replace_against_spark(self, spark, sparkle_df, spark_df) -> None:
         sf_result = sparkle_df.withColumns(
@@ -279,12 +276,12 @@ class TestDataFrame:
                 "new_flag": F.lit(True),
             }
         )
-        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+        assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 
     def test_with_columns_single_entry_against_spark(self, spark, sparkle_df, spark_df) -> None:
         sf_result = sparkle_df.withColumns({"doubled": PF.col("age") * 2})
         spark_result = spark_df.withColumns({"doubled": F.col("age") * 2})
-        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+        assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 
     def test_with_columns_references_prior_column_against_spark(self, spark) -> None:
         """A later entry can reference a column created by an earlier entry (Spark 3.4+ behavior)."""
@@ -303,37 +300,36 @@ class TestDataFrame:
                 "z": F.col("y") * 2,
             }
         )
-        assert_sparkle_spark_frame_are_equal(sf_result, spark_result)
+        assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 
     def test_with_column_renamed(self, spark, sparkle_df, spark_df):
         # Apply renaming using DataFrame
         renamed_polars_df = sparkle_df.withColumnRenamed("name", "employee_name")
-        result_spark_df = spark.createDataFrame(renamed_polars_df.toPandas())
 
         # Apply the same renaming in PySpark
         expected_spark_df = spark_df.withColumnRenamed("name", "employee_name")
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df)
+        assert_matches_spark(renamed_polars_df, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_drop_columns(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(sparkle_df.drop("salary", "birth_date").toPandas())
+        result = sparkle_df.drop("salary", "birth_date")
         expected_spark_df = spark_df.drop("salary", "birth_date")
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_drop_unpack_list(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(sparkle_df.drop(*["salary", "age"]).toPandas())
+        result = sparkle_df.drop(*["salary", "age"])
         expected_spark_df = spark_df.drop(*["salary", "age"])
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_drop_column_expr(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(sparkle_df.drop(PF.col("salary")).toPandas())
+        result = sparkle_df.drop(PF.col("salary"))
         expected_spark_df = spark_df.drop(F.col("salary"))
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_drop_missing_column_ignored(self, spark, sparkle_df, spark_df):
-        result_spark_df = spark.createDataFrame(sparkle_df.drop("not_there", "age").toPandas())
+        result = sparkle_df.drop("not_there", "age")
         expected_spark_df = spark_df.drop("not_there", "age")
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_drop_no_args_returns_new_wrapper_same_polars_df(self, sparkle_df):
         out = sparkle_df.drop()
@@ -416,10 +412,6 @@ class TestDataFrame:
         )
         sparkle_df = DataFrame(pl_df)
 
-        pandas_df = sparkle_df.to_arrow().to_pandas(types_mapper=pd.ArrowDtype)
-
-        result_spark_df = spark.createDataFrame(pandas_df)
-
         expected_spark_df = spark.createDataFrame(
             pd.DataFrame(
                 {
@@ -431,7 +423,7 @@ class TestDataFrame:
             )
         )
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        assert_matches_spark(sparkle_df, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_create_polars_from_arrow_generated_by_spark(self, spark):
         # Step 1: Create a Spark DataFrame
@@ -464,14 +456,13 @@ class TestDataFrame:
         sparkle_df = DataFrame(pl_df)
 
         # Step 2: Apply isNotNull using your API
-        result_pd = sparkle_df.select(PF.col("name").isNotNull().alias("not_null")).toPandas()
-        result_spark_df = spark.createDataFrame(result_pd)
+        result = sparkle_df.select(PF.col("name").isNotNull().alias("not_null"))
         # Step 3: Apply isNotNull using PySpark
         spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.select(F.col("name").isNotNull().alias("not_null"))
 
         # Step 4: Compare
-        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+        assert_matches_spark(result, expected_df, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "literal, op_name, expr_func",
@@ -489,8 +480,7 @@ class TestDataFrame:
 
         # Run sparkleframe expression
         expr = expr_func(PF.col("a")).alias("result")
-        result_df = sparkle_df.select(expr).toPandas()
-        result_spark_df = spark.createDataFrame(result_df)
+        result = sparkle_df.select(expr)
 
         # Expected result using PySpark directly
         expected_spark_df = spark.createDataFrame(spark_rows_from_dict({"a": [1, 2, 3]}), ["a"]).select(
@@ -506,7 +496,7 @@ class TestDataFrame:
         )
 
         # Assert equality
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, precision=5)
+        assert_matches_spark(result, expected_spark_df, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "description, expr_func",
@@ -526,10 +516,10 @@ class TestDataFrame:
         expr = expr_func(PF.col("a"), PF.col("b"), PF.col("c")).alias("result")
         expected_expr = expr_func(F.col("a"), F.col("b"), F.col("c")).alias("result")
 
-        result_df = spark.createDataFrame(sparkle_df.select(expr).toPandas())
+        result_df = sparkle_df.select(expr)
         expected_df = spark_df.select(expected_expr)
 
-        assert_pyspark_df_equal(result_df, expected_df, ignore_nullable=True)
+        assert_matches_spark(result_df, expected_df, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "description, expr_func",
@@ -547,16 +537,14 @@ class TestDataFrame:
         spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
 
         # Test .filter
-        filtered_result = sparkle_df.filter(expr_func(PF.col("a"), PF.col("b"), PF.col("c"))).toPandas()
+        filtered_result = sparkle_df.filter(expr_func(PF.col("a"), PF.col("b"), PF.col("c")))
         expected_result = spark_df.filter(expr_func(F.col("a"), F.col("b"), F.col("c")))
 
-        result_spark_df = spark.createDataFrame(filtered_result)
-        assert_pyspark_df_equal(result_spark_df, expected_result, ignore_nullable=True)
+        assert_matches_spark(filtered_result, expected_result, ENGINES[Engine.POLARS])
 
         # Test .where (should behave the same)
-        where_result = sparkle_df.where(expr_func(PF.col("a"), PF.col("b"), PF.col("c"))).toPandas()
-        result_spark_df = spark.createDataFrame(where_result)
-        assert_pyspark_df_equal(result_spark_df, expected_result, ignore_nullable=True)
+        where_result = sparkle_df.where(expr_func(PF.col("a"), PF.col("b"), PF.col("c")))
+        assert_matches_spark(where_result, expected_result, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "pattern, expected_matches",
@@ -578,10 +566,9 @@ class TestDataFrame:
         for pattern, expected in [(pattern, expected_matches)]:
             expr = PF.col("name").rlike(pattern).alias("match")
             result_df = polars_df.select(expr)
-            result_spark_df = spark.createDataFrame(result_df.toPandas())
 
             expected_df = spark_df.select(F.col("name").rlike(pattern).alias("match"))
-            assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+            assert_matches_spark(result_df, expected_df, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "column_name, values, use_variadic",
@@ -616,14 +603,13 @@ class TestDataFrame:
         else:
             expr = PF.col(column_name).isin(values).alias("match")
 
-        result_df = sparkle_df.select(expr).toPandas()
-        result_spark_df = spark.createDataFrame(result_df)
+        result_df = sparkle_df.select(expr)
 
         # Expected result from PySpark directly
         expected_df = spark_df.select(F.col(column_name).isin(values).alias("match"))
 
         # Compare
-        assert_pyspark_df_equal(result_spark_df, expected_df, ignore_nullable=True)
+        assert_matches_spark(result_df, expected_df, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "use_alias, spark_func, sparkle_func",
@@ -660,13 +646,10 @@ class TestDataFrame:
             result_df = pl_df.groupby("group")
         result_df = result_df.agg(sparkle_func("value").alias("agg_result"))
 
-        # Convert Polars result to Spark for comparison
-        result_spark_df = spark.createDataFrame(result_df.toPandas())
-
         # Assert equivalence
-        result_spark_df = result_spark_df.withColumn("agg_result", F.col("agg_result").cast("float"))
+        result_df = result_df.withColumn("agg_result", PF.col("agg_result").cast(FloatType()))
         expected_df = expected_df.withColumn("agg_result", F.col("agg_result").cast("float"))
-        assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
+        assert_matches_spark(result_df.orderBy("group"), expected_df.orderBy("group"), ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize("use_alias", [False, True])
     def test_groupby_collect_list(self, spark, use_alias):
@@ -690,13 +673,11 @@ class TestDataFrame:
         expected_df = expected_df.agg(F.collect_list("value").alias("agg_result"))
         result_df = result_df.agg(PF.collect_list("value").alias("agg_result"))
 
-        result_spark_df = spark.createDataFrame(result_df.toPandas())
-        assert_pyspark_df_equal(result_spark_df.orderBy("group"), expected_df.orderBy("group"), ignore_nullable=True)
+        assert_matches_spark(result_df.orderBy("group"), expected_df.orderBy("group"), ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize("use_alias", [False, True])
     def test_groupby_collect_set(self, spark, use_alias) -> None:
         """collect_set matches Spark; sort_array makes order comparable (sets are unordered)."""
-        from sparkleframe.tests.utils import assert_sparkle_spark_frame_are_equal
 
         data = {
             "group": ["A", "A", "A", "B", "B"],
@@ -728,7 +709,7 @@ class TestDataFrame:
                 pl.col("agg_result").list.sort().alias("agg_result"),
             ).sort("group")
         )
-        assert_sparkle_spark_frame_are_equal(sf_sorted, spark_sorted)
+        assert_matches_spark(sf_sorted, spark_sorted, ENGINES[Engine.POLARS])
 
     def test_groupby_collect_list_nested_aliased_struct(self, spark):
         """collect_list(struct(...)) preserves aliased nested struct field names (not col1/col2)."""
@@ -758,10 +739,7 @@ class TestDataFrame:
             .groupBy("group_id")
             .agg(PF.collect_list("item").alias("items"))
         )
-        result_spark_df = spark.createDataFrame(result_df.toPandas(), schema=expected_df.schema)
-        assert_pyspark_df_equal(
-            result_spark_df.orderBy("group_id"), expected_df.orderBy("group_id"), ignore_nullable=True
-        )
+        assert_matches_spark(result_df.orderBy("group_id"), expected_df.orderBy("group_id"), ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "how,on_input,expected",
@@ -828,19 +806,18 @@ class TestDataFrame:
         else:
             raise ValueError("Invalid on_format")
 
-        result = left.join(right, on=on, how=how).toPandas()
+        result = left.join(right, on=on, how=how)
+        cols = sorted(result.columns)
+        result = result.select(cols).orderBy(cols)
 
-        spark_result = spark.createDataFrame(result)
-        cols = sorted(spark_result.columns)
-        spark_result = spark_result.select(cols).orderBy(cols)
-
-        spark_expected = spark.createDataFrame(expected.to_arrow().to_pandas())
+        # Build the expected Spark frame WITHOUT a pandas round-trip: pandas turns
+        # null strings into the literal "nan" and int columns with nulls into floats,
+        # which would falsely diverge from SparkleFrame's (correct) null output.
+        spark_expected = create_spark_df(spark, expected)
         cols = sorted(spark_expected.columns)
         spark_expected = spark_expected.select(cols).orderBy(cols)
 
-        spark_expected.show()
-        spark_result.show()
-        assert_pyspark_df_equal(spark_result, spark_expected, ignore_nullable=True, allow_nan_equality=True)
+        assert_matches_spark(result, spark_expected, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "how,on_keys",
@@ -890,16 +867,11 @@ class TestDataFrame:
         # Perform Sparkleframe join
         result_df = pl_left_df.join(pl_right_df, on=on_keys, how=how)
 
-        # Convert Sparkleframe result to Spark DataFrame
-        result_spark_df = spark.createDataFrame(
-            schema=tuple(result_df.df.columns), data=[tuple(d.values()) for d in result_df.df.to_dicts()]
-        )
-
         # Sort to ensure deterministic comparison
-        assert_pyspark_df_equal(
-            result_spark_df.select(sorted(result_spark_df.columns)).orderBy("id"),
+        assert_matches_spark(
+            result_df.select(sorted(result_df.columns)).orderBy("id"),
             expected_df.select(sorted(expected_df.columns)).orderBy("id"),
-            ignore_nullable=True,
+            ENGINES[Engine.POLARS],
         )
 
     @pytest.mark.parametrize(
@@ -956,16 +928,11 @@ class TestDataFrame:
         # Perform Sparkleframe join
         result_df = pl_left_df.join(pl_right_df, on=on_keys, how=how)
 
-        # Convert Sparkleframe result to Spark DataFrame
-        result_spark_df = spark.createDataFrame(
-            schema=tuple(result_df.df.columns), data=[tuple(d.values()) for d in result_df.df.to_dicts()]
-        )
-
         # Sort to ensure deterministic comparison
-        assert_pyspark_df_equal(
-            result_spark_df.select(sorted(result_spark_df.columns)).orderBy("id"),
+        assert_matches_spark(
+            result_df.select(sorted(result_df.columns)).orderBy("id"),
             expected_df.select(sorted(expected_df.columns)).orderBy("id"),
-            ignore_nullable=True,
+            ENGINES[Engine.POLARS],
         )
 
     def test_join_keys_different_type_raise_error(self):
@@ -1004,16 +971,13 @@ class TestDataFrame:
             filled_sparkle = sparkle_df.fillna(fillna_value, subset=subset)
             filled_spark = spark_df.fillna(fillna_value, subset=subset)
 
-        # Convert Sparkleframe to Spark for comparison
-        sparkle_as_spark = spark.createDataFrame(filled_sparkle.df.to_dicts())
-
-        # Convert result to Pandas for assertion
-        sparkle_as_spark = sparkle_as_spark.select(sorted(sparkle_as_spark.columns)).orderBy("name", "age")
+        # Sort for deterministic comparison
+        filled_sparkle = filled_sparkle.select(sorted(filled_sparkle.columns)).orderBy("name", "age")
 
         filled_spark = filled_spark.select(sorted(filled_spark.columns)).orderBy("name", "age")
 
         # Assert equality
-        assert_pyspark_df_equal(sparkle_as_spark, filled_spark, ignore_nullable=True)
+        assert_matches_spark(filled_sparkle, filled_spark, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize(
         "fillna_value, subset, expected_dict",
@@ -1029,9 +993,8 @@ class TestDataFrame:
         sparkle_df = DataFrame(pl.DataFrame(data))
         sparkle_df = sparkle_df.fillna(fillna_value, subset=subset)
 
-        # Convert result to Pandas for assertion
-        result_df = spark.createDataFrame(sparkle_df.df.to_dicts())
-        result_df = result_df.select(sorted(result_df.columns)).orderBy("name", "age")
+        # Sort for deterministic comparison
+        result_df = sparkle_df.select(sorted(sparkle_df.columns)).orderBy("name", "age")
 
         expected_df = spark.createDataFrame(
             spark_rows_from_dict(expected_dict),
@@ -1039,7 +1002,7 @@ class TestDataFrame:
         )
         expected_df = expected_df.select(sorted(expected_df.columns)).orderBy("name", "age")
 
-        assert_pyspark_df_equal(result_df, expected_df, ignore_nullable=True)
+        assert_matches_spark(result_df, expected_df, ENGINES[Engine.POLARS])
 
     def test_columns_property(self):
         # Create sample Polars DataFrame
@@ -1202,8 +1165,8 @@ class TestDataFrame:
         assert ps_result.__class__.__name__ == sf_result.__class__.__name__
 
         sdf = sdf.select(ps_result)
-        sf_df = create_spark_df(spark, sf_df.select(sf_result))
-        assert_pyspark_df_equal(sdf, sf_df)
+        sf_result_df = sf_df.select(sf_result)
+        assert_matches_spark(sf_result_df, sdf, ENGINES[Engine.POLARS])
 
     def test_getitem_int(self, spark):
         input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
@@ -1218,8 +1181,8 @@ class TestDataFrame:
         assert ps_result.__class__.__name__ == sf_result.__class__.__name__
 
         sdf = sdf.select(ps_result)
-        sf_df = create_spark_df(spark, sf_df.select(sf_result))
-        assert_pyspark_df_equal(sdf, sf_df)
+        sf_result_df = sf_df.select(sf_result)
+        assert_matches_spark(sf_result_df, sdf, ENGINES[Engine.POLARS])
 
     def test_getitem_column(self, spark):
         input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
@@ -1230,9 +1193,8 @@ class TestDataFrame:
 
         sf_df = DataFrame(pl_df)
         sf_result_df = sf_df[sf_df["age"] > 3]
-        sf_result_df = create_spark_df(spark, sf_result_df)
 
-        assert_pyspark_df_equal(ps_result, sf_result_df)
+        assert_matches_spark(sf_result_df, ps_result, ENGINES[Engine.POLARS])
 
     def test_getitem_list(self, spark):
         input_data = [{"age": 2, "name": "Alice"}, {"age": 5, "name": "Bob"}]
@@ -1242,10 +1204,9 @@ class TestDataFrame:
         ps_result = sdf[["name", "age"]].orderBy("name")
 
         sf_df = DataFrame(pl_df)
-        sf_result_df = sf_df[["name", "age"]]
-        sf_result_df = create_spark_df(spark, sf_result_df).orderBy("name")
+        sf_result_df = sf_df[["name", "age"]].orderBy("name")
 
-        assert_pyspark_df_equal(ps_result, sf_result_df)
+        assert_matches_spark(sf_result_df, ps_result, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize("use_col", [False, True])
     @pytest.mark.parametrize(
@@ -1295,20 +1256,19 @@ class TestDataFrame:
 
         sf_df = DataFrame(pl.DataFrame(data))
         sorted_sf_df = sf_df.orderBy(*sparkle_order)
-        result_spark_df = create_spark_df(spark, sorted_sf_df)
 
         spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
         expected_df = spark_df.orderBy(*spark_order)
-        assert_pyspark_df_equal(result_spark_df, expected_df, allow_nan_equality=True)
+        assert_matches_spark(sorted_sf_df, expected_df, ENGINES[Engine.POLARS])
 
     @pytest.mark.parametrize("ordinal", [1, 2, -1, -2])
     def test_order_by_int_matches_spark(self, spark, ordinal):
         data = {"age": [2, 5, 1], "name": ["Alice", "Bob", "Carol"]}
         sf_df = DataFrame(pl.DataFrame(data))
         spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
-        result_spark_df = create_spark_df(spark, sf_df.orderBy(ordinal))
+        result_df = sf_df.orderBy(ordinal)
         expected_df = spark_df.orderBy(ordinal)
-        assert_pyspark_df_equal(result_spark_df, expected_df, allow_nan_equality=True)
+        assert_matches_spark(result_df, expected_df, ENGINES[Engine.POLARS])
 
     def test_order_by_int_zero_raises(self):
         sf_df = DataFrame(pl.DataFrame({"age": [1], "name": ["a"]}))
@@ -1349,12 +1309,11 @@ class TestDataFrame:
 
         # Dot access selection should work and alias to leaf name
         sel_sf = df_sparkle.select("col.id")  # -> Column named "id"
-        result_spark_df = create_spark_df(spark, sel_sf)
 
         # Note: simper & robust — just build the same result frame from Polars’ pandas output
         expected_spark_df = spark.createDataFrame(sel_sf.toPandas())
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        assert_matches_spark(sel_sf, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_auto_materialize_is_noop_for_plain_struct(self, spark, sparkle):
         # A plain struct column should NOT go through map auto-materialization
@@ -1368,9 +1327,9 @@ class TestDataFrame:
         assert [f.name for f in s_dtype.fields] == ["a"]
 
         # And dot access works as usual
-        result_spark_df = create_spark_df(spark, df_sparkle.select("s.a"))
-        expected_spark_df = spark.createDataFrame(df_sparkle.select("s.a").toPandas())
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        sel_sf = df_sparkle.select("s.a")
+        expected_spark_df = spark.createDataFrame(sel_sf.toPandas())
+        assert_matches_spark(sel_sf, expected_spark_df, ENGINES[Engine.POLARS])
 
     def test_auto_materialize_warns_but_does_not_crash(self, monkeypatch, spark, sparkle):
         # Prepare a DF that would normally auto-materialize
@@ -1403,14 +1362,13 @@ class TestDataFrame:
         assert isinstance(struct_dtype, pl.Struct)
         assert [f.name for f in struct_dtype.fields] == ["a", "b"]
 
-        result_spark_df = create_spark_df(spark, df_sparkle)
         map_long = SparkMapType(SparkStringType(), SparkLongType(), valueContainsNull=True)
         expected_spark_df = spark.createDataFrame(
             [({"a": 1, "b": None},), ({"a": None, "b": 2},)],
             schema=SparkStructType([SparkStructField("col", map_long)]),
         )
 
-        assert_pyspark_df_equal(result_spark_df, expected_spark_df, ignore_nullable=True)
+        assert_matches_spark(df_sparkle, expected_spark_df, ENGINES[Engine.POLARS])
 
 
 class TestUnionByName:
@@ -1446,7 +1404,7 @@ class TestUnionByName:
         sp_left = spark.createDataFrame(pd.DataFrame(left_data))
         sp_right = spark.createDataFrame(pd.DataFrame(right_data))
         sp_result = sp_left.unionByName(sp_right)
-        assert_sparkle_spark_frame_are_equal(sf_result, sp_result)
+        assert_matches_spark(sf_result, sp_result, ENGINES[Engine.POLARS])
 
     def test_union_by_name_allow_missing_against_spark(self, spark) -> None:
         left_data = {"x": [1], "y": [2]}
@@ -1457,4 +1415,4 @@ class TestUnionByName:
         sp_left = spark.createDataFrame(pd.DataFrame(left_data))
         sp_right = spark.createDataFrame(pd.DataFrame(right_data))
         sp_result = sp_left.unionByName(sp_right, allowMissingColumns=True)
-        assert_sparkle_spark_frame_are_equal(sf_result, sp_result)
+        assert_matches_spark(sf_result, sp_result, ENGINES[Engine.POLARS])

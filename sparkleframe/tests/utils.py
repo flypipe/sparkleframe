@@ -177,18 +177,3 @@ def _get_json_from_dataframe(df):
     if isinstance(df, SparkDataFrame):
         return json.dumps(_records_from_spark(df), sort_keys=True)
     return json.dumps(_records_from_sparkle(df), sort_keys=True)
-
-
-def assert_sparkle_spark_frame_are_equal(
-    df1: Union[SparkDataFrame, DataFrame], df2: Union[SparkDataFrame, DataFrame]
-) -> bool:
-    assert type(df1) is not type(df2)
-    assert df1.count() == df2.count()
-    json_df1 = _get_json_from_dataframe(df1)
-    json_df2 = _get_json_from_dataframe(df2)
-    assert json_df1 == json_df2, f"""
-{json_df1}
-vs
-{json_df2}"""
-
-    return True
