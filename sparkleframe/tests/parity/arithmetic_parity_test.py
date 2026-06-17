@@ -19,18 +19,17 @@ import pytest
 from pyspark.sql.types import DoubleType, IntegerType, StringType, StructField, StructType
 
 from sparkleframe.tests.parity.oracle import assert_matches_spark
-from sparkleframe.tests.utils import spark_rows_from_dict
 
 
 @pytest.mark.feature("arithmetic.same_type")
 def test_int_plus_int(engine, spark):
-    data = {"a": [1, 2, 3], "b": [10, 20, 30]}
-    # One canonical PySpark schema, shared by the engine adapter and by Spark itself.
+    # Row tuples + one canonical PySpark schema, shared by the engine adapter and Spark itself.
+    rows = [(1, 10), (2, 20), (3, 30)]
     schema = StructType([StructField("a", IntegerType()), StructField("b", IntegerType())])
     F = engine.functions
 
-    actual = engine.build_df(data, schema).select((F.col("a") + F.col("b")).alias("r"))
-    expected = spark.createDataFrame(spark_rows_from_dict(data), schema).select((SF.col("a") + SF.col("b")).alias("r"))
+    actual = engine.build_df(rows, schema).select((F.col("a") + F.col("b")).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select((SF.col("a") + SF.col("b")).alias("r"))
 
     assert_matches_spark(actual, expected, engine)
 
@@ -38,11 +37,11 @@ def test_int_plus_int(engine, spark):
 @pytest.mark.feature("arithmetic.numeric_plus_string")
 def test_double_plus_string(engine, spark):
     # Spark implicitly casts the string operand to a number (e.g. "3.14" -> 3.14).
-    data = {"d": [1.0, 2.5], "s": ["3.14", "0.5"]}
+    rows = [(1.0, "3.14"), (2.5, "0.5")]
     schema = StructType([StructField("d", DoubleType()), StructField("s", StringType())])
     F = engine.functions
 
-    actual = engine.build_df(data, schema).select((F.col("d") + F.col("s")).alias("r"))
-    expected = spark.createDataFrame(spark_rows_from_dict(data), schema).select((SF.col("d") + SF.col("s")).alias("r"))
+    actual = engine.build_df(rows, schema).select((F.col("d") + F.col("s")).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select((SF.col("d") + SF.col("s")).alias("r"))
 
     assert_matches_spark(actual, expected, engine)

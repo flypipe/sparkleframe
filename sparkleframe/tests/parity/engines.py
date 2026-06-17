@@ -28,16 +28,8 @@ class EngineAdapter:
 
     name: str
     functions: Any  # the engine's ``functions`` module (col, lit, ...)
-    build_df: Callable[[dict, SparkStructType], Any]  # (column_data, spark schema) -> engine DataFrame
+    build_df: Callable[[list, SparkStructType], Any]  # (row tuples, spark schema) -> engine DataFrame
     to_records: Callable[[Any], list]  # engine DataFrame -> list[dict] (pre-normalization)
-
-
-def _column_dict_to_rows(data: dict) -> list:
-    """Column-oriented ``{name: [values]}`` -> row tuples, preserving column order."""
-    if not data:
-        return []
-    names = list(data.keys())
-    return list(zip(*[data[name] for name in names]))
 
 
 def _polars_engine() -> EngineAdapter:
@@ -53,9 +45,10 @@ def _polars_engine() -> EngineAdapter:
             [StructField(f.name, spark_name_to_datatype(f.dataType.simpleString())) for f in spark_schema.fields]
         )
 
-    def build_df(data: dict, schema: SparkStructType):
-        # Boss directive: always construct with an explicit schema.
-        return DataFrame(_column_dict_to_rows(data), schema=_to_sparkle_struct(schema))
+    def build_df(rows: list, schema: SparkStructType):
+        # Boss directive: always construct with an explicit schema. Mirrors
+        # ``spark.createDataFrame(rows, schema)`` so both sides share the row form.
+        return DataFrame(rows, schema=_to_sparkle_struct(schema))
 
     def to_records(df):
         return df.to_native_df().to_dicts()
@@ -72,10 +65,10 @@ def _python_engine() -> Optional[EngineAdapter]:
     import sparkleframe.python.functions as functions  # type: ignore[import-not-found]
     from sparkleframe.python.dataframe import DataFrame  # type: ignore[import-not-found]
 
-    def build_df(data: dict, schema: SparkStructType):
+    def build_df(rows: list, schema: SparkStructType):
         # The python engine will translate the PySpark schema via its OWN spark-name -> type
         # registry (the equivalent of polarsdf's spark_name_to_datatype), keeping engines split.
-        return DataFrame(_column_dict_to_rows(data), schema=schema)
+        return DataFrame(rows, schema=schema)
 
     def to_records(df):
         # Contract for the Python engine: expose normalized-ready records.

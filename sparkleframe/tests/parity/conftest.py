@@ -12,6 +12,21 @@ import pytest
 
 from sparkleframe.tests.parity.engines import ENGINES
 from sparkleframe.tests.parity.gaps import GATES
+from sparkleframe.tests.sample_data import sample_data, sample_schema
+
+
+@pytest.fixture
+def sample():
+    """Thin wrapper exposing the shared sample frame on either side of the oracle."""
+
+    class _S:
+        def sparkle(self, engine):
+            return engine.build_df(sample_data, sample_schema)
+
+        def spark(self, spark):
+            return spark.createDataFrame(sample_data, sample_schema)
+
+    return _S()
 
 
 def pytest_configure(config):

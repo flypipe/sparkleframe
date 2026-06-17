@@ -46,26 +46,20 @@ from sparkleframe.polarsdf.types_utils import _MapTypeUtils
 from sparkleframe.engine import Engine
 from sparkleframe.tests.parity.engines import ENGINES
 from sparkleframe.tests.parity.oracle import assert_matches_spark
+from sparkleframe.tests.sample_data import sample_data, sample_schema
 from sparkleframe.tests.utils import create_spark_df, spark_rows_from_dict
-
-sample_data = {
-    "name": ["Alice", "Bob", "Charlie"],
-    "age": [25, 30, 35],
-    "salary": [70000, 80000, 90000],
-    "birth_date": ["1990-01-01", "1985-05-15", "1970-12-30"],
-    "login_time": ["2024-01-01T08:00:00", "2024-01-02T09:30:00", "2024-01-03T11:45:00"],
-}
 
 
 @pytest.fixture
 def sparkle_df():
-    return DataFrame(pl.DataFrame(sample_data))
+    # Schema-driven: feed the canonical PySpark schema + rows through the engine adapter,
+    # which handles the PySpark -> sparkle StructType translation.
+    return ENGINES[Engine.POLARS].build_df(sample_data, sample_schema)
 
 
 @pytest.fixture
 def spark_df(spark):
-    # Pandas preserves int column types for casts; sample_data has no str/None mix.
-    return spark.createDataFrame(pd.DataFrame(sample_data))
+    return spark.createDataFrame(sample_data, sample_schema)
 
 
 def _polars_native_map_series(name: str, dict_rows: list[dict[str, int]]) -> pl.Series:
