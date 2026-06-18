@@ -526,7 +526,7 @@ class TestTypes:
         # Spark DF from Python rows
         df_spark = spark.createDataFrame(rows, schema=spark_schema)
 
-        # Sparkle DF (Polars backend) with equivalent schema
+        # Sparkle DF (Polars engine) with equivalent schema
         df_pl = sparkle.createDataFrame(rows, schema=sparkle_schema)
 
         assert assert_matches_spark(df_pl, df_spark, ENGINES[Engine.POLARS])

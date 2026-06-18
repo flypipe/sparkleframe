@@ -8,9 +8,9 @@ import urllib
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Backends to report coverage for, in display order. Each entry is the tab label
+# Engines to report coverage for, in display order. Each entry is the tab label
 # shown in the docs and the `sparkleframe.<module>` package that implements it.
-BACKENDS = [
+ENGINES = [
     {"label": "Polars", "module": "polarsdf"},
     {"label": "Python", "module": "python"},
 ]
@@ -44,12 +44,12 @@ def check_doc_url(func_name, url_key):
     return url, exists, func_name
 
 
-def load_backend_implementations(module_name):
+def load_engine_implementations(module_name):
     """Return the SparkleFrame implementation object for each compared module.
 
     Maps the comparison key (Column, DataFrame, functions, ...) to the object in
-    `sparkleframe.<module_name>` whose public members we reflect over. If the backend
-    package is not available yet (e.g. the Python backend before it is implemented),
+    `sparkleframe.<module_name>` whose public members we reflect over. If the engine
+    package is not available yet (e.g. the Python engine before it is implemented),
     every entry is None so that the coverage report renders the whole API as missing.
     """
     try:
@@ -77,7 +77,7 @@ def build_pyspark_reference(modules, num_threads):
     """Enumerate the PySpark API once, keeping only entries that resolve to a real doc URL.
 
     Returns an ordered list of (module_meta, [(name, url), ...]) so the (network-heavy)
-    URL existence check is shared across every backend tab instead of repeated per tab.
+    URL existence check is shared across every engine tab instead of repeated per tab.
     """
     reference = []
     for module in sorted(modules, key=lambda m: m["module_url_key"]):
@@ -94,8 +94,8 @@ def build_pyspark_reference(modules, num_threads):
     return reference
 
 
-def render_backend_coverage(reference, implementations, reflectors):
-    """Render the ✅/❌ coverage bullet list for a single backend, indented for a content tab."""
+def render_engine_coverage(reference, implementations, reflectors):
+    """Render the ✅/❌ coverage bullet list for a single engine, indented for a content tab."""
     lines = []
     for module, members in reference:
         url_key = module["url_key"]
@@ -145,20 +145,20 @@ if __name__ == "__main__":
         {"url_key": "Window", "module_url_key": "window", "pyspark": PYSPARK_WINDOW, "lambda": get_functions},
     ]
 
-    # Reflector used to list the implemented members of each backend module, keyed by url_key.
+    # Reflector used to list the implemented members of each engine module, keyed by url_key.
     REFLECTORS = {module["url_key"]: module["lambda"] for module in MODULES}
 
     # Number of threads: CPU cores minus 1, minimum 1
     num_threads = max(os.cpu_count() - 1, 1)
 
-    # Enumerate the PySpark API (and its doc URLs) once, then reuse it for every backend tab.
+    # Enumerate the PySpark API (and its doc URLs) once, then reuse it for every engine tab.
     reference = build_pyspark_reference(MODULES, num_threads)
 
     output = []
-    for backend in BACKENDS:
-        implementations = load_backend_implementations(backend["module"])
-        output.append(f'=== "{backend["label"]}"')
-        output.extend(render_backend_coverage(reference, implementations, REFLECTORS))
+    for engine in ENGINES:
+        implementations = load_engine_implementations(engine["module"])
+        output.append(f'=== "{engine["label"]}"')
+        output.extend(render_engine_coverage(reference, implementations, REFLECTORS))
         output.append("")
 
     path = os.path.join(pathlib.Path(__file__).resolve().parent, "supported_api_doc.md")

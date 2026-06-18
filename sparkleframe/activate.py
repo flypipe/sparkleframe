@@ -41,7 +41,7 @@ def activate(engine: Engine = Engine.POLARS) -> None:
         engine_module = importlib.import_module(f"sparkleframe.{engine}")
     except ModuleNotFoundError as exc:
         raise NotImplementedError(
-            f"The '{engine}' backend is not available yet. Currently only the Polars backend "
+            f"The '{engine}' engine is not available yet. Currently only the Polars engine "
             f"(Engine.POLARS) is implemented."
         ) from exc
 

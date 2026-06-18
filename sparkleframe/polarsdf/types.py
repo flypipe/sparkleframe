@@ -408,7 +408,7 @@ class StructType(DataType):
 class Row:
     def __init__(self, *args, **kwargs):
         # FIXME: IMPLEMENT IT
-        raise NotImplementedError("Row is not implemented in Polars backend.")
+        raise NotImplementedError("Row is not implemented in Polars engine.")
 
 
 class MapType(DataType):
