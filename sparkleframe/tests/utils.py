@@ -25,20 +25,6 @@ def _ddl_schema_from_polars_frame(frame: pl.DataFrame) -> str:
     return ", ".join(parts)
 
 
-def spark_rows_from_dict(data: dict[str, list[Any]]) -> list[tuple[Any, ...]]:
-    """
-    Column-oriented dict -> row tuples for Spark, preserving key order as column order.
-
-    Keeps Python None as None in each row (avoids pandas object-column NaN coercion).
-
-    Usage:
-        spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
-    """
-    if not data:
-        return []
-    return list(zip(*[data[name] for name in data.keys()]))
-
-
 def create_spark_df(
     spark,
     df: Union[pl.DataFrame, DataFrame],

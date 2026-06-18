@@ -19,6 +19,7 @@ from sparkleframe.polarsdf.types import (
     ShortType,
     TimestampType,
 )
+from sparkleframe.tests.utils import create_spark_df
 
 
 def _functions_pow_optional():
@@ -336,10 +337,10 @@ class TestColumn:
         pl_df = pl.DataFrame({"idx": list(range(len(values))), "text": values})
         sf_df = DataFrame(pl_df)
         expr = col("text").contains(pattern).alias("result")
-        pl_result = sf_df.select(col("idx"), expr).to_native_df()
+        sf_result = sf_df.select(col("idx"), expr)
 
-        # Convert the Polars result to a Spark DataFrame
-        spark_from_polars = spark.createDataFrame(pl_result.to_pandas())
+        # Materialize the sparkleframe result as a Spark DataFrame (null-safe conversion)
+        spark_from_polars = create_spark_df(spark, sf_result)
 
         # Build a pure Spark DataFrame and compute expected result using PySpark's contains
         spark_input = spark.createDataFrame(list(enumerate(values)), schema=["idx", "text"])

@@ -68,7 +68,7 @@ from sparkleframe.polarsdf.types import IntegerType, StringType, StructField, St
 from sparkleframe.engine import Engine
 from sparkleframe.tests.parity.engines import ENGINES
 from sparkleframe.tests.parity.oracle import assert_matches_spark
-from sparkleframe.tests.utils import create_spark_df, spark_rows_from_dict
+from sparkleframe.tests.utils import create_spark_df
 
 sample_data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
 
@@ -101,7 +101,7 @@ class TestFunctions:
         result_df = sparkle_df.select(lit(literal_value).alias("value")).toPandas()
 
         # Result using Spark
-        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        spark_df = create_spark_df(spark, sparkle_df)
         expected_df = spark_df.select(spark_lit(literal_value).alias("value")).toPandas()
 
         # Compare using pandas
@@ -128,7 +128,7 @@ class TestFunctions:
         result_df = polars_df.select(round(col("x"), scale).alias("rounded")).toPandas()
 
         # PySpark
-        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        spark_df = create_spark_df(spark, polars_df)
         expected_df = spark_df.select(spark_round(spark_col("x"), scale).alias("rounded")).toPandas()
 
         # Compare using pandas
@@ -302,9 +302,7 @@ class TestNowAndMonotonicallyIncreasingId:
         data = {"x": [1, 2, 3]}
         polars_df = DataFrame(pl.DataFrame(data))
         result_spark_df = create_spark_df(spark, polars_df.select(now().alias("t")))
-        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
-            spark_now().alias("t")
-        )
+        expected_df = create_spark_df(spark, polars_df).select(spark_now().alias("t"))
         ms1 = [r[0] for r in result_spark_df.select(spark_unix_millis("t").alias("m")).collect()]
         ms2 = [r[0] for r in expected_df.select(spark_unix_millis("t").alias("m")).collect()]
         assert len(set(ms1)) == 1
@@ -315,9 +313,7 @@ class TestNowAndMonotonicallyIncreasingId:
         data = {"x": [1, 2, 3]}
         polars_df = DataFrame(pl.DataFrame(data))
         result_spark_df = create_spark_df(spark, polars_df.select(current_timestamp().alias("t")))
-        expected_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys())).select(
-            spark_current_timestamp().alias("t")
-        )
+        expected_df = create_spark_df(spark, polars_df).select(spark_current_timestamp().alias("t"))
         ms1 = [r[0] for r in result_spark_df.select(spark_unix_millis("t").alias("m")).collect()]
         ms2 = [r[0] for r in expected_df.select(spark_unix_millis("t").alias("m")).collect()]
         assert len(set(ms1)) == 1
@@ -450,7 +446,7 @@ class TestFromJson:
         )
         valid_data = {"j": ['{"field1": "ok", "field2": 1}']}
         polars_valid = DataFrame(pl.DataFrame(valid_data))
-        spark_valid = spark.createDataFrame(spark_rows_from_dict(valid_data), list(valid_data.keys()))
+        spark_valid = create_spark_df(spark, polars_valid)
         assert_matches_spark(
             polars_valid.select(from_json("j", schema).alias("parsed")),
             spark_valid.select(spark_from_json("j", spark_schema).alias("parsed")),
@@ -462,7 +458,7 @@ class TestFromJson:
         result = polars_bad.select(from_json("j", schema).alias("parsed")).to_native_df()
         assert result["parsed"][0] is None
 
-        spark_bad = spark.createDataFrame(spark_rows_from_dict(bad_data), list(bad_data.keys()))
+        spark_bad = create_spark_df(spark, polars_bad)
         spark_row = spark_bad.select(spark_from_json("j", spark_schema).alias("parsed")).collect()[0][0]
         assert spark_row is None or (spark_row.field1 is None and spark_row.field2 is None)
 
@@ -477,7 +473,7 @@ class TestRandParity:
     def test_rand_output_shape_and_type_matches_spark(self, spark) -> None:
         data = {"x": [1, 2, 3, 4, 5]}
         polars_df = DataFrame(pl.DataFrame(data))
-        spark_df = spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
+        spark_df = create_spark_df(spark, polars_df)
         sf_result = polars_df.select(rand(42).alias("r"))
         sp_result = spark_df.select(spark_rand(42).alias("r"))
         sf_vals = sf_result.to_native_df()["r"].to_list()
