@@ -7,7 +7,10 @@ import pytest
 
 import sparkleframe.polarsdf.functions as SF
 from sparkleframe.polarsdf import types as sft
-from sparkleframe.tests.utils import _get_json_from_dataframe, assert_sparkle_spark_frame_are_equal
+from sparkleframe.engine import Engine
+from sparkleframe.tests.parity.engines import ENGINES
+from sparkleframe.tests.parity.oracle import assert_matches_spark
+from sparkleframe.tests.utils import _get_json_from_dataframe
 
 
 class TestScalarTypeRegistry:
@@ -526,7 +529,7 @@ class TestTypes:
         # Sparkle DF (Polars backend) with equivalent schema
         df_pl = sparkle.createDataFrame(rows, schema=sparkle_schema)
 
-        assert assert_sparkle_spark_frame_are_equal(df_spark, df_pl)
+        assert assert_matches_spark(df_pl, df_spark, ENGINES[Engine.POLARS])
 
     def test_getItem_mixed_array_map_struct(self, spark, sparkle):
         # ---------- Data ----------

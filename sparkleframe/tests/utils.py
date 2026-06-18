@@ -25,20 +25,6 @@ def _ddl_schema_from_polars_frame(frame: pl.DataFrame) -> str:
     return ", ".join(parts)
 
 
-def spark_rows_from_dict(data: dict[str, list[Any]]) -> list[tuple[Any, ...]]:
-    """
-    Column-oriented dict -> row tuples for Spark, preserving key order as column order.
-
-    Keeps Python None as None in each row (avoids pandas object-column NaN coercion).
-
-    Usage:
-        spark.createDataFrame(spark_rows_from_dict(data), list(data.keys()))
-    """
-    if not data:
-        return []
-    return list(zip(*[data[name] for name in data.keys()]))
-
-
 def create_spark_df(
     spark,
     df: Union[pl.DataFrame, DataFrame],
@@ -177,18 +163,3 @@ def _get_json_from_dataframe(df):
     if isinstance(df, SparkDataFrame):
         return json.dumps(_records_from_spark(df), sort_keys=True)
     return json.dumps(_records_from_sparkle(df), sort_keys=True)
-
-
-def assert_sparkle_spark_frame_are_equal(
-    df1: Union[SparkDataFrame, DataFrame], df2: Union[SparkDataFrame, DataFrame]
-) -> bool:
-    assert type(df1) is not type(df2)
-    assert df1.count() == df2.count()
-    json_df1 = _get_json_from_dataframe(df1)
-    json_df2 = _get_json_from_dataframe(df2)
-    assert json_df1 == json_df2, f"""
-{json_df1}
-vs
-{json_df2}"""
-
-    return True
