@@ -1,9 +1,9 @@
 """Shared 'not implemented yet' helper for the pure-Python engine scaffolding.
 
-The engine is a walking skeleton: the public surface (functions, Column, DataFrame, …) is
-declared, but every operation raises — the build, analyze, and evaluate phases all land with the
-engine itself. Use this helper so the message is consistent and always points a future
-implementer at the design doc and the build → analyze → evaluate flow.
+The engine is a walking skeleton: the build phase (constructing the expression AST) is wired,
+but the analyze and evaluate phases — and every DataFrame action — raise. Use this helper so
+the message is consistent and always points a future implementer at the design doc and the
+build → analyze → evaluate flow.
 """
 
 from __future__ import annotations

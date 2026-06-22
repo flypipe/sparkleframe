@@ -10,9 +10,10 @@ SparkleFrame implements the **PySpark DataFrame API** so pipelines run **without
 cluster**. It is a **partial shim** targeting the **PySpark / Apache Spark 4.x** DataFrame API:
 not every operation is supported, but behavior matches Spark where implemented.
 
-It runs on a **pluggable engine**. Polars is the engine today (`sparkleframe/polarsdf`); a
-pure-Python engine is scaffolded (`sparkleframe/python`, #102). The engine is selected via the
-`Engine` enum and bound by `activate()`. See [ARCHITECTURE.md](ARCHITECTURE.md) for the map.
+It runs on a **pluggable engine**. Polars is the mature engine (`sparkleframe/polarsdf`); a
+pure-Python engine is scaffolded and landing incrementally (`sparkleframe/python`, #102) via its
+build → analyze → evaluate flow. The engine is selected via the `Engine` enum and bound by
+`activate()`. See [ARCHITECTURE.md](ARCHITECTURE.md) for the map.
 
 ## Hard invariants (always true — don't violate without explicit instruction)
 

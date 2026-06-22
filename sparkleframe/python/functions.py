@@ -1,10 +1,12 @@
-"""``pyspark.sql.functions`` surface for the pure-Python engine — a declared surface (walking skeleton).
+"""``pyspark.sql.functions`` surface for the pure-Python engine.
 
-Each function will be part of the build phase: it will construct an unresolved expression-AST node
-that a later analyze → evaluate pass resolves and runs (see ``docs/design/python-engine-ast.md``).
-None of that exists yet — every function here is a declared slot that raises, documenting the
-surface so it can be filled in (and the matching id drained from the Python parity gate in
-``sparkleframe/tests/parity/gaps.py``) as the engine lands.
+Each function is part of the **build** phase: it constructs an unresolved AST node (see
+:mod:`sparkleframe.python.ast.expressions`) and makes no type decisions. A handful of
+representative functions are wired to show the pattern across every node kind
+(:class:`AttributeReference`, :class:`Literal`, :class:`FunctionCall`, :class:`CaseWhen`);
+the remainder are declared with their PySpark signatures and raise — build the matching node
+here, then teach the analyzer/evaluator to handle it (and drain the gate in
+``sparkleframe/tests/parity/gaps.py``).
 """
 
 from __future__ import annotations
@@ -12,39 +14,61 @@ from __future__ import annotations
 from typing import Any, Callable, Optional, Union
 
 from sparkleframe.python._errors import not_implemented_yet
-from sparkleframe.python.column import Column
+from sparkleframe.python.ast.expressions import AttributeReference, CaseWhen, Expression, FunctionCall, Literal
+from sparkleframe.python.column import Column, _column_ref, _to_expression
 
 
-# --- Column builders --------------------------------------------------------
+def _fn(name: str, *cols: Any) -> Column:
+    """Build a :class:`Column` wrapping ``FunctionCall(name, [...])`` over column arguments."""
+    return Column(FunctionCall(name, [_column_ref(c) for c in cols]))
+
+
+# --- Column builders (build wired) -----------------------------------------
 def col(name: str) -> Column:
-    not_implemented_yet("functions.col")
+    return Column(AttributeReference(name))
 
 
 def lit(value: Any) -> Column:
-    not_implemented_yet("functions.lit")
+    return Column(Literal(value))
 
 
-def when(condition: Any, value: Any) -> Column:
-    not_implemented_yet("functions.when")
+class WhenBuilder:
+    """Accumulates ``when(...).when(...)`` branches; ``otherwise`` finalizes into a :class:`CaseWhen`."""
+
+    def __init__(self, condition: Any, value: Any) -> None:
+        self._branches: list[tuple[Expression, Expression]] = [(_to_expression(condition), _to_expression(value))]
+
+    def when(self, condition: Any, value: Any) -> "WhenBuilder":
+        self._branches.append((_to_expression(condition), _to_expression(value)))
+        return self
+
+    def otherwise(self, value: Any) -> Column:
+        return Column(CaseWhen(self._branches, _to_expression(value)))
 
 
-# --- Remaining surface (slots) ----------------------------------------------
+def when(condition: Any, value: Any) -> WhenBuilder:
+    """Start a multi-branch conditional; chain ``.when(...).otherwise(...)``."""
+    return WhenBuilder(condition, value)
+
+
+# --- A few representative wrappers (build wired) ---------------------------
 def abs(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.abs")
+    return _fn("abs", col_name)
 
 
 def lower(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.lower")
+    return _fn("lower", col_name)
 
 
 def count(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.count")
+    return _fn("count", col_name)
 
 
 def coalesce(*cols: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.coalesce")
+    return _fn("coalesce", *cols)
 
 
+# --- Remaining surface (slots — build the node when implementing) ----------
 def get_json_object(col: Union[str, Column], path: str) -> Column:
     not_implemented_yet("functions.get_json_object")
 

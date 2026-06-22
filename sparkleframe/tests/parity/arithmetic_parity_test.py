@@ -6,12 +6,12 @@ result is defined by Spark — not by any engine.
 
 The gating in ``gaps.py`` is what makes this safe while engines are incomplete:
 
-- ``same_type`` (int + int) is supported by Polars (runs green) and gated for
-  Python (xfail until the engine lands).
-- ``numeric_plus_string`` and ``int_plus_date`` are gated for **both** Polars
-  (documented gaps) and Python (not built). When Python's analyzer lands and the
-  id is deleted from ``PYTHON_NOT_IMPLEMENTED``, this test becomes required-to-pass
-  for Python — proving Python fixed a gap Polars still has.
+- ``same_type`` (int + int) is supported by both Polars and Python (runs green).
+- ``numeric_plus_string`` is a documented Polars gap (still ``xfail`` for Polars)
+  but is **implemented for Python**: its analyze phase resolves the operand types
+  against the schema and casts the string to double, so the test is now
+  required-to-pass for Python — proving Python fixed a gap Polars still has.
+- ``int_plus_date`` is still gated for **both** engines (not built yet).
 """
 
 import pyspark.sql.functions as SF
@@ -43,5 +43,20 @@ def test_double_plus_string(engine, spark):
 
     actual = engine.build_df(rows, schema).select((F.col("d") + F.col("s")).alias("r"))
     expected = spark.createDataFrame(rows, schema).select((SF.col("d") + SF.col("s")).alias("r"))
+
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("arithmetic.numeric_plus_string")
+def test_int_plus_string(engine, spark):
+    # With an int operand, Spark casts the string to BIGINT (e.g. 1 + "3" -> 4),
+    # unlike the double case which casts to double. Decimal strings like "0.5"
+    # would be a malformed BIGINT cast and raise under ANSI.
+    rows = [(1, "3"), (2, "40")]
+    schema = StructType([StructField("a", IntegerType()), StructField("s", StringType())])
+    F = engine.functions
+
+    actual = engine.build_df(rows, schema).select((F.col("a") + F.col("s")).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select((SF.col("a") + SF.col("s")).alias("r"))
 
     assert_matches_spark(actual, expected, engine)
