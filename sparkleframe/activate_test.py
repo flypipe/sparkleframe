@@ -49,10 +49,17 @@ class TestActivate:
 
         assert pysql.__name__ == "sparkleframe.polarsdf"
 
-    def test_activate_python_engine_raises_not_implemented(self):
-        # The python engine package does not exist yet, so selecting it must fail clearly.
-        with pytest.raises(NotImplementedError):
-            activate(Engine.PYTHON)
+    def test_activate_python_engine_binds_python_engine(self):
+        # The python engine package is now scaffolded, so selecting it binds the namespace.
+        activate(Engine.PYTHON)
+
+        import pyspark.sql as pysql
+
+        assert pysql.__name__ == "sparkleframe.python"
+        # Public PySpark classes are exposed under the rebound namespace.
+        assert hasattr(pysql, "DataFrame")
+        assert hasattr(pysql, "Column")
+        assert hasattr(pysql, "SparkSession")
 
     def test_activate_context_binds_then_restores(self):
         with activate_context():

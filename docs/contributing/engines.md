@@ -23,7 +23,7 @@ rebinds `sys.modules["pyspark.sql"]` (and submodules) to it, so existing `import
 on the engine. Selecting an engine that isn't scaffolded raises `NotImplementedError`.
 
 Only the **Polars** engine (`sparkleframe/polarsdf`) is implemented today. The **`python`** engine
-(`sparkleframe/python`) is planned — see [#102](https://github.com/flypipe/sparkleframe/issues/102)
+(`sparkleframe/python`) is scaffolded — see [#102](https://github.com/flypipe/sparkleframe/issues/102)
 and the design in [../design/python-engine-ast.md](../design/python-engine-ast.md).
 
 ## The parity harness

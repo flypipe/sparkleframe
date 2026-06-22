@@ -1,6 +1,6 @@
 # Design: AST-based type resolution for the Python engine
 
-> This describes a design for the planned pure-Python engine (`sparkleframe/python`,
+> This describes a design for the scaffolded pure-Python engine (`sparkleframe/python`,
 > [#102](https://github.com/flypipe/sparkleframe/issues/102)). It is forward-looking and
 > will change as the engine lands. It is intentionally kept out of `ARCHITECTURE.md`, which
 > maps what exists today. Tracking issue: [#104](https://github.com/flypipe/sparkleframe/issues/104).
