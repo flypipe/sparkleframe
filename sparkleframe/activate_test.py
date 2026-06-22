@@ -29,7 +29,7 @@ def restore_pyspark():
 
 
 class TestActivate:
-    def test_activate_default_binds_polars_backend(self):
+    def test_activate_default_binds_polars_engine(self):
         activate()
 
         import pyspark.sql as pysql
@@ -49,8 +49,8 @@ class TestActivate:
 
         assert pysql.__name__ == "sparkleframe.polarsdf"
 
-    def test_activate_python_backend_raises_not_implemented(self):
-        # The python backend package does not exist yet, so selecting it must fail clearly.
+    def test_activate_python_engine_raises_not_implemented(self):
+        # The python engine package does not exist yet, so selecting it must fail clearly.
         with pytest.raises(NotImplementedError):
             activate(Engine.PYTHON)
 

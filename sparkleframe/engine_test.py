@@ -18,7 +18,7 @@ class TestEngine:
     def test_clean_class_name_leaves_non_prefixed_unchanged(self):
         assert Engine.POLARS.clean_class_name("Column") == "Column"
         assert Engine.POLARS.clean_class_name("functions") == "functions"
-        # A name carrying the other backend's prefix is not stripped.
+        # A name carrying the other engine's prefix is not stripped.
         assert Engine.PYTHON.clean_class_name("PolarsColumn") == "PolarsColumn"
 
     def test_engine_is_re_exported_from_package_root(self):
