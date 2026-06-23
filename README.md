@@ -2,7 +2,7 @@
 
 SparkleFrame implements the PySpark DataFrame API so you can run transformation pipelines on a lightweight
 **engine** instead of a Spark cluster—no Spark cluster or Spark dependencies required. The engine is pluggable:
-[Polars](https://docs.pola.rs/api/python/stable/reference/index.html) today, with a pure-Python engine planned.
+[Polars](https://docs.pola.rs/api/python/stable/reference/index.html) today, with a pure-Python engine scaffolded.
 It is a **partial** **shim** aimed at the **PySpark / Apache Spark 4.x** DataFrame API: not every operation or
 edge case is supported, but behavior matches Spark where implemented.
 

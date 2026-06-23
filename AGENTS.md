@@ -11,7 +11,7 @@ cluster**. It is a **partial shim** targeting the **PySpark / Apache Spark 4.x**
 not every operation is supported, but behavior matches Spark where implemented.
 
 It runs on a **pluggable engine**. Polars is the engine today (`sparkleframe/polarsdf`); a
-pure-Python engine is planned (`sparkleframe/python`, #102). The engine is selected via the
+pure-Python engine is scaffolded (`sparkleframe/python`, #102). The engine is selected via the
 `Engine` enum and bound by `activate()`. See [ARCHITECTURE.md](ARCHITECTURE.md) for the map.
 
 ## Hard invariants (always true — don't violate without explicit instruction)

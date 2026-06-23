@@ -31,7 +31,7 @@ is the scoped form. Users can also import an engine package directly and skip ac
 ### An engine package — the API surface
 
 An engine lives under `sparkleframe/<engine>/`. Polars is the only one implemented today
-(`sparkleframe/polarsdf`); `sparkleframe/python` is planned (#102). Within a package, the public
+(`sparkleframe/polarsdf`); `sparkleframe/python` is scaffolded (#102). Within a package, the public
 modules are **thin facades** and all real logic sits in a matching `*_helpers.py`. That split is
 an invariant, not a style preference (see Invariants below).
 
@@ -85,7 +85,7 @@ flowchart TD
     user["user code: import pyspark.sql / sparkleframe.&lt;engine&gt;"]
     activate["activate.py — rebinds sys.modules to the chosen engine"]
     engineenum["engine.py — Engine enum (POLARS, PYTHON)"]
-    pkg["sparkleframe/&lt;engine&gt;/ (polarsdf today, python planned)"]
+    pkg["sparkleframe/&lt;engine&gt;/ (polarsdf today, python scaffolded)"]
     facade["public facades: functions.py / column.py / dataframe.py"]
     helpers["*_helpers.py — coercion, parsing, strict/lenient logic"]
     prim["engine primitives (Column wraps one expr, DataFrame one frame)"]
@@ -124,9 +124,9 @@ flowchart TD
   at *expression-build time*, before the frame schema is known. Cross-type coercion (e.g.
   `col(float) + col(string)`) therefore can't fire for bare column references, which is the root
   cause behind most of `docs/known_gaps.md`. Engines are free to resolve types differently behind
-  the `EngineAdapter` / `Engine` boundary. The planned `python` engine resolves this differently —
+  the `EngineAdapter` / `Engine` boundary. The scaffolded `python` engine resolves this differently —
   see `docs/design/python-engine-ast.md` and #104. (No design detail here, by intent.)
-- **Multiple engines.** The canonical name for the planned pure-Python engine is **`python`**
+- **Multiple engines.** The canonical name for the scaffolded pure-Python engine is **`python`**
   (package `sparkleframe/python/`), consistent across `engine.py`, `gaps.py`, and the docs
   generator. Note: issues #102/#104 and the `feature/pythondf-backend` branch use `pythondf`; those
   external references should be reconciled to `python`.
