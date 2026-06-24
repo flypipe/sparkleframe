@@ -1,9 +1,9 @@
-"""``DataFrame`` for the pure-Python engine — a walking skeleton.
+"""``DataFrame`` for the pure-Python engine.
 
 The constructor stores the rows and the (PySpark) schema verbatim — that is the data the
-build → analyze → evaluate flow will consume. Every transformation and action is a raising slot
-for now; they land incrementally as the analyze (type resolution) and evaluate (execution) phases
-are implemented (see ``docs/design/python-engine-ast.md``).
+build → analyze → evaluate flow consumes. A transformation resolves its column expressions through
+``analyzer.analyze`` (type resolution, against the schema) then ``evaluator.evaluate`` (execution),
+producing a new frame. Operations beyond ``select`` are not implemented yet and raise.
 
 Type handling: per the engine's first-pass decision the schema is a PySpark ``StructType``
 consumed directly (see ``docs/design/python-engine-ast.md`` and the plan).
@@ -15,7 +15,16 @@ from typing import Any, List, Optional, Tuple, Union
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
 from sparkleframe.python._errors import not_implemented_yet
+from sparkleframe.python.ast.analyzer import analyze
+from sparkleframe.python.ast.evaluator import evaluate
 from sparkleframe.python.column import Column
+from sparkleframe.python.dataframe_helpers import output_name, rows_as_dicts
+from sparkleframe.python.functions import col as _col
+
+try:  # pragma: no cover - exercised only with the real pyspark installed
+    from pyspark.sql.types import StructField, StructType
+except Exception:  # pragma: no cover - mock pyspark (under activate) has no real types
+    pass
 
 
 class DataFrame(BaseDataFrame):
@@ -26,7 +35,8 @@ class DataFrame(BaseDataFrame):
         self._schema = schema
 
     def to_records(self) -> list:
-        not_implemented_yet("DataFrame.to_records")
+        """Engine → ``list[dict]`` for the parity oracle: zip schema names with each row tuple."""
+        return rows_as_dicts(self._rows, self._schema)
 
     def columns(self) -> List[str]:
         not_implemented_yet("DataFrame.columns")
@@ -44,7 +54,20 @@ class DataFrame(BaseDataFrame):
         not_implemented_yet("DataFrame.alias")
 
     def select(self, *cols: Union[str, Column, List[str], List[Column]]) -> "DataFrame":
-        not_implemented_yet("DataFrame.select")
+        columns = [c if isinstance(c, Column) else _col(c) if isinstance(c, str) else None for c in cols]
+        if any(c is None for c in columns):
+            not_implemented_yet("DataFrame.select for non-str/Column arguments")
+
+        input_rows = rows_as_dicts(self._rows, self._schema)
+        out_fields = []
+        out_values = []  # one value list per output column
+        for column in columns:
+            resolved = analyze(column._expr, self._schema)
+            out_fields.append(StructField(output_name(resolved), resolved.data_type))
+            out_values.append(evaluate(resolved, input_rows))
+
+        out_rows = [tuple(values[i] for values in out_values) for i in range(len(self._rows))]
+        return DataFrame(out_rows, StructType(out_fields))
 
     def filter(self, condition: Union[str, Column]) -> "DataFrame":
         not_implemented_yet("DataFrame.filter")

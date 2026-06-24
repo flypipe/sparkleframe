@@ -1,20 +1,63 @@
-"""Unit tests for the ``functions`` surface — every function is a slot that raises until the engine lands."""
+"""Unit tests for the ``functions`` surface: build-wired functions and unimplemented slots.
+
+As functions are implemented they must move from ``_UNIMPLEMENTED`` (slot-raises) into a
+positive build-shape test that asserts the AST node produced. Removing from one list without
+adding the other leaves the surface untested.
+"""
 
 import pytest
 
 import sparkleframe.python.functions as F
-import sparkleframe.python.functions_helpers as functions_helpers
+from sparkleframe.python.ast.expressions import AttributeReference, CaseWhen, FunctionCall, Literal
+from sparkleframe.python.column import Column
 
-# Every function is a declared slot that raises until implemented. Calling each one (with dummy
-# arguments) both documents the surface and guards that the slot stays wired.
+
+class TestBuildWiredFunctions:
+    def test_col_builds_attribute_reference(self):
+        result = F.col("a")
+        assert isinstance(result, Column)
+        assert isinstance(result._expr, AttributeReference)
+        assert result._expr.name == "a"
+
+    @pytest.mark.parametrize("value", [5, "x", True, 1.5, None])
+    def test_lit_builds_literal_for_each_supported_type(self, value):
+        result = F.lit(value)
+        assert isinstance(result._expr, Literal)
+        assert result._expr.value == value
+
+    @pytest.mark.parametrize("fn, name", [(F.abs, "abs"), (F.lower, "lower"), (F.count, "count")])
+    def test_single_arg_functions_build_function_call(self, fn, name):
+        result = fn("x")
+        assert isinstance(result._expr, FunctionCall)
+        assert result._expr.name == name
+        assert isinstance(result._expr.args[0], AttributeReference)
+
+    def test_coalesce_is_variadic(self):
+        result = F.coalesce("a", "b", F.lit(0))
+        assert isinstance(result._expr, FunctionCall)
+        assert result._expr.name == "coalesce"
+        assert len(result._expr.args) == 3
+
+    def test_when_otherwise_builds_case_when_preserving_branch_order(self):
+        result = F.when(F.col("a") == 1, F.lit("yes")).when(F.col("a") == 2, F.lit("maybe")).otherwise(F.lit("no"))
+        assert isinstance(result, Column)
+        assert isinstance(result._expr, CaseWhen)
+        assert len(result._expr.branches) == 2
+
+        # Lock branch order: first .when before second .when.
+        first_value = result._expr.branches[0][1]
+        second_value = result._expr.branches[1][1]
+        assert isinstance(first_value, Literal) and first_value.value == "yes"
+        assert isinstance(second_value, Literal) and second_value.value == "maybe"
+
+        # otherwise is the trailing literal, not folded into a branch.
+        assert isinstance(result._expr.otherwise, Literal)
+        assert result._expr.otherwise.value == "no"
+
+
+# Every remaining function is a declared slot that raises until implemented. Calling each one
+# (with dummy arguments) both documents the surface and guards that the slot stays wired.
 _UNIMPLEMENTED = [
-    lambda: F.col("a"),
-    lambda: F.lit(5),
-    lambda: F.when(object(), object()),
-    lambda: F.abs("a"),
-    lambda: F.lower("a"),
-    lambda: F.count("a"),
-    lambda: F.coalesce("a", "b"),
     lambda: F.get_json_object("c", "$.a"),
     lambda: F.from_json("c", "int"),
     lambda: F.to_json("c"),
@@ -82,10 +125,6 @@ _UNIMPLEMENTED = [
 
 
 @pytest.mark.parametrize("call", _UNIMPLEMENTED)
-def test_functions_raise(call):
+def test_unimplemented_functions_raise(call):
     with pytest.raises(NotImplementedError):
         call()
-
-
-def test_functions_helpers_module_importable():
-    assert isinstance(functions_helpers.__name__, str)

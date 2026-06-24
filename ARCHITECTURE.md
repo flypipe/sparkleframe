@@ -30,25 +30,34 @@ is the scoped form. Users can also import an engine package directly and skip ac
 
 ### An engine package — the API surface
 
-An engine lives under `sparkleframe/<engine>/`. Polars is the only one implemented today
-(`sparkleframe/polarsdf`); `sparkleframe/python` is scaffolded (#102). Within a package, the public
+An engine lives under `sparkleframe/<engine>/`. Polars is the mature engine
+(`sparkleframe/polarsdf`); `sparkleframe/python` is scaffolded and landing incrementally (#102).
+Within a package, the public
 modules are **thin facades** and all real logic sits in a matching `*_helpers.py`. That split is
 an invariant, not a style preference (see Invariants below).
 
-| File (in `sparkleframe/polarsdf/`) | Responsibility |
+Both engines share this layout (`<engine>` is `polarsdf` or `python`):
+
+| File (in `sparkleframe/<engine>/`) | Responsibility |
 |---|---|
 | `__init__.py` | Exports `Column`, `DataFrame`, `SparkSession`, `Window`, `WindowSpec`, `functions` |
 | `session.py` | `SparkSession` — builder + `createDataFrame`; the entry point |
-| `dataframe.py` | `DataFrame` — wraps one engine frame; `select`/`filter`/`join`/`groupBy`/… |
-| `dataframe_helpers.py` | Join mapping, expression-join execution, value conversion |
+| `dataframe.py` | `DataFrame` — wraps the engine frame; `select`/`filter`/`join`/`groupBy`/… |
+| `dataframe_helpers.py` | Shared frame logic — join mapping, value/row conversion |
 | `column.py` | `Column` — wraps one engine expression; arithmetic, comparison, cast, getItem |
 | `column_helpers.py` | Type validation/coercion, comparison guards, strict/lenient cast helpers |
 | `functions.py` | `pyspark.sql.functions` surface (`col`, `lit`, `to_timestamp`, `element_at`, …) |
 | `functions_helpers.py` | Date/time parsing, JSON/struct, array/map helpers — each with a `strict` flag |
 | `group.py` | `GroupedData` — aggregations after `groupBy` |
 | `window.py` | `Window` / `WindowSpec` — partition/order/frame for `over()` |
-| `types.py` | DataType hierarchy + `StructType`/`ArrayType`/`MapType` and name↔type registry |
-| `types_utils.py` | Map↔Struct materialization, schema-cast application |
+| `types.py` | DataType handling — Polars keeps a name↔type registry; Python consumes PySpark types directly |
+
+Engine-specific additions:
+
+- **`polarsdf/`** adds `types_utils.py` (Map↔Struct materialization, schema-cast application).
+- **`python/`** adds `_errors.py` (the uniform `not_implemented_yet`) and the **`ast/`** package —
+  `expressions.py` (unresolved build nodes), `analyzer.py`, `evaluator.py`, `coercion.py` — which
+  implements the build → analyze → evaluate flow described below.
 
 `sparkleframe/base/dataframe.py` holds the engine-independent `DataFrame` base (e.g.
 `to_native_df`).
@@ -56,11 +65,30 @@ an invariant, not a style preference (see Invariants below).
 ### How a call flows
 
 `Column` wraps a **single** engine expression; `DataFrame` wraps a **single** engine frame. A
-PySpark call like `col("a") + col("b")` builds a `Column` around the engine's expression; the
-public operator delegates to a `column_helpers` routine that applies Spark's type rules, and the
-result is evaluated when the `DataFrame` operation (`select`/`filter`/`withColumn`) runs. This
-wrapper pair is the **seam where Spark semantics meet engine primitives** — it is where Spark
-coercion and ANSI-strictness are imposed on top of the underlying engine.
+PySpark call like `col("a") + col("b")` builds a `Column` around the engine's expression. This
+wrapper pair is the **seam where Spark semantics meet engine primitives** — where Spark coercion
+and ANSI-strictness are imposed on top of the underlying engine. The two engines sit that seam at
+different times: the **Polars** engine resolves types at *expression-build time* (the public
+operator delegates to a `column_helpers` routine immediately), evaluating when the `DataFrame`
+operation runs; the **Python** engine splits the work into three phases (below).
+
+### The Python engine — build → analyze → evaluate
+
+The `python` engine mirrors Spark's Catalyst flow instead of resolving types eagerly. Its `ast/`
+package carries the three phases:
+
+1. **Build** — constructing `col("a") + col("b")` produces an *unresolved* node
+   (`ast/expressions.py`); zero type decisions, no schema needed.
+2. **Analyze** (`ast/analyzer.py`, `ast/coercion.py`) — when the expression meets a schema-bearing
+   `DataFrame`, the tree is resolved against that `StructType`: each node's `data_type` is filled
+   and Spark coercion `Cast` nodes are inserted (e.g. `numeric + string` → cast the string to
+   double). Because the schema is in hand here, the build-time "dtype unknown" limitation behind
+   most of `docs/known_gaps.md` **cannot occur** — that is the engine's reason to exist.
+3. **Evaluate** (`ast/evaluator.py`) — run the resolved tree over the rows.
+
+Today a transform analyzes then evaluates immediately; *when* `evaluate` fires relative to building
+a transform chain (an eager-vs-lazy flag) is a `DataFrame`-layer decision noted but not yet built.
+Detail and decisions live in `docs/design/python-engine-ast.md`.
 
 ### The parity harness — proving it matches Spark
 
@@ -85,7 +113,7 @@ flowchart TD
     user["user code: import pyspark.sql / sparkleframe.&lt;engine&gt;"]
     activate["activate.py — rebinds sys.modules to the chosen engine"]
     engineenum["engine.py — Engine enum (POLARS, PYTHON)"]
-    pkg["sparkleframe/&lt;engine&gt;/ (polarsdf today, python scaffolded)"]
+    pkg["sparkleframe/&lt;engine&gt;/ (polarsdf mature, python landing)"]
     facade["public facades: functions.py / column.py / dataframe.py"]
     helpers["*_helpers.py — coercion, parsing, strict/lenient logic"]
     prim["engine primitives (Column wraps one expr, DataFrame one frame)"]
@@ -124,9 +152,10 @@ flowchart TD
   at *expression-build time*, before the frame schema is known. Cross-type coercion (e.g.
   `col(float) + col(string)`) therefore can't fire for bare column references, which is the root
   cause behind most of `docs/known_gaps.md`. Engines are free to resolve types differently behind
-  the `EngineAdapter` / `Engine` boundary. The scaffolded `python` engine resolves this differently —
-  see `docs/design/python-engine-ast.md` and #104. (No design detail here, by intent.)
-- **Multiple engines.** The canonical name for the scaffolded pure-Python engine is **`python`**
+  the `EngineAdapter` / `Engine` boundary. The `python` engine resolves this differently — it
+  resolves types in an analyze phase once the schema is known, so the `numeric + string` coercion
+  fires where Polars can't — see `docs/design/python-engine-ast.md` and #104.
+- **Multiple engines.** The canonical name for the pure-Python engine is **`python`**
   (package `sparkleframe/python/`), consistent across `engine.py`, `gaps.py`, and the docs
   generator. Note: issues #102/#104 and the `feature/pythondf-backend` branch use `pythondf`; those
   external references should be reconciled to `python`.

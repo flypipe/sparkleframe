@@ -4,6 +4,12 @@ SparkleFrame aims to match PySpark / Spark 4.x behaviour, but some edge cases
 are not yet supported.  This page lists the known gaps so contributors can
 prioritise fixes and users can work around them.
 
+> These gaps are specific to the **Polars** engine, whose root cause is build-time
+> type resolution (see "Mixed-type column arithmetic" below). The pure-Python engine
+> (`sparkleframe/python`, #102) resolves types in an *analyze* phase once the schema is
+> known, which removes this whole class structurally — it already handles
+> `Numeric + String`. See [design/python-engine-ast.md](design/python-engine-ast.md).
+
 ## Mixed-type column arithmetic
 
 **Affected operations:** `+`, `-`, `*`, `/` between two columns of different

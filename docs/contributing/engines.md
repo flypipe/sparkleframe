@@ -22,8 +22,10 @@ class Engine(Enum):
 rebinds `sys.modules["pyspark.sql"]` (and submodules) to it, so existing `import pyspark` code runs
 on the engine. Selecting an engine that isn't scaffolded raises `NotImplementedError`.
 
-Only the **Polars** engine (`sparkleframe/polarsdf`) is implemented today. The **`python`** engine
-(`sparkleframe/python`) is scaffolded — see [#102](https://github.com/flypipe/sparkleframe/issues/102)
+The **Polars** engine (`sparkleframe/polarsdf`) is the mature engine. The **`python`** engine
+(`sparkleframe/python`) is scaffolded and landing incrementally via its build → analyze → evaluate
+flow — the first vertical slice (numeric arithmetic, incl. the `numeric + string` coercion) is in,
+and its gate drains as more behaviors land. See [#102](https://github.com/flypipe/sparkleframe/issues/102)
 and the design in [../design/python-engine-ast.md](../design/python-engine-ast.md).
 
 ## The parity harness
@@ -46,11 +48,11 @@ support yet**:
 
 ```python
 POLARS_NOT_SUPPORTED = { "arithmetic.numeric_plus_string", ... }
-PYTHON_NOT_IMPLEMENTED = { ...everything, while the engine is empty... }
+PYTHON_NOT_IMPLEMENTED = { ...behaviors not yet drained as the engine lands... }
 
 GATES = {"polars": POLARS_NOT_SUPPORTED, "python": PYTHON_NOT_IMPLEMENTED}
 
-PYTHON_GATE_HIGH_WATER_MARK = 167   # committed high-water mark; only ever lowered
+PYTHON_GATE_HIGH_WATER_MARK = 165   # committed high-water mark; only ever lowered
 ```
 
 A parity test tagged `@pytest.mark.feature("<id>")` is `xfail`ed for an engine when `<id>` is in that

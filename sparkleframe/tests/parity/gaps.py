@@ -21,12 +21,10 @@ POLARS_NOT_SUPPORTED = {
     "arithmetic.int_plus_date",
 }
 
-# Python engine — nothing is implemented yet, so every behavior under test is
-# gated. Seed this from the parity tests as they are written; drain it as the
-# build → analyze → evaluate engine lands (#102).
+# Python engine — gated behaviors awaiting the build → analyze → evaluate engine
+# (#102). Drain an id as each behavior lands; entries the Python set holds but the
+# Polars set does not are polars gaps the Python engine is expected to fix.
 PYTHON_NOT_IMPLEMENTED = {
-    "arithmetic.same_type",
-    "arithmetic.numeric_plus_string",
     "arithmetic.int_plus_date",
     # column_parity_test.py — Column arithmetic / comparison / cast (lifted from column_test.py).
     "column.arithmetic.col_col",
@@ -206,4 +204,4 @@ GATES = {
 # lower it (never raise it) when you delete entries. The ratchet test enforces
 # that the live set never exceeds this number, so a regression can't quietly
 # re-gate a behavior instead of being fixed.
-PYTHON_GATE_HIGH_WATER_MARK = 167
+PYTHON_GATE_HIGH_WATER_MARK = 165

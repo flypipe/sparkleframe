@@ -106,6 +106,113 @@ spark_result = spark_mixed.select(spark_try_to_timestamp("ts").alias("result"))
 assert_matches_spark(sf_result, spark_result, ENGINES[Engine.POLARS])
 ```
 
+## Test layering: who owns what
+
+SparkleFrame has five overlapping test layers. Each layer owns a *different property* of the
+same code. When writing a new test, decide which layer should own the assertion and resist
+restating it elsewhere — duplicated assertions add maintenance cost without adding signal.
+
+| Layer | Lives in | Owns |
+|---|---|---|
+| AST phase units | `sparkleframe/python/ast/*_test.py` | What a single phase produces: coercion table, analyze inserts `Cast`, evaluate computes values from a resolved tree. Pure functions; no DataFrame. |
+| Engine parity | `sparkleframe/tests/parity/` | Result *values* match real Spark across `[POLARS]` and `[PYTHON]`. The oracle compares records as a sorted multiset and does **not** assert schema/dtypes. |
+| Colocated DataFrame units | `sparkleframe/<engine>/dataframe_test.py` | Orchestration contract for the DataFrame surface: projection, output order, output names, *resolved output dtype*, argument handling, unimplemented-slot raising. **Not values** — parity owns those. |
+| Colocated Column units | `sparkleframe/<engine>/column_test.py` | AST shape produced by dunder methods: which node type, which operator string, which operand is on which side (especially for reflected ops). |
+| Colocated functions units | `sparkleframe/<engine>/functions_test.py` | AST shape produced by each `F.*` factory: node type, name, arg structure, branch order for `when/otherwise`. |
+
+The shorthand: **parity owns values; colocated units own structure.** If a colocated test
+asserts a numeric result that parity already covers, either delete the assertion or replace it
+with the structural property it was implicitly probing (typically: output schema/dtype).
+
+## Smells to avoid in colocated tests
+
+These are the common smells that have shown up in review. Fix them at write-time, not at
+review-time.
+
+### 1. Re-asserting values that parity already covers
+
+```python
+# BAD — parity already proves 11/22 against real Spark; this is strictly weaker.
+out = df.select((F.col("a") + F.col("b")).alias("r"))
+assert out.to_records() == [{"r": 11}, {"r": 22}]
+```
+
+If the only unique thing the test proves is the resolved dtype, keep just that and drop the
+value assertion:
+
+```python
+# GOOD — parity owns the value; this owns the schema/dtype claim parity ignores.
+out = df.select((F.col("i") + F.col("l")).alias("r"))
+assert isinstance(out._schema["r"].dataType, LongType)
+```
+
+### 2. Fixtures that can't fail the property
+
+```python
+# BAD — single-column input; ``select("a")`` passes even if select ignored its arg.
+df = DataFrame([(1,), (2,)], StructType([StructField("a", IntegerType())]))
+assert df.select("a").to_records() == [{"a": 1}, {"a": 2}]
+```
+
+A test must use a fixture that lets the property fail. For projection, that means **≥2
+columns**; for ordering, distinct names; for dtype resolution, operands whose result type
+differs from the inputs.
+
+### 3. Mocking AST phases ("did analyze run?")
+
+```python
+# BAD — couples to call structure; passes even if the frame is assembled wrong.
+with patch("sparkleframe.python.ast.analyzer.analyze") as m:
+    df.select(F.col("a") + F.col("b"))
+    m.assert_called_once()
+```
+
+A behavioral assertion on the output (schema + records, or resolved dtype) already proves
+analyze fired *and* checks the contract. Mocks here lock in implementation details and bypass
+the actual property under test.
+
+### 4. Import-smoke tests
+
+```python
+# BAD — passes whenever the module exists; zero information.
+def test_helpers_module_importable():
+    assert isinstance(helpers.__name__, str)
+```
+
+Trust the import system. If you need a single canary that the package layout is intact, write
+**one** dedicated test, not one per submodule.
+
+### 5. Runtime "type" assertions that duplicate mypy
+
+```python
+# BAD — mypy and ruff catch this in CI.
+assert isinstance(out, DataFrame)
+```
+
+The meaningful runtime analog is asserting the resolved output `StructField` dtype, which mypy
+*can't* see.
+
+### 6. Reflected-operator tests that only check the operator
+
+```python
+# BAD — passes even if ``__rsub__`` swaps operands.
+result = 1 - c
+assert result._expr.op == "-"
+```
+
+Non-commutative reflected dunders (`__rsub__`, `__rtruediv__`, `__rpow__`) must also assert
+operand placement — otherwise a left/right swap regression slips through.
+
+### 7. Substring repr smoke tests
+
+```python
+# BAD — passes for any repr that contains the class name.
+assert "Column(" in repr(col)
+```
+
+Either assert the repr *delegates* (contains the wrapped name/expression), or delete the test.
+"Class name appears in its own repr" is a tautology.
+
 ## Parity-test conventions
 
 The shared parity suite (`sparkleframe/tests/parity/`) runs each test against **every engine**.
