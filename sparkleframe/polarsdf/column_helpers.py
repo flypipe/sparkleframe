@@ -956,7 +956,7 @@ def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
             if not refs:
                 return expr.struct.field(key)
 
-        def _extract_by_key(value: Any) -> Optional[str]:
+        def _extract_by_key_value(value: Any) -> Any:
             if value is None:
                 return None
             raw: Any = None
@@ -979,15 +979,24 @@ def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
                         raw = getter(key)
                     except Exception:
                         pass
-            return None if raw is None else str(raw)
+            return raw
 
-        return expr.map_elements(_extract_by_key, return_dtype=pl.String)
+        def _extract_by_key(s: pl.Series) -> pl.Series:
+            # No ``return_dtype`` is passed on purpose: sparkleframe always evaluates
+            # eagerly, so Polars infers the output dtype from the *actual* extracted
+            # values (Float64, String, List(Struct(...)), ...) instead of a hardcoded
+            # one. This keeps struct/array values intact (e.g. for a later ``F.size()``
+            # or ``F.struct()``) instead of stringifying them -- see
+            # docs/known_gaps.md for the getItem-outside-schema-context gap this covers.
+            return pl.Series(s.name, [_extract_by_key_value(v) for v in s.to_list()])
+
+        return expr.map_batches(_extract_by_key)
     if isinstance(key, int):
         dtype = _resolve_expr_output_dtype(expr)
         if isinstance(dtype, pl.List):
             return expr.list.get(key)
 
-        def _index_at(v: Any) -> Optional[str]:
+        def _index_at_value(v: Any) -> Any:
             if v is None:
                 return None
             items: Any = v
@@ -997,9 +1006,12 @@ def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
                 polars_idx = key
                 if polars_idx < 0 or polars_idx >= len(items):
                     return None
-                raw = items[polars_idx]
-                return None if raw is None else str(raw)
+                return items[polars_idx]
             return None
 
-        return expr.map_elements(_index_at, return_dtype=pl.String)
+        def _index_at(s: pl.Series) -> pl.Series:
+            # See ``_extract_by_key`` above: dtype is inferred from the real values.
+            return pl.Series(s.name, [_index_at_value(v) for v in s.to_list()])
+
+        return expr.map_batches(_index_at)
     raise TypeError(f"getItem key must be str or int, got {type(key).__name__}")

@@ -103,11 +103,21 @@ other contexts where `to_native()` is called before a schema is available.
 
 SparkleFrame stores `getItem` operations as a lazy chain (`_getitem_chain`)
 resolved during `to_native()`.  When `to_native()` runs outside a schema
-context (e.g. inside `isNotNull()` before `filter()` evaluates), the dtype
-resolver returns `None`, forcing a UDF fallback.
+context (e.g. inside `isNotNull()` before `filter()` evaluates, or when a
+function like `size()`/`struct()`/`when()` eagerly resolves a `Column`
+argument built from a dotted path such as `col("a.b")` — see
+`functions.py`'s ubiquitous `_to_expr(col_name) if isinstance(col_name,
+Column) else pl.col(col_name)` pattern), the dtype resolver returns `None`,
+forcing a UDF fallback.
 
-The UDF fallbacks (`_extract_by_key`, `_index_at`) now handle `pl.Series`
-inputs correctly, but the resolution is less efficient than the native
+The UDF fallbacks (`_extract_by_key`, `_index_at`) handle `pl.Series` inputs
+correctly and return the *actual* extracted value (not a stringified copy),
+via `map_batches` with no forced `return_dtype` — Polars infers the real
+output dtype (`Float64`, `List(Struct(...))`, etc.) from the values returned,
+which SparkleFrame's always-eager evaluation model makes safe. This keeps
+downstream consumers (`F.size()`, `F.struct()`, `F.when()`, arithmetic, …)
+working on the real value instead of silently getting a stringified
+`None`/wrong result. The resolution is still less efficient than the native
 `list.get` / `struct.field` paths used when dtype is known.
 
 ## `element_at` with `F.lit(int)` indices

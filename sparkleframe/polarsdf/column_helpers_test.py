@@ -18,6 +18,7 @@ import polars as pl
 import pytest
 
 from sparkleframe.polarsdf.column_helpers import (
+    _apply_getitem_key,
     _assert_arithmetic_compatible,
     _assert_arithmetic_series,
     _assert_complex_compare_supported,
@@ -91,6 +92,56 @@ class TestIsNumericPolarsDtype:
     )
     def test_numeric_detection(self, dtype: pl.DataType, expected: bool) -> None:
         assert _is_numeric_polars_dtype(dtype) is expected
+
+
+class TestApplyGetitemKeyOutsideSchemaContext:
+    """
+    ``_apply_getitem_key``'s fallback (no active :func:`_polars_schema_for` context, and
+    no resolvable ``expr.meta`` dtype) used to stringify the extracted value and force
+    ``return_dtype=pl.String`` / ``pl.Object``-ish behaviour, which broke every downstream
+    consumer (``F.size()``, ``F.struct()``, arithmetic, ...) fed a dotted path or
+    ``getItem()`` chain outside an active ``select``/``filter``/``withColumn``. The
+    fallback must instead preserve the real extracted value/dtype -- see
+    sparkleframe-getitem-dotpath-bug.md.
+    """
+
+    def test_string_key_preserves_nested_dtype_not_stringified(self) -> None:
+        df = pl.DataFrame({"replacements": [{"offers": [{"amount": 1.0}], "loans": None}]})
+        expr = _apply_getitem_key(pl.col("replacements"), "offers")
+        out = df.select(expr.alias("x"))
+
+        assert out.schema["x"] == pl.List(pl.Struct({"amount": pl.Float64}))
+        assert out["x"].to_list() == [[{"amount": 1.0}]]
+
+    def test_string_key_missing_field_returns_null_not_stringified_none(self) -> None:
+        df = pl.DataFrame({"s": [{"a": 1}, {"a": 2}]})
+        expr = _apply_getitem_key(pl.col("s"), "missing")
+        out = df.select(expr.alias("x"))
+
+        assert out["x"].to_list() == [None, None]
+        assert out["x"].to_list()[0] is None  # not the string "None"
+
+    def test_int_key_preserves_nested_dtype_not_stringified(self) -> None:
+        df = pl.DataFrame({"offers": [[{"offer": {"amount": 10000.0}}]]})
+        expr = _apply_getitem_key(pl.col("offers"), 0)
+        out = df.select(expr.alias("x"))
+
+        assert out.schema["x"] == pl.Struct({"offer": pl.Struct({"amount": pl.Float64})})
+        assert out["x"].to_list() == [{"offer": {"amount": 10000.0}}]
+
+    def test_int_key_out_of_bounds_returns_null(self) -> None:
+        df = pl.DataFrame({"offers": [[{"amount": 1.0}], []]})
+        expr = _apply_getitem_key(pl.col("offers"), 5)
+        out = df.select(expr.alias("x"))
+
+        assert out["x"].to_list() == [None, None]
+
+    def test_int_key_null_container_returns_null(self) -> None:
+        df = pl.DataFrame({"offers": pl.Series("offers", [None], dtype=pl.Object)})
+        expr = _apply_getitem_key(pl.col("offers"), 0)
+        out = df.select(expr.alias("x"))
+
+        assert out["x"].to_list() == [None]
 
 
 class TestAssertArithmeticCompatible:

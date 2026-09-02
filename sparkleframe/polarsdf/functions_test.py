@@ -24,8 +24,10 @@ from pyspark.sql.functions import rand as spark_rand
 from pyspark.sql.functions import rank as spark_rank
 from pyspark.sql.functions import round as spark_round
 from pyspark.sql.functions import row_number as spark_row_number
+from pyspark.sql.functions import size as spark_size
 from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import unix_millis as spark_unix_millis
+from pyspark.sql.functions import when as spark_when
 from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import DoubleType as SparkDoubleType
 from pyspark.sql.types import IntegerType as SparkIntegerType
@@ -63,6 +65,7 @@ from sparkleframe.polarsdf.functions import (
     to_json,
     try_element_at,
     uuid,
+    when,
 )
 from sparkleframe.polarsdf.types import IntegerType, StringType, StructField, StructType
 from sparkleframe.engine import Engine
@@ -368,6 +371,161 @@ class TestSizeObjectList:
         replaceable_loans_has_items = col("replacements_loans").isNotNull() & (size(col("replacements_loans")) > 0)
         out = df.filter(replaceable_offer_has_items | replaceable_loans_has_items)
         assert out.count() == 3
+
+
+class TestGetItemDottedPathEagerFunctions:
+    """
+    Regression tests for the bug where a ``col("a.b")`` dotted path (or a
+    ``.getItem()`` chain) handed straight to a function that resolves its
+    ``Column`` argument *eagerly* -- ``size()``, ``struct()``, ``when()``, and the
+    ~30 other functions in ``functions.py`` sharing the
+    ``_to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)``
+    pattern -- silently stringified the extracted value instead of preserving its
+    real dtype, because ``to_native()`` ran outside any active
+    ``select``/``filter``/``withColumn`` schema context.
+
+    These reproduce the exact call shape from the bug report: the dotted-path
+    ``Column`` is built and passed to ``size``/``struct``/``when`` as a plain
+    Python argument, *before* ``.select()`` is ever called.
+    """
+
+    @staticmethod
+    def _rows() -> list[dict]:
+        return [
+            # Non-null, non-empty offers -> the "real" struct-extraction path.
+            {
+                "person_id": "p1",
+                "replacements": {
+                    "offers": [{"offer": {"amount": 10000.0}, "savings": {"apr_amount": 0.05}}],
+                    "loans": None,
+                },
+            },
+            # Null offers -> isNotNull() must short-circuit to False.
+            {
+                "person_id": "p2",
+                "replacements": {
+                    "offers": None,
+                    "loans": [{"amount": 500.0}],
+                },
+            },
+            # Non-null but empty offers -> isNotNull() True, size() == 0.
+            {
+                "person_id": "p3",
+                "replacements": {
+                    "offers": [],
+                    "loans": None,
+                },
+            },
+        ]
+
+    @staticmethod
+    def _spark_schema() -> SparkStructType:
+        # Explicit schema so PySpark's list-of-dict inference treats "offer" / "savings"
+        # as StructType (like Polars does), rather than MapType (its default for a plain
+        # dict with no declared schema) -- the two engines must model the same shape for
+        # the comparison below to be meaningful.
+        offer_struct = SparkStructType([SparkStructField("amount", SparkDoubleType(), True)])
+        savings_struct = SparkStructType([SparkStructField("apr_amount", SparkDoubleType(), True)])
+        offer_entry_struct = SparkStructType(
+            [
+                SparkStructField("offer", offer_struct, True),
+                SparkStructField("savings", savings_struct, True),
+            ]
+        )
+        loan_entry_struct = SparkStructType([SparkStructField("amount", SparkDoubleType(), True)])
+        replacements_struct = SparkStructType(
+            [
+                SparkStructField("offers", SparkArrayType(offer_entry_struct), True),
+                SparkStructField("loans", SparkArrayType(loan_entry_struct), True),
+            ]
+        )
+        return SparkStructType(
+            [
+                SparkStructField("person_id", SparkStringType(), True),
+                SparkStructField("replacements", replacements_struct, True),
+            ]
+        )
+
+    def test_size_on_dotted_path_matches_spark(self, spark) -> None:
+        """``F.size(F.col("a.b"))`` -- reproduction 1 from the bug report."""
+        rows = self._rows()
+        sparkle_df = DataFrame(rows)
+        spark_df = spark.createDataFrame(rows, schema=self._spark_schema())
+
+        result = sparkle_df.select(col("person_id"), size(col("replacements.offers")).alias("sz"))
+        expected = spark_df.select(spark_col("person_id"), spark_size(spark_col("replacements.offers")).alias("sz"))
+        assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
+
+    def test_isnull_or_size_eq_zero_composed_eagerly_matches_spark(self, spark) -> None:
+        """
+        The production eligibility-filter shape: ``col.isNull() | (F.size(col) == 0)``.
+        Both ``isNull()`` and ``size()`` resolve the same dotted-path ``Column``
+        before any ``select``/``filter`` call has started.
+        """
+        rows = self._rows()
+        sparkle_df = DataFrame(rows)
+        spark_df = spark.createDataFrame(rows, schema=self._spark_schema())
+
+        offers = col("replacements.offers")
+        has_no_offer = offers.isNull() | (size(offers) == 0)
+
+        spark_offers = spark_col("replacements.offers")
+        spark_has_no_offer = spark_offers.isNull() | (spark_size(spark_offers) == 0)
+
+        result = sparkle_df.select(col("person_id"), has_no_offer.alias("has_no_offer"))
+        expected = spark_df.select(spark_col("person_id"), spark_has_no_offer.alias("has_no_offer"))
+        assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
+
+    def test_struct_and_when_over_chained_getitem_matches_spark(self, spark) -> None:
+        """
+        The production ``build_event_payload`` shape -- reproduction 2 from the bug
+        report: ``F.when(has_offer, F.struct(...)).otherwise(F.struct(...))`` where
+        the ``then`` branch extracts nested struct fields via a ``getItem()`` chain
+        off a dotted path (``offer0["offer"]["amount"]``).
+        """
+        rows = self._rows()
+        sparkle_df = DataFrame(rows)
+        spark_df = spark.createDataFrame(rows, schema=self._spark_schema())
+
+        offers = col("replacements.offers")
+        offer0 = offers.getItem(0)
+        has_offer = offers.isNotNull() & (size(offers) > 0)
+        suggested = when(
+            has_offer,
+            struct(
+                lit("offer").alias("type"),
+                offer0["offer"]["amount"].alias("amount"),
+                offer0["savings"]["apr_amount"].alias("apr_savings"),
+            ),
+        ).otherwise(
+            struct(
+                lit("loan").alias("type"),
+                lit(None).alias("amount"),
+                lit(None).alias("apr_savings"),
+            ),
+        )
+
+        spark_offers = spark_col("replacements.offers")
+        spark_offer0 = spark_offers.getItem(0)
+        spark_has_offer = spark_offers.isNotNull() & (spark_size(spark_offers) > 0)
+        spark_suggested = spark_when(
+            spark_has_offer,
+            spark_struct(
+                spark_lit("offer").alias("type"),
+                spark_offer0.getItem("offer").getItem("amount").alias("amount"),
+                spark_offer0.getItem("savings").getItem("apr_amount").alias("apr_savings"),
+            ),
+        ).otherwise(
+            spark_struct(
+                spark_lit("loan").alias("type"),
+                spark_lit(None).alias("amount"),
+                spark_lit(None).alias("apr_savings"),
+            ),
+        )
+
+        result = sparkle_df.select(col("person_id"), suggested.alias("suggested_replacement"))
+        expected = spark_df.select(spark_col("person_id"), spark_suggested.alias("suggested_replacement"))
+        assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
 
 
 class TestToJson:
