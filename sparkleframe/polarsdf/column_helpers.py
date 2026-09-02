@@ -939,6 +939,39 @@ def _series_from_extracted_values(name: str, values: list) -> pl.Series:
     return s
 
 
+def _object_safe_native_str_expr(expr: pl.Expr) -> pl.Expr:
+    """
+    Make ``expr`` safe to chain into a native ``.str.*`` op, even when its *runtime*
+    dtype turns out to be ``Object`` or ``Null`` -- a third occurrence of the
+    getItem-outside-schema-context bug class, this time in
+    ``functions_helpers._map_key_lookup_expr`` (``element_at`` / ``try_element_at``
+    with a *dynamic* map key, e.g. ``F.element_at(F.col("utm"), F.col("referral_type"))``).
+
+    That lookup necessarily combines two root columns (the map and the dynamic key), so
+    Polars can't safely use "duplicate row 0" dtype-inference the way a single-root
+    ``getItem`` fallback can (see ``_series_from_extracted_values`` above) -- its schema
+    probe for a multi-root UDF instead calls the function with *synthetic default*
+    values (e.g. an empty map, an empty-string key), which for a keyed lookup always
+    misses and returns ``None``. ``_map_key_lookup_expr`` therefore has to declare a
+    single *fixed* ``return_dtype`` (``pl.Object``) so probe and real results can never
+    mismatch -- but native ``.str.*`` ops reject ``Object`` outright, even when every
+    real value is null.
+
+    Wrapping with this (single-root, safe) pass-through lets that same probe mechanism
+    work in our favor: the probe's synthetic lookup always misses -> ``None`` -> collapses
+    to ``pl.String`` (via ``_series_from_extracted_values``), which then matches the real
+    batch whenever real values are themselves strings (the common ``map<string,string>``
+    shape these fallbacks exist for) *or* every row is genuinely null. Real non-string
+    map values (e.g. ``map<string,double>``) still raise on mismatch -- but feeding those
+    into a string op is nonsensical in Spark too, so that's not a meaningful regression.
+    """
+
+    def _passthrough(s: pl.Series) -> pl.Series:
+        return _series_from_extracted_values(s.name, s.to_list())
+
+    return expr.map_batches(_passthrough)
+
+
 def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
     """
     One Spark getItem step on ``expr`` (struct field, list index, or map fallbacks).

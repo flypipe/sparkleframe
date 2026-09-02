@@ -130,6 +130,55 @@ an all-null result to `pl.String` — an arbitrary but harmless choice since
 every value is null anyway, and it matches what the old (stringifying)
 fallback always produced.
 
+### Third occurrence: `element_at`/`try_element_at` with a *dynamic* map key
+
+**Affected operations:** `element_at(col, key_col)` / `try_element_at(col, key_col)`
+where `key_col` is a `Column` (not a literal), feeding into a native `.str.*`
+consumer such as `F.lower()`.
+
+`functions_helpers._map_key_lookup_expr` has the same shape of flaw as the
+`getItem` fallbacks above, but can't use the same fix. Its dynamic-key lookup
+combines *two* root columns (the map and the key), so Polars' schema probe for
+that multi-root UDF calls it with **synthetic default values** (e.g. an empty
+map, an empty-string key) rather than duplicating real row 0 the way a
+single-root `map_batches` probe does. A keyed lookup against synthetic
+defaults always misses and returns `None` — so unlike the single-root fallback,
+letting Polars freely infer the dtype here would make the probe declare
+`pl.Null`/`pl.String` while the *real* batch (e.g. a genuine `map<string,
+double>` value) resolves to something else entirely, and Polars raises
+(`SchemaError: expected output type 'X', got 'Y'`) on the mismatch. Confirmed
+directly: the existing `test_try_element_at_map_string_extraction_is_column_name`
+parity test (a `map<string, double>` looked up via a dynamic key column) relies
+on exactly this behavior, so `_map_key_lookup_expr` **must** keep a fixed,
+declared `return_dtype=pl.Object` for that branch — changing it would regress
+that test.
+
+Object dtype is safe for most consumers (arithmetic, `F.size()`, `F.struct()`,
+… already have Object-aware fallbacks elsewhere in this codebase), but native
+`.str.*` ops reject it outright, even when every value is null — e.g.
+`F.lower(F.element_at(F.col("utm"), F.col("referral_type")))` raised
+`SchemaError: expected 'String', got 'object'` when `utm` was null for every
+row (no `utmVariables` at all is a real-world shape).
+
+Fixed at the **consumer** side instead: `_object_safe_native_str_expr`
+(`column_helpers.py`) wraps the Object-typed expression with a *single-root*
+pass-through (`map_batches` over the already-materialized upstream expression,
+reusing `_series_from_extracted_values`). This works because the multi-root
+probe's synthetic lookup always misses → `None` → collapses to `pl.String`,
+which matches the real batch whenever real values are themselves strings (the
+common `map<string, string>` shape these fallbacks exist for in the first
+place) *or* every row is genuinely null. `lower()` uses this wrapper before
+`.str.to_lowercase()`. Real non-string dynamic-key map values (e.g.
+`map<string, double>`) fed into `lower()` still raise on the probe/real
+mismatch — but that combination is nonsensical in Spark too (`lower()`
+requires `StringType`), so it isn't a meaningful regression.
+
+This fix is scoped to `lower()` only. Every other function sharing the eager
+`_to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)`
+pattern that also calls a native `.str.*`/`.list.*` op (`upper()`,
+`initcap()`, `rlike()`, `contains()`, …) has the same latent gap when fed an
+`element_at`/`try_element_at` dynamic-key result; none are fixed yet.
+
 ## `element_at` with `F.lit(int)` indices
 
 **Affected operations:** `element_at(col, F.lit(n))`, `try_element_at(col, F.lit(n))`

@@ -16,6 +16,7 @@ from pyspark.sql.functions import dense_rank as spark_dense_rank
 from pyspark.sql.functions import desc as spark_desc
 from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
 from pyspark.sql.functions import desc_nulls_last as spark_desc_nulls_last
+from pyspark.sql.functions import element_at as spark_element_at
 from pyspark.sql.functions import from_json as spark_from_json
 from pyspark.sql.functions import lit as spark_lit
 from pyspark.sql.functions import lower as spark_lower
@@ -53,6 +54,7 @@ from sparkleframe.polarsdf.functions import (
     desc,
     desc_nulls_first,
     desc_nulls_last,
+    element_at,
     from_json,
     lit,
     lower,
@@ -559,6 +561,64 @@ class TestGetItemDottedPathEagerFunctions:
 
         result = sparkle_df.select(lower(col("items").getItem(0)).alias("x"))
         expected = spark_df.select(spark_lower(spark_col("items").getItem(0)).alias("x"))
+        assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
+
+
+class TestElementAtDynamicKeyThenStringFn:
+    """
+    A third, independent occurrence of the same bug class (see
+    sparkleframe-getitem-dotpath-bug.md), this time in
+    ``functions_helpers._map_key_lookup_expr`` rather than
+    ``Column.getItem()``'s ``_apply_getitem_key``.
+
+    ``F.element_at(F.col("utm"), <dynamic key column>)`` combines two root columns
+    (the map and the key), so it can't use the single-root "infer from real values"
+    trick the two ``getItem`` fallbacks use -- Polars' schema probe for a multi-root
+    UDF calls it with synthetic default values instead of real ones, so the lookup
+    must declare a *fixed* ``return_dtype=pl.Object`` to avoid a probe/real dtype
+    mismatch. When ``utm`` is null for every row (no ``utmVariables`` at all is a
+    real-world shape), feeding that ``Object``-typed null result into a native
+    string function (``F.lower()``) used to raise ``SchemaError`` the same way the
+    first two occurrences did.
+    """
+
+    def test_dynamic_key_element_at_all_null_batch_then_lower_matches_spark(self, spark) -> None:
+        rows = [{"utm": None, "referral_type": "utm_source"}, {"utm": None, "referral_type": "utm_source"}]
+        schema = SparkStructType(
+            [
+                SparkStructField("utm", SparkMapType(SparkStringType(), SparkStringType()), True),
+                SparkStructField("referral_type", SparkStringType(), True),
+            ]
+        )
+        sparkle_df = DataFrame(rows)
+        spark_df = spark.createDataFrame(rows, schema=schema)
+
+        result = sparkle_df.select(lower(element_at(col("utm"), col("referral_type"))).alias("x"))
+        expected = spark_df.select(
+            spark_lower(spark_element_at(spark_col("utm"), spark_col("referral_type"))).alias("x")
+        )
+        assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
+
+    def test_dynamic_key_element_at_real_string_map_then_lower_matches_spark(self, spark) -> None:
+        """Same dynamic-key shape, but with real (non-null) string map values -- the
+        common production case (e.g. utm_source/utm_medium) -- must still lower correctly."""
+        rows = [
+            {"utm": {"utm_source": "FACEBOOK", "utm_medium": "CPC"}, "referral_type": "utm_source"},
+            {"utm": {"utm_source": "GOOGLE", "utm_medium": "ORGANIC"}, "referral_type": "utm_medium"},
+        ]
+        schema = SparkStructType(
+            [
+                SparkStructField("utm", SparkMapType(SparkStringType(), SparkStringType()), True),
+                SparkStructField("referral_type", SparkStringType(), True),
+            ]
+        )
+        sparkle_df = DataFrame(rows)
+        spark_df = spark.createDataFrame(rows, schema=schema)
+
+        result = sparkle_df.select(lower(element_at(col("utm"), col("referral_type"))).alias("x"))
+        expected = spark_df.select(
+            spark_lower(spark_element_at(spark_col("utm"), spark_col("referral_type"))).alias("x")
+        )
         assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
 
 

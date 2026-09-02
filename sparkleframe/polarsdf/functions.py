@@ -9,7 +9,11 @@ import polars as pl
 
 from sparkleframe.polarsdf import WindowSpec
 from sparkleframe.polarsdf.column import Column, _to_expr
-from sparkleframe.polarsdf.column_helpers import _output_dtype_of_expr, _polars_schema_ctx
+from sparkleframe.polarsdf.column_helpers import (
+    _object_safe_native_str_expr,
+    _output_dtype_of_expr,
+    _polars_schema_ctx,
+)
 from sparkleframe.polarsdf.functions_helpers import (
     _as_date_sparklike_expr,
     _coerce_json_value,
@@ -844,6 +848,12 @@ def lower(col_name: Union[str, Column]) -> Column:
 
     Converts all characters of a string column to lower case.
 
+    ``_object_safe_native_str_expr`` guards against a runtime ``Object``/``Null``
+    dtype (e.g. ``element_at``/``try_element_at`` with a dynamic map key, or a
+    dotted-path ``getItem`` chain resolved outside a schema context) that would
+    otherwise make ``.str.to_lowercase()`` raise ``SchemaError`` -- see
+    docs/known_gaps.md.
+
     Args:
         col_name (str or Column): The string column to transform.
 
@@ -852,7 +862,7 @@ def lower(col_name: Union[str, Column]) -> Column:
     """
     col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
     expr = _to_expr(col_name)
-    return Column(expr.str.to_lowercase())
+    return Column(_object_safe_native_str_expr(expr).str.to_lowercase())
 
 
 def initcap(col_name: Union[str, Column]) -> Column:
