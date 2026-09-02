@@ -18,6 +18,7 @@ from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
 from pyspark.sql.functions import desc_nulls_last as spark_desc_nulls_last
 from pyspark.sql.functions import from_json as spark_from_json
 from pyspark.sql.functions import lit as spark_lit
+from pyspark.sql.functions import lower as spark_lower
 from pyspark.sql.functions import map_from_entries as spark_map_from_entries
 from pyspark.sql.functions import now as spark_now
 from pyspark.sql.functions import rand as spark_rand
@@ -54,6 +55,7 @@ from sparkleframe.polarsdf.functions import (
     desc_nulls_last,
     from_json,
     lit,
+    lower,
     map_from_entries,
     now,
     rand,
@@ -525,6 +527,38 @@ class TestGetItemDottedPathEagerFunctions:
 
         result = sparkle_df.select(col("person_id"), suggested.alias("suggested_replacement"))
         expected = spark_df.select(spark_col("person_id"), spark_suggested.alias("suggested_replacement"))
+        assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
+
+    def test_string_key_getitem_all_null_batch_then_string_fn_matches_spark(self, spark) -> None:
+        """
+        Regression test: when the getItem fallback's extracted value is ``None`` for
+        *every* row in the batch (the source struct is null in every row -- no
+        ``utm`` data at all is a real-world shape), Polars infers ``pl.Null`` for the
+        fallback's output Series unless the fallback special-cases it. Feeding that
+        into a downstream string function (``F.lower()``) used to raise
+        ``SchemaError: invalid series dtype: expected 'String', got 'null'`` because
+        the previous fix stopped forcing ``return_dtype=pl.String`` unconditionally.
+        """
+        rows = [{"utm": None}, {"utm": None}]
+        schema = SparkStructType(
+            [SparkStructField("utm", SparkStructType([SparkStructField("utm_source", SparkStringType(), True)]), True)]
+        )
+        sparkle_df = DataFrame(rows)
+        spark_df = spark.createDataFrame(rows, schema=schema)
+
+        result = sparkle_df.select(lower(col("utm.utm_source")).alias("x"))
+        expected = spark_df.select(spark_lower(spark_col("utm.utm_source")).alias("x"))
+        assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
+
+    def test_int_key_getitem_all_null_batch_then_string_fn_matches_spark(self, spark) -> None:
+        """Same regression as above, for the int-key (``_index_at``) fallback."""
+        rows = [{"items": None}, {"items": None}]
+        schema = SparkStructType([SparkStructField("items", SparkArrayType(SparkStringType()), True)])
+        sparkle_df = DataFrame(rows)
+        spark_df = spark.createDataFrame(rows, schema=schema)
+
+        result = sparkle_df.select(lower(col("items").getItem(0)).alias("x"))
+        expected = spark_df.select(spark_lower(spark_col("items").getItem(0)).alias("x"))
         assert_matches_spark(result, expected, ENGINES[Engine.POLARS])
 
 

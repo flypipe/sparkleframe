@@ -920,6 +920,25 @@ def _equality_comparison_expr(left: pl.Expr, right: pl.Expr, equal: bool) -> pl.
     return _spark_compare_guard_expr(left, right, op, result, ld, rd)
 
 
+def _series_from_extracted_values(name: str, values: list) -> pl.Series:
+    """
+    Build the output Series for a ``getItem`` fallback (``_extract_by_key`` /
+    ``_index_at``), letting Polars infer the real dtype from the extracted values.
+
+    When every extracted value is ``None`` (e.g. the source container is null for
+    every row in the batch -- no data to infer a real dtype from at all), Polars
+    would otherwise infer ``pl.Null``, which many downstream ops (``.str.*``,
+    ``.list.*``, ...) reject outright (``SchemaError: expected String, got null``).
+    Cast that case to ``pl.String`` -- an arbitrary but harmless choice since every
+    value is null anyway, and it matches the dtype the old (stringifying) fallback
+    always produced, so callers built around an all-null batch keep working.
+    """
+    s = pl.Series(name, values)
+    if s.dtype == pl.Null:
+        return s.cast(pl.String)
+    return s
+
+
 def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
     """
     One Spark getItem step on ``expr`` (struct field, list index, or map fallbacks).
@@ -988,7 +1007,7 @@ def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
             # one. This keeps struct/array values intact (e.g. for a later ``F.size()``
             # or ``F.struct()``) instead of stringifying them -- see
             # docs/known_gaps.md for the getItem-outside-schema-context gap this covers.
-            return pl.Series(s.name, [_extract_by_key_value(v) for v in s.to_list()])
+            return _series_from_extracted_values(s.name, [_extract_by_key_value(v) for v in s.to_list()])
 
         return expr.map_batches(_extract_by_key)
     if isinstance(key, int):
@@ -1011,7 +1030,7 @@ def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
 
         def _index_at(s: pl.Series) -> pl.Series:
             # See ``_extract_by_key`` above: dtype is inferred from the real values.
-            return pl.Series(s.name, [_index_at_value(v) for v in s.to_list()])
+            return _series_from_extracted_values(s.name, [_index_at_value(v) for v in s.to_list()])
 
         return expr.map_batches(_index_at)
     raise TypeError(f"getItem key must be str or int, got {type(key).__name__}")

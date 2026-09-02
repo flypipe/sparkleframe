@@ -143,6 +143,32 @@ class TestApplyGetitemKeyOutsideSchemaContext:
 
         assert out["x"].to_list() == [None]
 
+    def test_string_key_all_null_batch_does_not_produce_null_dtype(self) -> None:
+        """
+        Regression: when *every* row's container is null, "infer the dtype from the
+        extracted values" has no real value to infer from -- Polars falls back to
+        ``pl.Null``, which many downstream ops (``.str.*``, ``.list.*``, ...) reject
+        outright. The fallback must not surface ``pl.Null``.
+        """
+        df = pl.DataFrame({"utm": pl.Series("utm", [None, None], dtype=pl.Object)})
+        expr = _apply_getitem_key(pl.col("utm"), "utm_source")
+        out = df.select(expr.alias("x"))
+
+        assert out.schema["x"] != pl.Null
+        assert out["x"].to_list() == [None, None]
+        # Must survive a downstream string op instead of raising ``SchemaError``.
+        assert df.select(expr.str.to_lowercase().alias("x"))["x"].to_list() == [None, None]
+
+    def test_int_key_all_null_batch_does_not_produce_null_dtype(self) -> None:
+        """Same regression as above, for the int-key (``_index_at``) fallback."""
+        df = pl.DataFrame({"items": pl.Series("items", [None, None], dtype=pl.Object)})
+        expr = _apply_getitem_key(pl.col("items"), 0)
+        out = df.select(expr.alias("x"))
+
+        assert out.schema["x"] != pl.Null
+        assert out["x"].to_list() == [None, None]
+        assert df.select(expr.str.to_lowercase().alias("x"))["x"].to_list() == [None, None]
+
 
 class TestAssertArithmeticCompatible:
     @pytest.mark.parametrize(

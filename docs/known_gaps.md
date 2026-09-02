@@ -120,6 +120,16 @@ working on the real value instead of silently getting a stringified
 `None`/wrong result. The resolution is still less efficient than the native
 `list.get` / `struct.field` paths used when dtype is known.
 
+Letting Polars infer the dtype has one edge case: if *every* row in the
+batch extracts to `None` (the source container is null in every row — no
+real data to infer a dtype from at all), Polars infers `pl.Null` for the
+fallback's output Series, and several downstream ops (`.str.*`, `.list.*`, …)
+reject `Null` input outright (`SchemaError: expected 'String', got 'null'`).
+Both fallbacks special-case this via `_series_from_extracted_values`, casting
+an all-null result to `pl.String` — an arbitrary but harmless choice since
+every value is null anyway, and it matches what the old (stringifying)
+fallback always produced.
+
 ## `element_at` with `F.lit(int)` indices
 
 **Affected operations:** `element_at(col, F.lit(n))`, `try_element_at(col, F.lit(n))`
