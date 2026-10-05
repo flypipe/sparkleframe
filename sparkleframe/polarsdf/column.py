@@ -442,14 +442,15 @@ class Column:
             raise TypeError(f"contains() expects a string substring, got {type(substring).__name__}")
         return Column(self.to_native().str.contains(substring, literal=True))
 
-    def startswith(self, prefix: Union[str, Column]) -> Column:
+    def startswith(self, prefix: Optional[Union[str, Column]]) -> Column:
         """
         Mimics pyspark.sql.Column.startswith.
 
         Checks if the string column starts with the given prefix (literal match, case-sensitive).
 
         Args:
-            prefix (str | Column): The prefix to match, as a literal string or a string Column.
+            prefix (str | Column | None): The prefix to match, as a literal string or a string Column.
+                ``None`` is a null literal, as in Spark.
 
         Returns:
             Column: A boolean Column: True if the value starts with prefix, False if not, and null when
@@ -457,6 +458,8 @@ class Column:
         """
         if isinstance(prefix, Column):
             return Column(self.to_native().str.starts_with(prefix.to_native()))
+        if prefix is None:
+            return Column(self.to_native().str.starts_with(pl.lit(None, dtype=pl.String)))
         if not isinstance(prefix, str):
             raise TypeError(f"startswith() expects a string or Column prefix, got {type(prefix).__name__}")
         return Column(self.to_native().str.starts_with(prefix))

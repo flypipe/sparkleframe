@@ -383,7 +383,7 @@ class TestColumn:
 
         assert create_spark_df(spark, sf_result).orderBy("idx").collect() == expected.orderBy("idx").collect()
 
-    @pytest.mark.parametrize("prefix", [1, None, ["a"]])
+    @pytest.mark.parametrize("prefix", [1, ["a"]])
     def test_startswith_rejects_non_string_prefix(self, prefix):
         with pytest.raises(TypeError, match="startswith"):
             col("text").startswith(prefix)

@@ -447,3 +447,63 @@ def test_try_cast_inside_when_then_against_spark(engine, spark):
         F.when(F.col("v").rlike(r"^\d+$"), F.col("v").try_cast("int")).otherwise(F.lit(-1)),
     )
     assert_matches_spark(actual, expected, engine)
+
+
+# ----------------------------------------------------------------------------- #
+# startswith parity
+# ----------------------------------------------------------------------------- #
+
+_STARTSWITH_SCHEMA = SparkStructType([SparkStructField("text", SparkStringType())])
+
+
+@pytest.mark.feature("column.startswith.literal_prefix")
+@pytest.mark.parametrize(
+    "values, prefix",
+    [
+        (["apple", "banana", "apricot", None], "ap"),  # basic prefix
+        (["Spark", "spark", "SPARK", None], "spark"),  # case sensitivity
+        (["ab", "a", "", None], "ab"),  # prefix longer than value, empty value
+        (["abc", "", None], ""),  # empty prefix matches every non-null value
+        (["a.b", "ab", "a*b", None], "a."),  # literal special char (not regex)
+        (["xab", "ab", None], "b"),  # substring that is not a prefix
+    ],
+)
+def test_startswith_literal_prefix(engine, spark, values, prefix):
+    F = engine.functions
+    rows = [(v,) for v in values]
+    expected = spark.createDataFrame(rows, _STARTSWITH_SCHEMA).select(SF.col("text").startswith(prefix).alias("v"))
+    actual = engine.build_df(rows, _STARTSWITH_SCHEMA).select(F.col("text").startswith(prefix).alias("v"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.startswith.column_prefix")
+def test_startswith_column_prefix(engine, spark):
+    F = engine.functions
+    schema = SparkStructType(
+        [SparkStructField("text", SparkStringType()), SparkStructField("prefix", SparkStringType())]
+    )
+    rows = [("apple", "ap"), ("apple", "pl"), ("apple", None), (None, "ap"), ("", "")]
+    expected = spark.createDataFrame(rows, schema).select(SF.col("text").startswith(SF.col("prefix")).alias("v"))
+    actual = engine.build_df(rows, schema).select(F.col("text").startswith(F.col("prefix")).alias("v"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.startswith.null_prefix_returns_null")
+def test_startswith_null_prefix_returns_null(engine, spark):
+    """A ``None`` prefix is a null literal in Spark: every row is null, nothing raises."""
+    F = engine.functions
+    rows = [("apple",), ("",), (None,)]
+    expected = spark.createDataFrame(rows, _STARTSWITH_SCHEMA).select(SF.col("text").startswith(None).alias("v"))
+    actual = engine.build_df(rows, _STARTSWITH_SCHEMA).select(F.col("text").startswith(None).alias("v"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.startswith.non_string_prefix_raises")
+@pytest.mark.parametrize("prefix", [1, ["a"]])
+def test_startswith_non_string_prefix_raises(engine, spark, prefix):
+    """Spark rejects a non-string, non-Column prefix when the expression is built."""
+    F = engine.functions
+    with pytest.raises(Exception):
+        spark.createDataFrame([("apple",)], _STARTSWITH_SCHEMA).select(SF.col("text").startswith(prefix))
+    with pytest.raises(Exception):
+        engine.build_df([("apple",)], _STARTSWITH_SCHEMA).select(F.col("text").startswith(prefix))

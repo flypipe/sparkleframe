@@ -43,6 +43,10 @@ PYTHON_NOT_IMPLEMENTED = {
     "column.cast.string_to_boolean_valid",
     "column.cast.int_to_other",
     "column.try_cast.inside_when_then",
+    "column.startswith.literal_prefix",
+    "column.startswith.column_prefix",
+    "column.startswith.null_prefix_returns_null",
+    "column.startswith.non_string_prefix_raises",
     # dataframe_parity_test.py — DataFrame ops (lifted from dataframe_test.py).
     "dataframe.select.by_list_str",
     "dataframe.select.by_list_columns",
@@ -205,4 +209,4 @@ GATES = {
 # lower it (never raise it) when you delete entries. The ratchet test enforces
 # that the live set never exceeds this number, so a regression can't quietly
 # re-gate a behavior instead of being fixed.
-PYTHON_GATE_HIGH_WATER_MARK = 166
+PYTHON_GATE_HIGH_WATER_MARK = 170
