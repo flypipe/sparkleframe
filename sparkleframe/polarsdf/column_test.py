@@ -352,6 +352,42 @@ class TestColumn:
 
         assert actual_rows == expected_rows
 
+    @pytest.mark.parametrize(
+        "values, prefix",
+        [
+            (["apple", "banana", "apricot", None], "ap"),  # basic prefix
+            (["Spark", "spark", "SPARK", None], "spark"),  # case sensitivity
+            (["ab", "a", "", None], "ab"),  # prefix longer than value, empty value
+            (["abc", "", None], ""),  # empty prefix matches every non-null value
+            (["a.b", "ab", "a*b", None], "a."),  # literal special char (not regex)
+            (["xab", "ab", None], "b"),  # substring that is not a prefix
+        ],
+    )
+    def test_startswith_matches_pyspark(self, spark, values, prefix):
+        sf_df = DataFrame(pl.DataFrame({"idx": list(range(len(values))), "text": values}))
+        sf_result = sf_df.select(col("idx"), col("text").startswith(prefix).alias("result"))
+
+        spark_input = spark.createDataFrame(list(enumerate(values)), schema=["idx", "text"])
+        expected = spark_input.select("idx", F.col("text").startswith(prefix).alias("result"))
+
+        assert create_spark_df(spark, sf_result).orderBy("idx").collect() == expected.orderBy("idx").collect()
+
+    def test_startswith_column_prefix_matches_pyspark(self, spark):
+        rows = [("apple", "ap"), ("apple", "pl"), ("apple", None), (None, "ap"), ("", "")]
+        values = [(idx, text, prefix) for idx, (text, prefix) in enumerate(rows)]
+        sf_df = DataFrame(pl.DataFrame(values, schema=["idx", "text", "prefix"], orient="row"))
+        sf_result = sf_df.select(col("idx"), col("text").startswith(col("prefix")).alias("result"))
+
+        spark_input = spark.createDataFrame(values, schema="idx long, text string, prefix string")
+        expected = spark_input.select("idx", F.col("text").startswith(F.col("prefix")).alias("result"))
+
+        assert create_spark_df(spark, sf_result).orderBy("idx").collect() == expected.orderBy("idx").collect()
+
+    @pytest.mark.parametrize("prefix", [1, None, ["a"]])
+    def test_startswith_rejects_non_string_prefix(self, prefix):
+        with pytest.raises(TypeError, match="startswith"):
+            col("text").startswith(prefix)
+
 
 class TestColumnComparisonCoercion:
     """

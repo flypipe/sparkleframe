@@ -423,47 +423,45 @@ def _map_key_lookup_expr(col_expr: pl.Expr, key_expr: pl.Expr) -> pl.Expr:
       engine auto-materializes the map as a struct keyed by the ordered union of keys.
 
     ``list.eval`` works only on the first layout; ``struct.field`` only on the second.
-    Dispatch by dtype isn't reliable here because expressions are built outside
-    ``_polars_schema_for`` (``select`` only enters that context at evaluation), so we
-    use a row-wise ``map_elements`` that works on the actual value regardless of
-    layout. ``_lookup_map_value_by_key`` accepts dict, list-of-{k,v}, ``pl.Series``,
-    and pyarrow/struct-scalar wrappers.
+    Dispatch by dtype isn't possible at build time because expressions are built outside
+    ``_polars_schema_for`` (``select`` only enters that context at evaluation), so the
+    lookup runs as a batch UDF that dispatches on the layout it actually receives
+    (:func:`_lookup_map_batch`). It returns a Series typed with the map's value dtype, so
+    polars infers the real output type and downstream expressions (e.g. ``lower``) see
+    ``String`` rather than ``Object``.
     """
-    try:
-        uses_named_column = len(key_expr.meta.root_names()) > 0
-    except Exception:
-        uses_named_column = True
-
-    if uses_named_column:
-        # Probe both layouts: ``row["_map"]`` for nested ``List(Struct(k,v))`` maps and
-        # the flattened union (no ``_map`` key) for materialized ``Struct(<union_keys>)``
-        # maps. ``return_dtype=pl.Object`` is required because polars probes with a
-        # sentinel ``_key=""`` row for dtype inference; that probe lookup returns null,
-        # polars would otherwise infer ``Null`` and discard the real value.
-        def _resolve_row(row: Any) -> Any:
-            if not isinstance(row, dict):
-                return _lookup_map_value_by_key(row, None)
-            key = row.get("_key")
-            if key is None:
-                return None
-            if "_map" in row:
-                return _lookup_map_value_by_key(row["_map"], key)
-            return _lookup_map_value_by_key({k: v for k, v in row.items() if k != "_key"}, key)
-
-        return pl.struct([col_expr.alias("_map"), key_expr.alias("_key")]).map_elements(
-            _resolve_row,
-            return_dtype=pl.Object,
-        )
-
-    # Literal key: extract once at expression-build time, then row-wise apply.
-    try:
-        lit_value = pl.DataFrame({"_x": [0]}).select(key_expr.alias("_v"))["_v"][0]
-    except Exception:
-        lit_value = None
-    return col_expr.map_elements(
-        lambda map_value: _lookup_map_value_by_key(map_value, lit_value),
-        return_dtype=None,
+    return pl.struct([col_expr.alias("_map"), key_expr.alias("_key")]).map_batches(
+        _lookup_map_batch,
+        is_elementwise=True,
     )
+
+
+def _lookup_map_batch(batch: pl.Series) -> pl.Series:
+    """Resolve ``_map[_key]`` per row of a ``Struct(_map, _key)`` batch, keeping the value dtype."""
+    frame = batch.struct.unnest()
+    map_dtype = frame.schema["_map"]
+
+    if isinstance(map_dtype, pl.List) and isinstance(map_dtype.inner, pl.Struct):
+        indexed = frame.with_row_index("_row")
+        hits = (
+            indexed.explode("_map")
+            .filter(pl.col("_map").struct.field("key") == pl.col("_key"))
+            .group_by("_row")
+            .agg(pl.col("_map").struct.field("value").first())
+        )
+        return indexed.select("_row").join(hits, on="_row", how="left", maintain_order="left")["value"]
+
+    if isinstance(map_dtype, pl.Struct):
+        if not map_dtype.fields:
+            return pl.Series("value", [None] * frame.height)
+        key = pl.col("_key").cast(pl.String)
+        return frame.select(
+            pl.coalesce([pl.when(key == f.name).then(pl.col("_map").struct.field(f.name)) for f in map_dtype.fields])
+        ).to_series()
+
+    # Unrecognized layout (e.g. an ``Object`` column of dicts): row-wise lookup.
+    values = [_lookup_map_value_by_key(m, k) for m, k in zip(frame["_map"].to_list(), frame["_key"].to_list())]
+    return pl.Series("value", values, strict=False)
 
 
 def element_at_column(
