@@ -19,6 +19,7 @@ from sparkleframe.polarsdf.types import (
     FloatType,
     IntegerType,
     LongType,
+    MapType,
     ShortType,
     StructField,
     StructType,
@@ -582,3 +583,68 @@ class TestGetItemColumnKey:
         df = DataFrame(pl.DataFrame({"arr": [["x", "y"]], "i": [0]}))
         with pytest.raises(NotImplementedError, match="only supported on Map columns"):
             df.select(col("arr")[col("i")]).to_native_df()
+
+
+class TestEqNullSafe:
+    """Column.eqNullSafe (SQL <=>): never null, nulls compare equal to each other."""
+
+    @staticmethod
+    def _frames(spark) -> tuple:
+        sparkle = DataFrame(
+            pl.DataFrame(
+                {"a": ["x", "x", None, None, "y"], "b": ["x", None, "x", None, "z"], "n": [1, 2, 3, None, 5]},
+                schema={"a": pl.String, "b": pl.String, "n": pl.Int64},
+            )
+        )
+        return sparkle, create_spark_df(spark, sparkle)
+
+    def test_literals_match_spark(self, spark) -> None:
+        sf, sp = self._frames(spark)
+        assert_matches_spark(
+            sf.select("a", col("a").eqNullSafe("x").alias("eq"), col("a").eqNullSafe(None).alias("eq_null")),
+            sp.select("a", F.col("a").eqNullSafe("x").alias("eq"), F.col("a").eqNullSafe(None).alias("eq_null")),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_columns_match_spark(self, spark) -> None:
+        sf, sp = self._frames(spark)
+        assert_matches_spark(
+            sf.select("a", "b", col("a").eqNullSafe(col("b")).alias("eq")),
+            sp.select("a", "b", F.col("a").eqNullSafe(F.col("b")).alias("eq")),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_cross_type_matches_spark(self, spark) -> None:
+        sf, sp = self._frames(spark)
+        assert_matches_spark(
+            sf.select("n", col("n").eqNullSafe("3").alias("eq")),
+            sp.select("n", F.col("n").eqNullSafe("3").alias("eq")),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_negated_filter_matches_spark(self, spark) -> None:
+        # The shape std.account_opening_feature_activation uses to drop one value but keep nulls.
+        sf, sp = self._frames(spark)
+        assert_matches_spark(
+            sf.filter(~col("a").eqNullSafe("x")).select("a", "b"),
+            sp.filter(~F.col("a").eqNullSafe("x")).select("a", "b"),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_nested_field_matches_spark(self, spark) -> None:
+        sf, sp = _nested_struct_frames(spark)
+        assert_matches_spark(
+            sf.select("id", col("s.a.active").eqNullSafe(True).alias("eq")),
+            sp.select("id", F.col("s.a.active").eqNullSafe(True).alias("eq")),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_map_operands_raise(self, spark) -> None:
+        spark_df = spark.createDataFrame([({"k": "v"},)], "m map<string,string>")
+        with pytest.raises(Exception):
+            spark_df.select(F.col("m").eqNullSafe(F.col("m"))).collect()
+        sparkle = DataFrame(pl.DataFrame({"j": ['{"k": "v"}']})).withColumn(
+            "m", from_json("j", MapType(StringType(), StringType()))
+        )
+        with pytest.raises(NotImplementedError):
+            sparkle.select(col("m").eqNullSafe(col("m"))).to_native_df()

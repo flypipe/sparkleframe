@@ -879,6 +879,21 @@ def _ordering_comparison_expr(left: pl.Expr, right: pl.Expr, op: str) -> pl.Expr
     return _spark_compare_guard_expr(left, right, op, result, ld, rd)
 
 
+def _eq_null_safe_expr(left: pl.Expr, right: pl.Expr) -> pl.Expr:
+    """
+    Spark ``<=>`` over Polars expressions: True when both operands are null, False when exactly one
+    is, otherwise :func:`_equality_comparison_expr` (same coercion and type guards as ``==``).
+    """
+    equal = _equality_comparison_expr(left, right, equal=True)
+    return (
+        pl.when(left.is_null() & right.is_null())
+        .then(pl.lit(True))
+        .when(left.is_null() | right.is_null())
+        .then(pl.lit(False))
+        .otherwise(equal)
+    )
+
+
 def _equality_comparison_expr(left: pl.Expr, right: pl.Expr, equal: bool) -> pl.Expr:
     """
     Spark-like ``==`` / ``!=`` over Polars expressions. Cross-type equality coerces
@@ -1003,3 +1018,19 @@ def _apply_getitem_key(expr: pl.Expr, key: Union[str, int]) -> pl.Expr:
 
         return expr.map_elements(_index_at, return_dtype=pl.String)
     raise TypeError(f"getItem key must be str or int, got {type(key).__name__}")
+
+
+def _map_lookup_by_column(map_expr: pl.Expr, key_expr: pl.Expr) -> pl.Expr:
+    """``map_expr[key_expr]`` for a Map column, resolved under the active frame schema."""
+    # Imported here: functions_helpers imports column, which imports this module.
+    from sparkleframe.polarsdf.functions_helpers import _map_key_lookup_expr
+
+    dtype = _resolve_expr_output_dtype(map_expr)
+    is_map = isinstance(dtype, pl.Struct) or (
+        isinstance(dtype, pl.List)
+        and isinstance(dtype.inner, pl.Struct)
+        and {f.name for f in dtype.inner.fields} == {"key", "value"}
+    )
+    if dtype is not None and not is_map:
+        raise NotImplementedError(f"getItem with a Column key is only supported on Map columns, got {dtype}")
+    return _map_key_lookup_expr(map_expr, key_expr)

@@ -8,8 +8,10 @@ import polars as pl
 from sparkleframe.polarsdf.column_helpers import (
     _apply_getitem_key,
     _coerce_mixed_arithmetic_operands,
+    _eq_null_safe_expr,
     _equality_comparison_expr,
     _has_decimal_operand,
+    _map_lookup_by_column,
     _ordering_comparison_expr,
     _parse_bool_string,
     _resolve_expr_output_dtype,
@@ -215,6 +217,21 @@ class Column:
 
     def __ne__(self, other):
         return Column(_equality_comparison_expr(self.to_native(), _to_expr(other), equal=False))
+
+    def eqNullSafe(self, other: Any) -> Column:
+        """
+        Mimics pyspark.sql.Column.eqNullSafe (SQL ``<=>``): equality that never returns null.
+
+        True when both sides are null, False when exactly one is, otherwise the same comparison as
+        ``==``.
+
+        Args:
+            other: A Column or a literal (``None`` is a null literal).
+
+        Returns:
+            Column: A non-nullable boolean Column.
+        """
+        return self._deferred_if_needed(lambda: _eq_null_safe_expr(self.to_native(), _to_expr(other)), self, other)
 
     def __lt__(self, other):
         return Column(_ordering_comparison_expr(self.to_native(), _to_expr(other), "lt"))
@@ -498,22 +515,6 @@ class Column:
         if not isinstance(prefix, str):
             raise TypeError(f"startswith() expects a string or Column prefix, got {type(prefix).__name__}")
         return Column(self.to_native().str.starts_with(prefix))
-
-
-def _map_lookup_by_column(map_expr: pl.Expr, key_expr: pl.Expr) -> pl.Expr:
-    """``map_expr[key_expr]`` for a Map column, resolved under the active frame schema."""
-    # Imported here: functions_helpers imports this module.
-    from sparkleframe.polarsdf.functions_helpers import _map_key_lookup_expr
-
-    dtype = _resolve_expr_output_dtype(map_expr)
-    is_map = isinstance(dtype, pl.Struct) or (
-        isinstance(dtype, pl.List)
-        and isinstance(dtype.inner, pl.Struct)
-        and {f.name for f in dtype.inner.fields} == {"key", "value"}
-    )
-    if dtype is not None and not is_map:
-        raise NotImplementedError(f"getItem with a Column key is only supported on Map columns, got {dtype}")
-    return _map_key_lookup_expr(map_expr, key_expr)
 
 
 def _to_expr(value):
