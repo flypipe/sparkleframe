@@ -14,7 +14,14 @@ from __future__ import annotations
 from typing import Any, Callable, Optional, Union
 
 from sparkleframe.python._errors import not_implemented_yet
-from sparkleframe.python.ast.expressions import AttributeReference, CaseWhen, Expression, FunctionCall, Literal
+from sparkleframe.python.ast.expressions import (
+    AttributeReference,
+    BinaryExpression,
+    CaseWhen,
+    Expression,
+    FunctionCall,
+    Literal,
+)
 from sparkleframe.python.column import Column, _column_ref, _to_expression
 
 
@@ -198,7 +205,12 @@ def floor(col_name: Union[str, Column]) -> Column:
 
 
 def pow(base: Any, exponent: Any) -> Column:
-    not_implemented_yet("functions.pow")
+    """``base ** exponent`` as a double; a ``str`` names a column, any other scalar is a literal.
+
+    Builds the same ``**`` node as :meth:`Column.__pow__` (PySpark's ``Column.__pow__`` *is*
+    ``pow``), so both share one analyze/evaluate path.
+    """
+    return Column(BinaryExpression("**", _column_ref(base), _column_ref(exponent)))
 
 
 def isnan(col_name: Union[str, Column]) -> Column:

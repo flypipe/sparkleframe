@@ -17,7 +17,7 @@ This is the seam where per-feature type resolution lands. Implementing a feature
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from sparkleframe.python._errors import not_implemented_yet
 from sparkleframe.python.ast import coercion
@@ -28,6 +28,7 @@ from sparkleframe.python.ast.expressions import (
     Cast,
     Expression,
     Literal,
+    UnaryExpression,
 )
 
 
@@ -52,16 +53,35 @@ def analyze(expr: Expression, schema: Any) -> Expression:
         resolved.data_type = child.data_type
         return resolved
 
-    if isinstance(expr, BinaryExpression) and expr.op in ("+", "-", "*"):
+    if isinstance(expr, BinaryExpression) and expr.op in _BINARY_COERCIONS:
         left = analyze(expr.left, schema)
         right = analyze(expr.right, schema)
-        result_dt, left_cast, right_cast = coercion.coerce_arithmetic(expr.op, left.data_type, right.data_type)
+        result_dt, left_cast, right_cast = _BINARY_COERCIONS[expr.op](expr.op, left.data_type, right.data_type)
         resolved = BinaryExpression(expr.op, _with_cast(left, left_cast), _with_cast(right, right_cast))
+        resolved.data_type = result_dt
+        return resolved
+
+    if isinstance(expr, UnaryExpression) and expr.op == "not":
+        child = analyze(expr.child, schema)
+        result_dt, child_cast = coercion.coerce_not(child.data_type)
+        resolved = UnaryExpression(expr.op, _with_cast(child, child_cast))
         resolved.data_type = result_dt
         return resolved
 
     detail = f"{type(expr).__name__} {getattr(expr, 'op', '')}".strip()
     not_implemented_yet(f"the analyze phase for {detail}")
+
+
+# Binary operator -> coercion rule ``(op, left_dt, right_dt) -> (result_dt, left_cast, right_cast)``.
+_BINARY_COERCIONS: Dict[str, Callable[[str, Any, Any], Tuple[Any, Optional[Any], Optional[Any]]]] = {
+    **{op: coercion.coerce_arithmetic for op in ("+", "-", "*")},
+    "**": lambda _op, left_dt, right_dt: coercion.coerce_pow(left_dt, right_dt),
+    **{
+        op: lambda _op, left_dt, right_dt: coercion.coerce_comparison(left_dt, right_dt)
+        for op in ("==", "!=", "<", "<=", ">", ">=")
+    },
+    **{op: coercion.coerce_logical for op in ("and", "or")},
+}
 
 
 def _with_cast(resolved: Expression, target_dt: Any) -> Expression:

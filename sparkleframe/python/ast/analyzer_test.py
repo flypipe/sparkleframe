@@ -2,6 +2,7 @@
 
 import pytest
 from pyspark.sql.types import (
+    BooleanType,
     DoubleType,
     IntegerType,
     LongType,
@@ -69,6 +70,37 @@ class TestResolvesTypes:
         expr = BinaryExpression("+", AttributeReference("a"), Literal(1))
         resolved = analyze(expr, _schema(("a", IntegerType())))
         assert isinstance(resolved.data_type, IntegerType)
+
+    def test_pow_resolves_to_double_and_casts_non_double_operands(self):
+        expr = BinaryExpression("**", AttributeReference("i"), AttributeReference("d"))
+        resolved = analyze(expr, _schema(("i", IntegerType()), ("d", DoubleType())))
+        assert isinstance(resolved.data_type, DoubleType)
+        assert resolved.op == "**"
+        assert isinstance(resolved.left, Cast)
+        assert isinstance(resolved.left.data_type, DoubleType)
+        assert not isinstance(resolved.right, Cast)
+
+    def test_comparison_resolves_to_boolean_and_casts_both_sides_to_common_type(self):
+        # int vs string compares as bigint: both operands get a Cast.
+        expr = BinaryExpression("<", AttributeReference("i"), AttributeReference("s"))
+        resolved = analyze(expr, _schema(("i", IntegerType()), ("s", StringType())))
+        assert isinstance(resolved.data_type, BooleanType)
+        assert resolved.op == "<"
+        assert isinstance(resolved.left, Cast) and isinstance(resolved.left.data_type, LongType)
+        assert isinstance(resolved.right, Cast) and isinstance(resolved.right.data_type, LongType)
+
+    def test_logical_casts_string_operand_to_boolean(self):
+        expr = BinaryExpression("and", AttributeReference("b"), AttributeReference("s"))
+        resolved = analyze(expr, _schema(("b", BooleanType()), ("s", StringType())))
+        assert isinstance(resolved.data_type, BooleanType)
+        assert not isinstance(resolved.left, Cast)
+        assert isinstance(resolved.right, Cast) and isinstance(resolved.right.data_type, BooleanType)
+
+    def test_not_resolves_to_boolean(self):
+        resolved = analyze(UnaryExpression("not", AttributeReference("b")), _schema(("b", BooleanType())))
+        assert isinstance(resolved, UnaryExpression) and resolved.op == "not"
+        assert isinstance(resolved.data_type, BooleanType)
+        assert not isinstance(resolved.child, Cast)
 
     def test_original_tree_untouched(self):
         expr = AttributeReference("a")

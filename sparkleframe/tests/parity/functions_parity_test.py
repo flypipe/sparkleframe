@@ -23,15 +23,24 @@ Tests that don't fit this shape stay co-located in the source file:
 """
 
 import json
+import math
+from datetime import date
+from decimal import Decimal
 
 import pyspark.sql.functions as SF
 import pytest
 from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import BinaryType as SparkBinaryType
+from pyspark.sql.types import BooleanType as SparkBooleanType
+from pyspark.sql.types import ByteType as SparkByteType
+from pyspark.sql.types import DateType as SparkDateType
+from pyspark.sql.types import DecimalType as SparkDecimalType
 from pyspark.sql.types import DoubleType as SparkDoubleType
+from pyspark.sql.types import FloatType as SparkFloatType
 from pyspark.sql.types import IntegerType as SparkIntegerType
 from pyspark.sql.types import LongType as SparkLongType
 from pyspark.sql.types import MapType as SparkMapType
+from pyspark.sql.types import ShortType as SparkShortType
 from pyspark.sql.types import StringType as SparkStringType
 from pyspark.sql.types import StructField as SparkStructField
 from pyspark.sql.types import StructType as SparkStructType
@@ -1235,6 +1244,162 @@ def test_pow_with_literal_exponent_against_spark(engine, spark):
     rows = [(2.0,), (3.0,), (4.0,)]
     actual = engine.build_df(rows, schema).select(F.pow(F.col("base"), F.lit(2)).alias("p"))
     expected = spark.createDataFrame(rows, schema).select(SF.pow(SF.col("base"), SF.lit(2)).alias("p"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.pow.integral_operands_return_double")
+@pytest.mark.parametrize("dtype", [SparkByteType(), SparkShortType(), _INT, _LONG, SparkFloatType()])
+def test_pow_non_double_numeric_operands_against_spark(engine, spark, dtype):
+    # Spark casts both operands to double, so 2 ** 3 is 8.0 (not 8) and 2 ** -1 is 0.5.
+    F = engine.functions
+    schema = _schema(("base", dtype), ("exp", dtype))
+    rows = [(2, 3), (3, 0), (2, -1), (5, 2)]
+    if isinstance(dtype, SparkFloatType):
+        rows = [(float(b), float(e)) for b, e in rows] + [(1.5, 0.5)]
+    actual = engine.build_df(rows, schema).select(F.pow("base", "exp").alias("p"))
+    expected = spark.createDataFrame(rows, schema).select(SF.pow("base", "exp").alias("p"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.pow.decimal_operands")
+def test_pow_decimal_operands_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("base", SparkDecimalType(10, 2)), ("exp", SparkDecimalType(10, 2)))
+    rows = [(Decimal("1.50"), Decimal("2.00")), (Decimal("4.00"), Decimal("0.50")), (None, Decimal("1.00"))]
+    actual = engine.build_df(rows, schema).select(F.pow("base", "exp").alias("p"))
+    expected = spark.createDataFrame(rows, schema).select(SF.pow("base", "exp").alias("p"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.pow.null_operands")
+def test_pow_null_operands_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("base", _DOUBLE), ("exp", _DOUBLE))
+    rows = [(None, 2.0), (2.0, None), (None, None), (None, 0.0), (3.0, 2.0)]
+    df = engine.build_df(rows, schema)
+    sdf = spark.createDataFrame(rows, schema)
+    actual = df.select(
+        F.pow("base", "exp").alias("p"),
+        F.pow(F.col("base"), F.lit(None)).alias("null_exp"),
+        F.pow(F.lit(None), F.col("exp")).alias("null_base"),
+    )
+    expected = sdf.select(
+        SF.pow("base", "exp").alias("p"),
+        SF.pow(SF.col("base"), SF.lit(None)).alias("null_exp"),
+        SF.pow(SF.lit(None), SF.col("exp")).alias("null_base"),
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.pow.string_operand_casts_to_double")
+def test_pow_string_operands_against_spark(engine, spark):
+    # Spark implicitly casts string operands to double (whitespace is trimmed).
+    F = engine.functions
+    schema = _schema(("base", _STR), ("exp", _DOUBLE))
+    rows = [("2", 3.0), (" 4 ", 0.5), ("1.5", 2.0), (None, 1.0)]
+    actual = engine.build_df(rows, schema).select(
+        F.pow("base", "exp").alias("p"), F.pow("exp", "base").alias("swapped")
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.pow("base", "exp").alias("p"), SF.pow("exp", "base").alias("swapped")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.pow.malformed_string_raises")
+def test_pow_malformed_string_raises_like_spark(engine, spark):
+    # ANSI: the implicit string -> double cast is strict, so a malformed string fails the query.
+    F = engine.functions
+    schema = _schema(("base", _STR), ("exp", _DOUBLE))
+    rows = [("2", 3.0), ("abc", 2.0)]
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame(rows, schema).select(SF.pow("base", "exp")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.pow("base", "exp").alias("p")))
+
+
+@pytest.mark.feature("functions.pow.non_numeric_operand_raises")
+@pytest.mark.parametrize("dtype, value", [(SparkBooleanType(), True), (SparkDateType(), date(2024, 1, 1))])
+def test_pow_non_numeric_operand_raises_like_spark(engine, spark, dtype, value):
+    # Spark rejects booleans / dates at analysis time (DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE).
+    F = engine.functions
+    schema = _schema(("base", dtype), ("exp", _DOUBLE))
+    rows = [(value, 2.0)]
+    with pytest.raises(Exception, match="DATATYPE_MISMATCH"):
+        spark.createDataFrame(rows, schema).select(SF.pow("base", "exp")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.pow("base", "exp").alias("p")))
+
+
+def _assert_pow_nan_positions_match(actual, expected, engine):
+    """The oracle normalizes NaN to null, so additionally pin *which* ids are NaN (not null)."""
+
+    def nan_ids(records):
+        return sorted(r["id"] for r in records if isinstance(r["p"], float) and math.isnan(r["p"]))
+
+    assert nan_ids(engine.to_records(actual)) == nan_ids([r.asDict() for r in expected.collect()])
+
+
+@pytest.mark.feature("functions.pow.ieee_special_values")
+def test_pow_ieee_special_values_against_spark(engine, spark):
+    # Where Python's math.pow raises, Spark (Java Math.pow) returns +-Infinity or NaN.
+    F = engine.functions
+    schema = _schema(("id", _INT), ("base", _DOUBLE), ("exp", _DOUBLE))
+    rows = [
+        (1, 0.0, -1.0),  # +inf
+        (2, -0.0, -1.0),  # -inf: -0.0 to a negative odd integer keeps its sign
+        (3, -0.0, -2.0),  # +inf
+        (4, -8.0, 1 / 3),  # NaN: negative base, non-integer exponent
+        (5, 10.0, 400.0),  # +inf: overflow
+        (6, -10.0, 401.0),  # -inf: overflow, negative base, odd exponent
+        (7, -10.0, 400.0),  # +inf: overflow, negative base, even exponent
+        (8, float("nan"), 0.0),  # 1.0: anything to the 0 is 1
+        (9, 2.0, float("-inf")),  # 0.0
+        (10, float("inf"), -1.0),  # 0.0
+        (11, 2.0, -1074.0),  # smallest subnormal, no underflow to 0
+    ]
+    actual = engine.build_df(rows, schema).select("id", F.pow("base", "exp").alias("p"))
+    expected = spark.createDataFrame(rows, schema).select("id", SF.pow("base", "exp").alias("p"))
+    assert_matches_spark(actual, expected, engine)
+    _assert_pow_nan_positions_match(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.pow.java_nan_semantics")
+def test_pow_java_nan_semantics_against_spark(engine, spark):
+    # Java Math.pow departs from C99 here: 1 ** NaN and (+-1) ** +-inf are NaN, not 1.0.
+    F = engine.functions
+    schema = _schema(("id", _INT), ("base", _DOUBLE), ("exp", _DOUBLE))
+    rows = [
+        (1, 1.0, float("nan")),
+        (2, -1.0, float("inf")),
+        (3, 1.0, float("-inf")),
+        (4, float("nan"), 1.0),
+        (5, 2.0, float("nan")),
+    ]
+    actual = engine.build_df(rows, schema).select("id", F.pow("base", "exp").alias("p"))
+    expected = spark.createDataFrame(rows, schema).select("id", SF.pow("base", "exp").alias("p"))
+    assert_matches_spark(actual, expected, engine)
+    _assert_pow_nan_positions_match(actual, expected, engine)
+
+
+@pytest.mark.feature("column.pow.operator")
+def test_column_pow_operator_against_spark(engine, spark):
+    # ``col ** x`` and reflected ``x ** col`` are Spark's ``pow``; 2 ** e vs e ** 2 pins operand order.
+    F = engine.functions
+    schema = _schema(("base", _INT), ("exp", _INT))
+    rows = [(2, 3), (3, 2), (4, None)]
+    actual = engine.build_df(rows, schema).select(
+        (F.col("base") ** F.col("exp")).alias("col_col"),
+        (F.col("exp") ** 2).alias("col_lit"),
+        (2 ** F.col("exp")).alias("lit_col"),
+        (0.5 ** F.col("base")).alias("float_lit_col"),
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        (SF.col("base") ** SF.col("exp")).alias("col_col"),
+        (SF.col("exp") ** 2).alias("col_lit"),
+        (2 ** SF.col("exp")).alias("lit_col"),
+        (0.5 ** SF.col("base")).alias("float_lit_col"),
+    )
     assert_matches_spark(actual, expected, engine)
 
 

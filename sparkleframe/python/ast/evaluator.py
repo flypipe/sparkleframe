@@ -26,20 +26,10 @@ from sparkleframe.python.ast.expressions import (
     Cast,
     Expression,
     Literal,
+    UnaryExpression,
 )
-
-try:  # pragma: no cover - exercised only with the real pyspark installed
-    from pyspark.sql.types import (
-        ByteType,
-        DoubleType,
-        FloatType,
-        IntegerType,
-        LongType,
-        ShortType,
-        StringType,
-    )
-except Exception:  # pragma: no cover - mock pyspark (under activate) has no real types
-    pass
+from sparkleframe.python.column_helpers import cast_value, compare_values, logical_and, logical_not, logical_or
+from sparkleframe.python.functions_helpers import spark_pow
 
 
 def evaluate(expr: Expression, rows: List[dict]) -> List[Any]:
@@ -59,12 +49,24 @@ def evaluate(expr: Expression, rows: List[dict]) -> List[Any]:
         return evaluate(expr.child, rows)
 
     if isinstance(expr, Cast):
-        return [_cast_value(v, expr.target_type) for v in evaluate(expr.child, rows)]
+        return [cast_value(v, expr.target_type, expr.strict) for v in evaluate(expr.child, rows)]
 
-    if isinstance(expr, BinaryExpression) and expr.op in ("+", "-", "*"):
-        left = evaluate(expr.left, rows)
-        right = evaluate(expr.right, rows)
-        return [_arithmetic(expr.op, lv, rv) for lv, rv in zip(left, right)]
+    if isinstance(expr, UnaryExpression) and expr.op == "not":
+        return [logical_not(v) for v in evaluate(expr.child, rows)]
+
+    if isinstance(expr, BinaryExpression):
+        pairs = zip(evaluate(expr.left, rows), evaluate(expr.right, rows))
+        if expr.op in ("+", "-", "*"):
+            return [_arithmetic(expr.op, lv, rv) for lv, rv in pairs]
+        if expr.op == "**":
+            return [spark_pow(lv, rv) for lv, rv in pairs]
+        if expr.op in ("==", "!=", "<", "<=", ">", ">="):
+            # The analyzer coerced both operands to one type; ordering needs it (NaN, arrays, structs).
+            return [compare_values(expr.op, lv, rv, expr.left.data_type) for lv, rv in pairs]
+        if expr.op == "and":
+            return [logical_and(lv, rv) for lv, rv in pairs]
+        if expr.op == "or":
+            return [logical_or(lv, rv) for lv, rv in pairs]
 
     detail = f"{type(expr).__name__} {getattr(expr, 'op', '')}".strip()
     not_implemented_yet(f"the evaluate phase for {detail}")
@@ -79,20 +81,3 @@ def _arithmetic(op: str, left: Any, right: Any) -> Any:
     if op == "-":
         return left - right
     return left * right
-
-
-def _cast_value(value: Any, target_type: Any) -> Any:
-    """Cast a single Python value to ``target_type`` (a PySpark ``DataType``).
-
-    Covers the casts this slice inserts: string → double (via ``float``) and numeric → numeric.
-    A null stays null. ANSI-strict behavior comes for free — ``float("x")`` raises on bad input.
-    """
-    if value is None:
-        return None
-    if isinstance(target_type, (FloatType, DoubleType)):
-        return float(value)
-    if isinstance(target_type, (ByteType, ShortType, IntegerType, LongType)):
-        return int(value)
-    if isinstance(target_type, StringType):
-        return str(value)
-    not_implemented_yet(f"casting to {type(target_type).__name__}")

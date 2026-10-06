@@ -8,7 +8,7 @@ adding the other leaves the surface untested.
 import pytest
 
 import sparkleframe.python.functions as F
-from sparkleframe.python.ast.expressions import AttributeReference, CaseWhen, FunctionCall, Literal
+from sparkleframe.python.ast.expressions import AttributeReference, BinaryExpression, CaseWhen, FunctionCall, Literal
 from sparkleframe.python.column import Column
 
 
@@ -54,6 +54,14 @@ class TestBuildWiredFunctions:
         assert isinstance(result._expr.otherwise, Literal)
         assert result._expr.otherwise.value == "no"
 
+    def test_pow_builds_power_node_with_base_on_left(self):
+        # Same node as ``Column.__pow__``; a str names a column, a scalar becomes a literal.
+        result = F.pow("b", 2)
+        assert isinstance(result._expr, BinaryExpression)
+        assert result._expr.op == "**"
+        assert isinstance(result._expr.left, AttributeReference) and result._expr.left.name == "b"
+        assert isinstance(result._expr.right, Literal) and result._expr.right.value == 2
+
 
 # Every remaining function is a declared slot that raises until implemented. Calling each one
 # (with dummy arguments) both documents the surface and guards that the slot stays wired.
@@ -90,7 +98,6 @@ _UNIMPLEMENTED = [
     lambda: F.dense_rank(),
     lambda: F.row_number(),
     lambda: F.floor("a"),
-    lambda: F.pow("a", "b"),
     lambda: F.isnan("a"),
     lambda: F.try_divide("a", "b"),
     lambda: F.initcap("a"),
