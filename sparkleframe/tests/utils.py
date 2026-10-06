@@ -92,6 +92,8 @@ def _round_float_sigfigs(f: float) -> float:
     """
     if f == 0.0:
         return 0.0
+    if math.isinf(f):
+        return f
     magnitude = math.floor(math.log10(abs(f))) + 1
     return round(f, _FLOAT_SIG_DIGITS - magnitude)
 

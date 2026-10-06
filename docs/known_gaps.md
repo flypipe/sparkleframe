@@ -159,3 +159,45 @@ Polars does not implement lexicographic ordering for `List` or `Struct` dtypes.
 Spark supports element-wise ordering on arrays and field-wise ordering on
 structs, but replicating this would require manually exploding and comparing
 elements — a non-trivial implementation.
+
+## `functions.pow` operand types and Java NaN semantics
+
+**Affected operations:** `F.pow(base, exponent)` (the `Column` `**` / reflected `**` operators
+are not affected for operand types — they cast both sides to `Float64` first).
+
+Spark's `pow` casts both operands to `double` before computing, so it accepts any numeric,
+decimal, string (ANSI cast, whitespace trimmed) or null operand and always returns `double`.
+The Polars engine's `F.pow` hands the raw operands to Polars' `pow`, which:
+
+- rejects a negative integer exponent (`2 ** -1` fails converting `-1` to `u32`) and returns an
+  integer dtype for integer operands;
+- rejects `Decimal`, `Null` (e.g. `F.lit(None)`) and `String` operands outright.
+
+Separately, Polars follows C99 `pow`, whereas Spark uses Java's `Math.pow`: `1 ** NaN` and
+`(±1) ** ±inf` are `NaN` in Spark but `1.0` in Polars.
+
+**Workaround:** cast operands to `double` first, e.g. `F.pow(F.col("a").cast("double"), 2)`.
+The pure-Python engine implements all of these (see `spark_pow` in
+`sparkleframe/python/functions_helpers.py`).
+
+## String and non-boolean operands in comparisons and logical operators
+
+**Affected operations:** `==`, `!=`, `<`, `<=`, `>`, `>=` with a string operand on one side, and
+`&`, `|`, `~` on non-boolean operands.
+
+Spark 4 (ANSI) compares a string with another type by casting the string strictly: to `bigint`
+against integral types, to `double` against float/double/decimal, and to the other type against
+boolean, date, timestamp and binary. A malformed string raises `CAST_INVALID_INPUT`. This runs
+into the same build-time dtype limitation as "Mixed-type column arithmetic" above, so the
+Polars engine raises a type mismatch instead of coercing (`"7" == 7`, `"2024-01-15" < date`).
+
+The logical operators accept only boolean operands in Spark. A string operand is cast to boolean
+(`"yes"`, `"t"`, `"1"`, … are true), a `null` literal is typed as boolean, and anything else is a
+`DATATYPE_MISMATCH` analysis error. The Polars engine rejects string operands and, for integer
+operands, silently computes a **bitwise** `and`/`or`/`not` instead of raising.
+
+Arrays and structs with null elements (or NaN inside them) are covered by "Ordering on nested
+types".
+
+**Workaround:** cast explicitly, e.g. `F.col("s").cast("long") == F.col("n")` or
+`F.col("flag").cast("boolean") & F.col("b")`. The pure-Python engine implements all of these.

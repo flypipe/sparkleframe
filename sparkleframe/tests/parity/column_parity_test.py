@@ -302,6 +302,299 @@ def test_comparison_col_col_mixed_types(
     _assert_op_matches_or_both_raise(engine, spark, schema, rows, op_func)
 
 
+def _all_comparisons(left, right):
+    return [op_func(left, right).alias(f"r_{i}") for i, (_, op_func) in enumerate(_COMPARISON_OPS)]
+
+
+@pytest.mark.feature("column.comparison.with_nulls")
+@pytest.mark.parametrize(
+    "spark_type, values_a, values_b",
+    [
+        (SparkIntegerType(), [1, None, None, 3], [None, 2, None, 3]),
+        (SparkDoubleType(), [1.5, None, None], [None, 2.5, None]),
+        (SparkStringType(), ["a", None, None], [None, "b", None]),
+    ],
+    ids=["int", "double", "string"],
+)
+def test_comparison_with_nulls(engine, spark, spark_type, values_a, values_b):
+    # A null operand makes every comparison null — including ``null == null``.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("a", spark_type), SparkStructField("b", spark_type)])
+    rows = list(zip(values_a, values_b))
+    actual = engine.build_df(rows, schema).select(
+        *_all_comparisons(F.col("a"), F.col("b")), (F.col("a") == F.lit(None)).alias("vs_null_lit")
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        *_all_comparisons(SF.col("a"), SF.col("b")), (SF.col("a") == SF.lit(None)).alias("vs_null_lit")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.comparison.nan_semantics")
+@pytest.mark.parametrize("spark_type", [SparkDoubleType(), SparkFloatType()], ids=["double", "float"])
+def test_comparison_nan_semantics(engine, spark, spark_type):
+    # Spark: NaN = NaN is true and NaN sorts above every other value (even +inf); 0.0 = -0.0.
+    F = engine.functions
+    nan, inf = float("nan"), float("inf")
+    schema = SparkStructType([SparkStructField("a", spark_type), SparkStructField("b", spark_type)])
+    rows = [(nan, nan), (nan, 1.0), (1.0, nan), (inf, nan), (nan, -inf), (0.0, -0.0), (2.0, 1.0)]
+    actual = engine.build_df(rows, schema).select(*_all_comparisons(F.col("a"), F.col("b")))
+    expected = spark.createDataFrame(rows, schema).select(*_all_comparisons(SF.col("a"), SF.col("b")))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.comparison.nested_nulls_and_nan")
+@pytest.mark.parametrize(
+    "spark_type, values_a, values_b",
+    [
+        (
+            SparkArrayType(SparkIntegerType()),
+            [[1, None], [None], [1, 2], [], [None, 5]],
+            [[1, None], [1], [1], [None], [None, 4]],
+        ),
+        (SparkArrayType(SparkDoubleType()), [[float("nan")], [float("nan")], [1.0]], [[float("nan")], [1.0], [2.0]]),
+        (
+            SparkStructType([SparkStructField("x", SparkIntegerType()), SparkStructField("y", SparkIntegerType())]),
+            [(1, None), (None, 1), (2, 1)],
+            [{"x": 1, "y": None}, {"x": 1, "y": 1}, {"x": 1, "y": 9}],  # dict-shaped struct cells
+        ),
+    ],
+    ids=["array_int", "array_double", "struct"],
+)
+def test_comparison_nested_nulls_and_nan(engine, spark, spark_type, values_a, values_b):
+    # Inside arrays/structs a null element sorts first and equals another null; NaN equals NaN.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("a", spark_type), SparkStructField("b", spark_type)])
+    rows = list(zip(values_a, values_b))
+    actual = engine.build_df(rows, schema).select(*_all_comparisons(F.col("a"), F.col("b")))
+    expected = spark.createDataFrame(rows, schema).select(*_all_comparisons(SF.col("a"), SF.col("b")))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.comparison.literals")
+def test_comparison_with_literals(engine, spark):
+    # Python literals are typed (int, float, str, None, date, datetime, Decimal) then coerced like columns.
+    F = engine.functions
+    schema = SparkStructType(
+        [
+            SparkStructField("i", SparkIntegerType()),
+            SparkStructField("s", SparkStringType()),
+            SparkStructField("d", SparkDateType()),
+            SparkStructField("ts", SparkTimestampType()),
+            SparkStructField("dec", SparkDecimalType(10, 2)),
+        ]
+    )
+    rows = [
+        (1, "a", date(2024, 1, 1), datetime(2024, 1, 1, 12, 0), Decimal("1.50")),
+        (2, "b", date(2024, 6, 15), datetime(2024, 6, 15, 8, 30), Decimal("2.25")),
+        (3, "c", date(2025, 1, 1), datetime(2025, 1, 1, 0, 0), Decimal("3.00")),
+    ]
+
+    def exprs(M):
+        return [
+            (M.col("i") == 2).alias("int_eq"),
+            (M.col("i") < 2.5).alias("int_lt_float"),
+            (M.col("i") >= "2").alias("int_ge_str"),
+            (M.col("i") == M.lit(None)).alias("int_eq_null"),
+            (5 > M.col("i")).alias("reflected"),
+            (M.col("s") > "a").alias("str_gt"),
+            (M.col("d") >= M.lit(date(2024, 6, 15))).alias("date_ge"),
+            (M.col("d") < "2024-06-15").alias("date_lt_str"),
+            (M.col("ts") > M.lit(datetime(2024, 6, 15, 8, 0))).alias("ts_gt"),
+            (M.col("ts") >= M.lit(date(2024, 6, 15))).alias("ts_ge_date"),
+            (M.col("dec") <= M.lit(Decimal("2.25"))).alias("dec_le"),
+            (M.col("dec") == 3).alias("dec_eq_int"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*exprs(F))
+    expected = spark.createDataFrame(rows, schema).select(*exprs(SF))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.comparison.string_implicit_cast_valid")
+@pytest.mark.parametrize(
+    "other_type, strings, others",
+    [
+        (SparkLongType(), [" 7 ", "+5", "-3", "\t9\n"], [7, 5, 2, 10]),
+        (
+            SparkDoubleType(),
+            ["1e2", "Infinity", "NaN", ".5", "1d", "-inf", "0x1p3"],
+            [100.0, 1.0, float("nan"), 0.5, 2.0, 0.0, 8.0],
+        ),
+        (SparkBooleanType(), ["yes", " F ", "1", "n", "TRUE"], [True, False, False, False, True]),
+        (
+            SparkDateType(),
+            ["2024-01-15", "2024-1-5", "2024", "2024-01-15T10:00", "2024-01-15 10:00:00", "+2024-03"],
+            [
+                date(2024, 1, 15),
+                date(2024, 1, 5),
+                date(2024, 1, 1),
+                date(2024, 1, 16),
+                date(2024, 1, 14),
+                date(2024, 3, 1),
+            ],
+        ),
+        (
+            SparkTimestampType(),
+            [
+                "2024-01-15 10:30:45",
+                "2024-01-15T10:30:45",
+                "2024-01-15",
+                "2024-01",
+                "2024-01-15 10:30:45.1234567",
+                "2024-01-15 10",
+            ],
+            [
+                datetime(2024, 1, 15, 10, 30, 45),
+                datetime(2024, 1, 15, 10, 30, 46),
+                datetime(2024, 1, 15),
+                datetime(2023, 12, 31),
+                datetime(2024, 1, 15, 10, 30, 45, 123456),
+                datetime(2024, 1, 15, 10),
+            ],
+        ),
+        (SparkBinaryType(), ["ab", "é", ""], [b"ab", b"a", b""]),
+    ],
+    ids=["long", "double", "boolean", "date", "timestamp", "binary"],
+)
+def test_comparison_string_implicit_cast_valid(engine, spark, other_type, strings, others):
+    # Spark casts the string side to the other operand's type (bigint for integrals) with its own
+    # parsing rules: whitespace trimming, special double literals, partial dates, 'T' separators...
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", SparkStringType()), SparkStructField("o", other_type)])
+    rows = list(zip(strings, others))
+    actual = engine.build_df(rows, schema).select(*_all_comparisons(F.col("s"), F.col("o")))
+    expected = spark.createDataFrame(rows, schema).select(*_all_comparisons(SF.col("s"), SF.col("o")))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.comparison.string_implicit_cast_malformed_raises")
+@pytest.mark.parametrize(
+    "other_type, other_value, bad_string",
+    [
+        (SparkLongType(), 1, "1.0"),
+        (SparkIntegerType(), 1, "1_0"),
+        (SparkLongType(), 1, "9223372036854775808"),
+        (SparkDoubleType(), 1.0, "1_0"),
+        (SparkBooleanType(), True, "maybe"),
+        (SparkDateType(), date(2024, 1, 1), "2024-02-30"),
+        (SparkDateType(), date(2024, 1, 1), "2024/01/15"),
+        (SparkTimestampType(), datetime(2024, 1, 1), "2024-01-15 25:00:00"),
+        (SparkTimestampType(), datetime(2024, 1, 1), "2024-01-15abc"),
+    ],
+    ids=[
+        "long_decimal",
+        "int_underscore",
+        "long_overflow",
+        "double",
+        "boolean",
+        "date",
+        "date_slashes",
+        "ts",
+        "ts_junk",
+    ],
+)
+def test_comparison_string_implicit_cast_malformed_raises(engine, spark, other_type, other_value, bad_string):
+    # ANSI: the implicit cast is strict, so a malformed string fails the query instead of comparing null.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", SparkStringType()), SparkStructField("o", other_type)])
+    rows = [(bad_string, other_value)]
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame(rows, schema).select(SF.col("s") == SF.col("o")).collect()
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        engine.to_records(engine.build_df(rows, schema).select((F.col("s") == F.col("o")).alias("r")))
+
+
+# ----------------------------------------------------------------------------- #
+# Logical (and / or / not) parity
+# ----------------------------------------------------------------------------- #
+
+_BOOLEAN_PAIRS = list(itertools.product([True, False, None], repeat=2))
+
+
+@pytest.mark.feature("column.logical.three_valued")
+def test_logical_three_valued_truth_table(engine, spark):
+    # SQL three-valued logic: null AND false is false, null OR true is true, NOT null is null.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("a", SparkBooleanType()), SparkStructField("b", SparkBooleanType())])
+
+    def exprs(M):
+        return [
+            M.col("a"),
+            M.col("b"),
+            (M.col("a") & M.col("b")).alias("and_"),
+            (M.col("a") | M.col("b")).alias("or_"),
+            (~M.col("a")).alias("not_"),
+        ]
+
+    actual = engine.build_df(_BOOLEAN_PAIRS, schema).select(*exprs(F))
+    expected = spark.createDataFrame(_BOOLEAN_PAIRS, schema).select(*exprs(SF))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.logical.string_and_null_operands")
+def test_logical_string_and_null_operands(engine, spark):
+    # Spark casts string operands to boolean and types a null literal as boolean.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", SparkStringType()), SparkStructField("b", SparkBooleanType())])
+    rows = [("true", True), ("no", True), (" Y ", False), ("0", None), (None, True)]
+
+    def exprs(M):
+        return [
+            (M.col("s") & M.col("b")).alias("str_and"),
+            (M.col("b") | M.col("s")).alias("str_or"),
+            (~M.col("s")).alias("not_str"),
+            (M.col("b") & M.lit(None)).alias("and_null"),
+            (M.col("b") | M.lit(None)).alias("or_null"),
+            (M.col("b") | M.lit("yes")).alias("or_str_lit"),
+            (M.col("b") & True).alias("and_true"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*exprs(F))
+    expected = spark.createDataFrame(rows, schema).select(*exprs(SF))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.logical.malformed_string_raises")
+@pytest.mark.parametrize("build", [lambda M: M.col("b") & M.col("s"), lambda M: ~M.col("s")], ids=["and", "not"])
+def test_logical_malformed_string_raises(engine, spark, build):
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", SparkStringType()), SparkStructField("b", SparkBooleanType())])
+    rows = [("true", True), ("maybe", True)]
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame(rows, schema).select(build(SF)).collect()
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        engine.to_records(engine.build_df(rows, schema).select(build(F).alias("r")))
+
+
+@pytest.mark.feature("column.logical.non_boolean_operand_raises")
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda M: M.col("i") & M.col("b"),
+        lambda M: M.col("b") | M.col("d"),
+        lambda M: M.col("i") | M.col("i"),
+        lambda M: ~M.col("i"),
+    ],
+    ids=["int_and_bool", "bool_or_double", "int_or_int", "not_int"],
+)
+def test_logical_non_boolean_operand_raises(engine, spark, build):
+    # Numeric operands are an analysis error in Spark (DATATYPE_MISMATCH), not a cast.
+    F = engine.functions
+    schema = SparkStructType(
+        [
+            SparkStructField("i", SparkIntegerType()),
+            SparkStructField("d", SparkDoubleType()),
+            SparkStructField("b", SparkBooleanType()),
+        ]
+    )
+    rows = [(1, 1.0, True)]
+    with pytest.raises(Exception, match="DATATYPE_MISMATCH"):
+        spark.createDataFrame(rows, schema).select(build(SF)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(build(F).alias("r")))
+
+
 # ----------------------------------------------------------------------------- #
 # Cast / try_cast parity
 #
