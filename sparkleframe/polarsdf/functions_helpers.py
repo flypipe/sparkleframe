@@ -5,6 +5,7 @@ import json
 import random
 import re
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Optional, Union
 
 import polars as pl
@@ -265,7 +266,9 @@ def _coerce_json_value(value: Any, schema: Union[DataType, pl.DataType]) -> Any:
             return int(value)
         except (TypeError, ValueError):
             return None
-    if isinstance(schema, (FloatType, DoubleType, DecimalType)):
+    if isinstance(schema, DecimalType):
+        return _json_decimal(value, schema)
+    if isinstance(schema, (FloatType, DoubleType)):
         try:
             return float(value)
         except (TypeError, ValueError):
@@ -300,6 +303,24 @@ def _coerce_json_value(value: Any, schema: Union[DataType, pl.DataType]) -> Any:
         return {field.name: _coerce_json_value(value.get(field.name), field.dataType) for field in schema.fields}
 
     return value
+
+
+def _json_decimal(value: Any, schema: DecimalType) -> Optional[Decimal]:
+    """
+    A JSON number (or numeric string) as a Decimal of ``schema``, as Spark's JSON reader does:
+    rounded half-up to the scale, null when it is not a number or does not fit the precision.
+    """
+    if isinstance(value, bool):
+        return None
+    try:
+        # repr() keeps the JSON text of a float (0.065, not 0.06500000000000000222...).
+        parsed = Decimal(repr(value) if isinstance(value, float) else str(value).strip())
+        rounded = parsed.quantize(Decimal(1).scaleb(-schema.scale), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError):
+        return None
+    if not rounded.is_finite() or len(rounded.as_tuple().digits) > schema.precision:
+        return None
+    return rounded
 
 
 def _series_as_date_sparklike(s: pl.Series) -> pl.Series:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 import polars as pl
 
@@ -33,15 +33,34 @@ class Column:
         getitem_chain: Tuple[Union[str, int], ...] = (),
         output_alias: Optional[str] = None,
         struct_parts: Optional[list[pl.Expr]] = None,
+        builder: Optional[Callable[[], pl.Expr]] = None,
     ):
         self._getitem_chain = getitem_chain
         self._output_alias = output_alias
         self._struct_parts: Optional[list[pl.Expr]] = struct_parts
         self._deferred_struct_transform: Optional[tuple] = None
+        # Builds the base expression at to_native() time instead of now. Set when the expression
+        # depends on a getItem chain, which needs the active frame schema to resolve.
+        self._builder = builder
         if isinstance(expr_or_name, str):
             self.expr = pl.col(expr_or_name)
         else:
             self.expr = expr_or_name
+
+    def _needs_schema(self) -> bool:
+        """Whether building this column's expression needs the active frame schema."""
+        return bool(self._getitem_chain) or self._builder is not None
+
+    def _deferred_if_needed(self, build: Callable[[], pl.Expr], *operands: Any) -> Column:
+        """
+        Column for ``build()``, built at :meth:`to_native` time when any Column operand needs the
+        frame schema. Building it now would resolve a getItem chain without the schema, which
+        falls back to a string-typed UDF (``col("s.a").isNotNull()`` always true, ``&`` failing
+        on a boolean struct field).
+        """
+        if any(isinstance(o, Column) and o._needs_schema() for o in operands):
+            return Column(None, builder=build)
+        return Column(build())
 
     def _spark_arithmetic_operands(self, other: Any, op: str = "+") -> tuple[pl.Expr, pl.Expr]:
         """
@@ -211,19 +230,19 @@ class Column:
 
     # Logical operations
     def __and__(self, other):
-        return Column(self.to_native() & _to_expr(other))
+        return self._deferred_if_needed(lambda: self.to_native() & _to_expr(other), self, other)
 
     def __rand__(self, other):
-        return Column(_to_expr(other) & self.to_native())
+        return self._deferred_if_needed(lambda: _to_expr(other) & self.to_native(), self, other)
 
     def __or__(self, other):
-        return Column(self.to_native() | _to_expr(other))
+        return self._deferred_if_needed(lambda: self.to_native() | _to_expr(other), self, other)
 
     def __ror__(self, other):
-        return Column(_to_expr(other) | self.to_native())
+        return self._deferred_if_needed(lambda: _to_expr(other) | self.to_native(), self, other)
 
     def __invert__(self):
-        return Column(~self.to_native())
+        return self._deferred_if_needed(lambda: ~self.to_native(), self)
 
     def __neg__(self):
         """Unary minus (PySpark ``-col``)."""
@@ -243,7 +262,7 @@ class Column:
         Returns:
             Column: A new Column with the alias applied
         """
-        return Column(self.expr, getitem_chain=self._getitem_chain, output_alias=name)
+        return Column(self.expr, getitem_chain=self._getitem_chain, output_alias=name, builder=self._builder)
 
     def asc(self) -> "Column":
         base = self.to_native()
@@ -359,7 +378,7 @@ class Column:
         Returns:
             Column: A Column representing the non-null condition.
         """
-        return Column(self.to_native().is_not_null())
+        return self._deferred_if_needed(lambda: self.to_native().is_not_null(), self)
 
     def isNull(self) -> Column:
         """
@@ -368,7 +387,7 @@ class Column:
         Returns:
             Column: A Column representing the null condition.
         """
-        return Column(self.to_native().is_null())
+        return self._deferred_if_needed(lambda: self.to_native().is_null(), self)
 
     def rlike(self, pattern: str) -> Column:
         """
@@ -385,11 +404,13 @@ class Column:
 
         return Column(self.to_native().str.contains(pattern))
 
-    def getItem(self, key: Union[str, int]) -> "Column":
+    def getItem(self, key: Union[str, int, "Column"]) -> "Column":
         """
         Spark-like Column.getItem:
           - If `key` is a string, select a field from a Struct (also works for MapType materialized as Struct).
           - If `key` is an int, select an element from a List/Array column at that index.
+          - If `key` is a Column, look its value up as a key of a Map column, null when absent
+            (e.g. ``create_map(...)[col("status")]``). A Column index into an array is not supported.
 
         Indexing is applied lazily in :meth:`to_native` so the active DataFrame schema
         (set during ``select`` / ``withColumn``) can be used to pick struct vs list paths.
@@ -399,11 +420,25 @@ class Column:
             col("arr").getItem(0)        # list element at index 0
             col("col").getItem("key").getItem("key2")  # nested map-as-struct
         """
+        if isinstance(key, Column):
+            return Column(None, builder=lambda: _map_lookup_by_column(self.to_native(), key.to_native()))
         if not isinstance(key, (str, int)):
-            raise TypeError(f"getItem expects str or int, got {type(key).__name__}")
-        return Column(self.expr, getitem_chain=(*self._getitem_chain, key), output_alias=None)
+            raise TypeError(f"getItem expects str, int or Column, got {type(key).__name__}")
+        return Column(self.expr, getitem_chain=(*self._getitem_chain, key), output_alias=None, builder=self._builder)
 
-    def __getitem__(self, key: Union[str, int]) -> "Column":
+    def getField(self, name: str) -> "Column":
+        """
+        Mimics pyspark.sql.Column.getField: the struct field ``name``, null when the struct is null.
+
+        Examples:
+            col("s").getField("a")
+            from_json(col("j"), schema).getField("id")
+        """
+        if not isinstance(name, str):
+            raise TypeError(f"getField expects a str field name, got {type(name).__name__}")
+        return self.getItem(name)
+
+    def __getitem__(self, key: Union[str, int, "Column"]) -> "Column":
         """
         Support PySpark-style indexing syntax on Column expressions.
 
@@ -415,7 +450,7 @@ class Column:
 
     def _to_native_getitem_only(self) -> pl.Expr:
         """Expression after applying the deferred :meth:`getItem` chain, without user ``alias``."""
-        e: pl.Expr = self.expr
+        e: pl.Expr = self._builder() if self._builder is not None else self.expr
         for k in self._getitem_chain:
             e = _apply_getitem_key(e, k)
         return e
@@ -463,6 +498,22 @@ class Column:
         if not isinstance(prefix, str):
             raise TypeError(f"startswith() expects a string or Column prefix, got {type(prefix).__name__}")
         return Column(self.to_native().str.starts_with(prefix))
+
+
+def _map_lookup_by_column(map_expr: pl.Expr, key_expr: pl.Expr) -> pl.Expr:
+    """``map_expr[key_expr]`` for a Map column, resolved under the active frame schema."""
+    # Imported here: functions_helpers imports this module.
+    from sparkleframe.polarsdf.functions_helpers import _map_key_lookup_expr
+
+    dtype = _resolve_expr_output_dtype(map_expr)
+    is_map = isinstance(dtype, pl.Struct) or (
+        isinstance(dtype, pl.List)
+        and isinstance(dtype.inner, pl.Struct)
+        and {f.name for f in dtype.inner.fields} == {"key", "value"}
+    )
+    if dtype is not None and not is_map:
+        raise NotImplementedError(f"getItem with a Column key is only supported on Map columns, got {dtype}")
+    return _map_key_lookup_expr(map_expr, key_expr)
 
 
 def _to_expr(value):

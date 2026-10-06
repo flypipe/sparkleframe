@@ -3,9 +3,12 @@ from datetime import date, datetime
 import polars as pl
 import pyspark.sql.functions as F
 import pytest
+from pyspark.sql.types import BooleanType as SparkBooleanType
+from pyspark.sql.types import StructField as SparkStructField
+from pyspark.sql.types import StructType as SparkStructType
 
 from sparkleframe.polarsdf import DataFrame, StringType
-from sparkleframe.polarsdf.functions import col, lit
+from sparkleframe.polarsdf.functions import col, from_json, lit
 from sparkleframe.polarsdf.types import (
     SPARK_TYPE_NAME_MAP,
     BinaryType,
@@ -17,8 +20,13 @@ from sparkleframe.polarsdf.types import (
     IntegerType,
     LongType,
     ShortType,
+    StructField,
+    StructType,
     TimestampType,
 )
+from sparkleframe.engine import Engine
+from sparkleframe.tests.parity.engines import ENGINES
+from sparkleframe.tests.parity.oracle import assert_matches_spark
 from sparkleframe.tests.utils import create_spark_df
 
 
@@ -481,3 +489,96 @@ class TestUnsupportedComplexComparisons:
         df = DataFrame(pl.DataFrame({"a": [[1, 2], [3, 4]], "b": [[1, 2], [7, 8]]}))
         result = df.select((col("a") == col("b")).alias("r")).to_native_df()
         assert result.to_series().to_list() == [True, False]
+
+
+def _nested_struct_frames(spark) -> tuple:
+    """
+    ``s`` parsed with from_json on both engines as ``struct<a: struct<active: boolean>>``.
+
+    Rows cover a present nested struct (true / false), a null nested struct, an absent one, a null
+    outer struct and malformed JSON.
+    """
+    values = [
+        '{"a": {"active": true}}',
+        '{"a": {"active": false}}',
+        '{"a": null}',
+        "{}",
+        None,
+        "not-json",
+    ]
+    sparkle = DataFrame(
+        pl.DataFrame({"id": list(range(len(values))), "j": values}, schema={"id": pl.Int64, "j": pl.String})
+    )
+    spark_df = create_spark_df(spark, sparkle)
+    schema = StructType([StructField("a", StructType([StructField("active", BooleanType())]))])
+    spark_schema = SparkStructType(
+        [SparkStructField("a", SparkStructType([SparkStructField("active", SparkBooleanType())]))]
+    )
+    return (
+        sparkle.withColumn("s", from_json("j", schema)),
+        spark_df.withColumn("s", F.from_json("j", spark_schema)),
+    )
+
+
+class TestNestedFieldPredicates:
+    """Null checks and logical operators on dotted struct paths resolve under the frame schema."""
+
+    def test_null_checks_match_spark(self, spark) -> None:
+        sf, sp = _nested_struct_frames(spark)
+        assert_matches_spark(
+            sf.select("id", col("s.a").isNotNull().alias("nn"), col("s.a").isNull().alias("n")),
+            sp.select("id", F.col("s.a").isNotNull().alias("nn"), F.col("s.a").isNull().alias("n")),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_logical_operators_match_spark(self, spark) -> None:
+        sf, sp = _nested_struct_frames(spark)
+        assert_matches_spark(
+            sf.select(
+                "id",
+                (col("s.a").isNotNull() & col("s.a.active")).alias("and_"),
+                (col("s.a.active") | col("s.a").isNull()).alias("or_"),
+                (~col("s.a.active")).alias("not_"),
+                (lit(True) & col("s.a.active")).alias("rand_"),
+            ),
+            sp.select(
+                "id",
+                (F.col("s.a").isNotNull() & F.col("s.a.active")).alias("and_"),
+                (F.col("s.a.active") | F.col("s.a").isNull()).alias("or_"),
+                (~F.col("s.a.active")).alias("not_"),
+                (F.lit(True) & F.col("s.a.active")).alias("rand_"),
+            ),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_filter_matches_spark(self, spark) -> None:
+        sf, sp = _nested_struct_frames(spark)
+        assert_matches_spark(
+            sf.filter(col("s.a").isNotNull() & col("s.a.active")).select("id"),
+            sp.filter(F.col("s.a").isNotNull() & F.col("s.a.active")).select("id"),
+            ENGINES[Engine.POLARS],
+        )
+
+
+class TestGetField:
+
+    def test_matches_spark(self, spark) -> None:
+        sf, sp = _nested_struct_frames(spark)
+        assert_matches_spark(
+            sf.select("id", col("s").getField("a").getField("active").alias("active")),
+            sp.select("id", F.col("s").getField("a").getField("active").alias("active")),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_non_string_name_raises(self) -> None:
+        with pytest.raises(TypeError, match="getField expects a str"):
+            col("s").getField(1)  # type: ignore[arg-type]
+
+
+class TestGetItemColumnKey:
+
+    def test_array_column_index_not_supported(self) -> None:
+        # Spark reads arr[col] as a 0-based index; sparkleframe only supports Column keys on maps.
+        df = DataFrame(pl.DataFrame({"arr": [["x", "y"]], "i": [0]}))
+        with pytest.raises(NotImplementedError, match="only supported on Map columns"):
+            df.select(col("arr")[col("i")]).to_native_df()
