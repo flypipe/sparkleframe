@@ -393,6 +393,9 @@ def map_keys(col_name: Union[str, Column]) -> Column:
             return None
         if isinstance(value, dict):
             return list(value.keys())
+        # ``map_elements`` hands a ``List(Struct(key, value))`` cell over as a ``pl.Series``.
+        if isinstance(value, pl.Series):
+            value = value.to_list()
         if isinstance(value, list):
             return [entry.get("key") for entry in value if isinstance(entry, dict) and "key" in entry]
         return None

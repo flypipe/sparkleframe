@@ -859,6 +859,36 @@ def test_element_at_map_missing_literal_key_returns_null(engine, spark):
     assert_matches_spark(actual, expected, engine)
 
 
+@pytest.mark.feature("functions.element_at.map_computed_key_keeps_value_type")
+def test_element_at_map_computed_key_keeps_value_type(engine, spark):
+    """A computed map key returns the map's value type, so string functions (``lower``) apply to it.
+    Covers a matching key, no matching key (null key) and a null map."""
+    F = engine.functions
+    schema = _schema(("m", SparkMapType(_STR, _STR)))
+    rows = [({"referral_src": "FaceBook", "gclid": "x"},), ({"a": "b"},), (None,)]
+    actual = engine.build_df(rows, schema).select(
+        F.lower(
+            F.element_at(
+                F.col("m"),
+                F.try_element_at(
+                    F.filter(F.map_keys(F.col("m")), lambda x: F.lower(x).contains("referral")), F.lit(1)
+                ),
+            )
+        ).alias("v")
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.lower(
+            SF.element_at(
+                SF.col("m"),
+                SF.try_element_at(
+                    SF.filter(SF.map_keys(SF.col("m")), lambda x: SF.lower(x).contains("referral")), SF.lit(1)
+                ),
+            )
+        ).alias("v")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
 # ============================================================================ #
 # TestSubstring / TestArrayFunctions / TestDateFunctions
 # ============================================================================ #

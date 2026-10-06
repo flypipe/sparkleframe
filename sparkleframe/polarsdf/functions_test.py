@@ -16,15 +16,20 @@ from pyspark.sql.functions import dense_rank as spark_dense_rank
 from pyspark.sql.functions import desc as spark_desc
 from pyspark.sql.functions import desc_nulls_first as spark_desc_nulls_first
 from pyspark.sql.functions import desc_nulls_last as spark_desc_nulls_last
+from pyspark.sql.functions import element_at as spark_element_at
+from pyspark.sql.functions import filter as spark_filter
 from pyspark.sql.functions import from_json as spark_from_json
 from pyspark.sql.functions import lit as spark_lit
+from pyspark.sql.functions import lower as spark_lower
 from pyspark.sql.functions import map_from_entries as spark_map_from_entries
+from pyspark.sql.functions import map_keys as spark_map_keys
 from pyspark.sql.functions import now as spark_now
 from pyspark.sql.functions import rand as spark_rand
 from pyspark.sql.functions import rank as spark_rank
 from pyspark.sql.functions import round as spark_round
 from pyspark.sql.functions import row_number as spark_row_number
 from pyspark.sql.functions import struct as spark_struct
+from pyspark.sql.functions import try_element_at as spark_try_element_at
 from pyspark.sql.functions import unix_millis as spark_unix_millis
 from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import DoubleType as SparkDoubleType
@@ -50,9 +55,13 @@ from sparkleframe.polarsdf.functions import (
     desc,
     desc_nulls_first,
     desc_nulls_last,
+    element_at,
+    filter,
     from_json,
     lit,
+    lower,
     map_from_entries,
+    map_keys,
     now,
     rand,
     rank,
@@ -431,6 +440,49 @@ class TestMapFunctions:
         result_df = polars_df.select(map_from_entries("entries").alias("m")).select(
             col("m").getItem("a").alias("val_a")
         )
+        assert_matches_spark(result_df, expected_df, ENGINES[Engine.POLARS])
+
+    def test_element_at_computed_key_on_schemaless_map_against_spark(self, spark) -> None:
+        """A map built without a schema stays ``List(Struct(key, value))``; looking it up with a
+        computed key must keep the value dtype (``String``) so ``lower`` applies, and
+        ``map_keys`` must read that layout."""
+        polars_df = DataFrame(
+            pl.DataFrame(
+                {
+                    "m": [
+                        [{"key": "referral_src", "value": "FaceBook"}, {"key": "gclid", "value": "x"}],
+                        [{"key": "a", "value": "b"}],
+                        None,
+                    ]
+                }
+            )
+        )
+        spark_df = spark.createDataFrame(
+            [({"referral_src": "FaceBook", "gclid": "x"},), ({"a": "b"},), (None,)],
+            schema=SparkStructType([SparkStructField("m", SparkMapType(SparkStringType(), SparkStringType()), True)]),
+        )
+
+        result_df = polars_df.select(
+            lower(
+                element_at(
+                    col("m"),
+                    try_element_at(filter(map_keys(col("m")), lambda x: lower(x).contains("referral")), lit(1)),
+                )
+            ).alias("v")
+        )
+        expected_df = spark_df.select(
+            spark_lower(
+                spark_element_at(
+                    spark_col("m"),
+                    spark_try_element_at(
+                        spark_filter(spark_map_keys(spark_col("m")), lambda x: spark_lower(x).contains("referral")),
+                        spark_lit(1),
+                    ),
+                )
+            ).alias("v")
+        )
+
+        assert result_df.to_native_df().schema["v"] == pl.String
         assert_matches_spark(result_df, expected_df, ENGINES[Engine.POLARS])
 
 
