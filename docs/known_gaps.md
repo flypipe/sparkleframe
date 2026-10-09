@@ -159,3 +159,21 @@ Polars does not implement lexicographic ordering for `List` or `Struct` dtypes.
 Spark supports element-wise ordering on arrays and field-wise ordering on
 structs, but replicating this would require manually exploding and comparing
 elements — a non-trivial implementation.
+
+## `getItem` with a Column index on arrays
+
+**Affected operations:** `col("arr")[col("i")]`, `col("arr").getItem(col("i"))`.
+
+A Column key is supported on map columns (`create_map(...)[col("status")]`), where it looks the
+value up as a map key and returns null when absent, as Spark does. Spark also reads a Column key on
+an array as a 0-based index; sparkleframe raises `NotImplementedError` for that case rather than
+returning wrong values. Use `element_at(col("arr"), col("i") + 1)` instead.
+
+## Outer struct nulls in `createDataFrame`
+
+**Affected operations:** `spark.createDataFrame(rows, schema)` where a `StructType` column holds
+`None`.
+
+The outer null is lost: `None` becomes a struct whose fields are all null, so `isNull()` on that
+column returns `False` where Spark returns `True`. Structs produced by `from_json` keep their outer
+nulls and are not affected.

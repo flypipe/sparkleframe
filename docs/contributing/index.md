@@ -12,6 +12,7 @@ area you're working in before you start.
 | [testing.md](testing.md) | You're writing tests — parity tests, valid + malformed coverage, the oracle. |
 | [spark4-semantics.md](spark4-semantics.md) | You're touching cast/parse or any strict-vs-lenient (`try_*`) behavior. |
 | [engines.md](engines.md) | You're working on an engine or the parity gate / ratchet. |
+| [release.md](release.md) | You're cutting a new release to PyPI and the docs site. |
 
 ## The contribution loop at a glance
 

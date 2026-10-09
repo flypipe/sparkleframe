@@ -552,3 +552,13 @@ class TestUnionByName:
         left = DataFrame(pl.DataFrame({"x": [1]}))
         with pytest.raises(TypeError, match="DataFrame"):
             left.unionByName(pl.DataFrame({"x": [2]}))  # type: ignore[arg-type]
+
+
+class TestIsEmpty:
+
+    @pytest.mark.parametrize("values", [[1, 2], [None], []])
+    def test_matches_spark(self, spark, values: list) -> None:
+        sparkle = DataFrame(pl.DataFrame({"x": values}, schema={"x": pl.Int64}))
+        spark_df = create_spark_df(spark, sparkle, SparkStructType([SparkStructField("x", SparkLongType())]))
+        assert sparkle.isEmpty() == spark_df.isEmpty()
+        assert sparkle.filter(PF.col("x") > 100).isEmpty() == spark_df.filter(F.col("x") > 100).isEmpty()
