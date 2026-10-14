@@ -20,6 +20,7 @@ from sparkleframe.polarsdf.functions_helpers import (
     _rand_batch,
     _RankWrapper,
     _re_split_sparklike,
+    _round_batch,
     _schema_from_string,
     _size_sparklike_value,
     _struct_return_dtype_from_parts,
@@ -472,7 +473,8 @@ def round(col_name: Union[str, Column], scale: int = 0) -> Column:
     """
     Mimics pyspark.sql.functions.round.
 
-    Rounds the values of a column to the specified number of decimal places.
+    Rounds the values of a column to the specified number of decimal places. A decimal column
+    rounds half up into Spark's narrowed decimal type (see :func:`_round_batch`).
 
     Args:
         col_name (str or Column): The column to round.
@@ -482,7 +484,7 @@ def round(col_name: Union[str, Column], scale: int = 0) -> Column:
         Column: A Column representing the rounded values.
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-    return Column(expr.round(scale))
+    return Column(expr.map_batches(lambda series: _round_batch(series, scale), is_elementwise=True))
 
 
 class WhenBuilder:

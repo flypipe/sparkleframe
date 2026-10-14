@@ -1,6 +1,7 @@
 import builtins
 import re
 import uuid as std_uuid
+from decimal import Decimal
 
 import pandas as pd
 import pandas.testing as pdt
@@ -610,6 +611,51 @@ class TestFromJsonDecimal:
 
     def test_precision_overflow_matches_spark(self, spark) -> None:
         sf, sp = self._parse_both(spark, ['{"d": 123456789012.5}', '{"d": 123456789.5}'])
+        assert_matches_spark(sf, sp, ENGINES[Engine.POLARS])
+
+
+class TestRoundDecimal:
+    """round on a decimal column: Spark's narrowed result type and half-up rounding, as values and types."""
+
+    _VALUES = ["0.0549", "0.1129", "0.0125", "-0.0125", "9.9995", "-9.9995", "0.0000", None]
+
+    @staticmethod
+    def _frames(spark) -> tuple:
+        rows = [(None if v is None else Decimal(v),) for v in TestRoundDecimal._VALUES]
+        sparkle = DataFrame(rows, schema=StructType([StructField("d", DecimalType(5, 4))]))
+        spark_df = spark.createDataFrame(rows, SparkStructType([SparkStructField("d", SparkDecimalType(5, 4))]))
+        return sparkle, spark_df
+
+    @staticmethod
+    def _assert_same(sf, sp) -> None:
+        assert sf.schema.simpleString() == sp.schema.simpleString()
+        assert [None if v is None else str(v) for v in sf.toPandas()["r"]] == [
+            None if v is None else str(v) for v in sp.toPandas()["r"]
+        ]
+
+    @pytest.mark.parametrize("scale", [0, 1, 2, 3, 4, 6])
+    def test_column_matches_spark(self, spark, scale: int) -> None:
+        sparkle, spark_df = self._frames(spark)
+        self._assert_same(
+            sparkle.select(round(col("d"), scale).alias("r")),
+            spark_df.select(spark_round(spark_col("d"), scale).alias("r")),
+        )
+
+    def test_arithmetic_result_matches_spark_scale(self, spark) -> None:
+        # Precision differs upstream of round: see "Decimal arithmetic precision" in docs/known_gaps.md.
+        sparkle, spark_df = self._frames(spark)
+        sf = sparkle.select(round(col("d") * 100, 2).alias("r"))
+        sp = spark_df.select(spark_round(spark_col("d") * 100, 2).alias("r"))
+        assert sf.schema.fields[0].dataType.scale == sp.schema.fields[0].dataType.scale == 2
+        assert [None if v is None else str(v) for v in sf.toPandas()["r"]] == [
+            None if v is None else str(v) for v in sp.toPandas()["r"]
+        ]
+
+    def test_inside_struct_matches_spark(self, spark) -> None:
+        sparkle, spark_df = self._frames(spark)
+        sf = sparkle.select(struct(round(col("d"), 2).alias("apr")).alias("r"))
+        sp = spark_df.select(spark_struct(spark_round(spark_col("d"), 2).alias("apr")).alias("r"))
+        assert sf.schema.simpleString() == sp.schema.simpleString()
         assert_matches_spark(sf, sp, ENGINES[Engine.POLARS])
 
 
