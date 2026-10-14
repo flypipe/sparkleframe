@@ -17,11 +17,21 @@ from sparkleframe.python.dataframe import DataFrame
 
 
 class TestDataFrameConstruction:
-    def test_stores_rows_and_schema(self):
+    def test_stores_tuple_rows_and_schema(self):
+        schema = StructType([StructField("a", IntegerType()), StructField("b", IntegerType())])
         rows = [(1, 2), (3, 4)]
-        df = DataFrame(rows, schema="schema-sentinel")
+        df = DataFrame(rows, schema=schema)
         assert df._rows == rows
-        assert df._schema == "schema-sentinel"
+        assert df._schema is schema
+
+    def test_dict_rows_are_ordered_by_schema(self):
+        schema = StructType([StructField("a", IntegerType()), StructField("b", IntegerType())])
+        df = DataFrame([{"b": 2, "a": 1}], schema=schema)
+        assert df._rows == [(1, 2)]
+
+    def test_names_only_schema_infers_types(self):
+        df = DataFrame([(1, "x")], schema=["n", "s"])
+        assert df.dtypes == [("n", "bigint"), ("s", "string")]
 
     def test_none_data_becomes_empty(self):
         df = DataFrame(None)
@@ -29,39 +39,10 @@ class TestDataFrameConstruction:
         assert df._schema is None
 
 
-class TestDataFrameActionsRaise:
-    @pytest.mark.parametrize(
-        "call",
-        [
-            lambda df: df.columns(),
-            lambda df: df.schema(),
-            lambda df: df.dtypes(),
-            lambda df: df["a"],
-            lambda df: df.alias("x"),
-            lambda df: df.filter("a > 1"),
-            lambda df: df.where("a > 1"),
-            lambda df: df.withColumn("b", None),
-            lambda df: df.withColumns({}),
-            lambda df: df.withColumnRenamed("a", "b"),
-            lambda df: df.drop("a"),
-            lambda df: df.distinct(),
-            lambda df: df.dropDuplicates(),
-            lambda df: df.union(df),
-            lambda df: df.unionByName(df),
-            lambda df: df.join(df),
-            lambda df: df.groupBy("a"),
-            lambda df: df.groupby("a"),
-            lambda df: df.sort("a"),
-            lambda df: df.orderBy("a"),
-            lambda df: df.fillna(0),
-            lambda df: df.count(),
-            lambda df: df.show(),
-            lambda df: df.toPandas(),
-            lambda df: df.to_arrow(),
-        ],
-    )
-    def test_action_raises(self, call):
-        df = DataFrame([(1,)], schema=None)
+class TestDataFrameUnimplementedSlotsRaise:
+    @pytest.mark.parametrize("call", [lambda df: df.alias("x"), lambda df: df.to_arrow()])
+    def test_slot_raises(self, call):
+        df = DataFrame([(1,)], StructType([StructField("a", IntegerType())]))
         with pytest.raises(NotImplementedError):
             call(df)
 
@@ -125,7 +106,10 @@ class TestSelectOrchestration:
         out = df.select((F.col("i") + F.col("l")).alias("r"))
         assert isinstance(out._schema["r"].dataType, LongType)
 
-    def test_select_unsupported_arg_raises(self):
-        df = self._three_col_int_df()
-        with pytest.raises(NotImplementedError):
-            df.select(["a"])
+    def test_select_accepts_a_list_of_names(self):
+        out = self._three_col_int_df().select(["c", "a"])
+        assert out.columns == ["c", "a"]
+
+    def test_select_non_column_arg_raises(self):
+        with pytest.raises(TypeError, match="NOT_LIST_OF_COLUMN_OR_STR"):
+            self._three_col_int_df().select(5)

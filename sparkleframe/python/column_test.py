@@ -8,6 +8,8 @@ operator and operand placement for non-commutative reflected ops (``__rsub__``,
 import pytest
 
 from sparkleframe.python.ast.expressions import (
+    FunctionCall,
+    SortOrder,
     Alias,
     AttributeReference,
     BinaryExpression,
@@ -132,24 +134,40 @@ class TestColumnBuildPhase:
             hash(_col())
 
 
-class TestColumnSlotsRaise:
+class TestColumnTransformsBuildNodes:
+    def test_isin_accepts_varargs_or_a_list(self):
+        for col in (_col().isin(1, 2), _col().isin([1, 2])):
+            assert isinstance(col._expr, FunctionCall) and col._expr.name == "in"
+            assert [c.value for c in col._expr.children[1:]] == [1, 2]
+
+    def test_pattern_functions_keep_the_pattern_as_an_option(self):
+        node = _col().rlike("^x$")._expr
+        assert node.name == "rlike" and node.options == {"pattern": "^x$"}
+        assert node.children[0].name == "a"
+
+    def test_get_item_and_getitem_build_the_same_node(self):
+        for col in (_col().getItem("k"), _col()["k"]):
+            assert col._expr.name == "get_item" and col._expr.children[1].value == "k"
+
     @pytest.mark.parametrize(
-        "call",
+        "method, ascending, nulls_first",
         [
-            lambda c: c.isin(1, 2),
-            lambda c: c.rlike("x"),
-            lambda c: c.contains("x"),
-            lambda c: c.getItem("k"),
-            lambda c: c["k"],
-            lambda c: c.asc(),
-            lambda c: c.desc(),
-            lambda c: c.asc_nulls_last(),
-            lambda c: c.desc_nulls_last(),
+            ("asc", True, True),
+            ("asc_nulls_last", True, False),
+            ("desc", False, False),
+            ("desc_nulls_first", False, True),
         ],
     )
-    def test_unimplemented_transforms_raise(self, call):
-        with pytest.raises(NotImplementedError):
-            call(_col())
+    def test_sort_orders_carry_direction_and_null_placement(self, method, ascending, nulls_first):
+        node = getattr(_col(), method)()._expr
+        assert isinstance(node, SortOrder)
+        assert (node.ascending, node.nulls_first) == (ascending, nulls_first)
+
+    def test_column_is_not_truthy_or_iterable(self):
+        with pytest.raises(ValueError, match="CANNOT_CONVERT_COLUMN_INTO_BOOL"):
+            bool(_col())
+        with pytest.raises(TypeError, match="NOT_ITERABLE"):
+            iter(_col())
 
 
 class TestExpressionCoercion:

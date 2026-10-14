@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from sparkleframe.python.dataframe import DataFrame
+from sparkleframe.python.types import parse_ddl_type
 
 
 class SparkSession:
@@ -18,6 +19,9 @@ class SparkSession:
         self.master_str = ""
 
     def createDataFrame(self, data: Any, schema: Optional[Any] = None) -> DataFrame:
+        """Rows (tuples, lists, dicts or ``Row``s) with a ``StructType``, a DDL string, column names, or nothing."""
+        if isinstance(schema, str):
+            schema = parse_ddl_type(schema if schema.strip().lower().startswith("struct<") else f"struct<{schema}>")
         return DataFrame(data, schema=schema)
 
     class Builder:

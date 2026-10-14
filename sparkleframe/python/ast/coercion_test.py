@@ -104,7 +104,7 @@ class TestCoerceArithmetic:
 
     def test_unsupported_operator_raises(self):
         with pytest.raises(NotImplementedError):
-            coercion.coerce_arithmetic("/", IntegerType(), IntegerType())
+            coercion.coerce_arithmetic("%", IntegerType(), IntegerType())
 
     def test_unsupported_operand_types_raise(self):
         with pytest.raises(NotImplementedError):

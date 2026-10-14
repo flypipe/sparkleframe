@@ -11,7 +11,7 @@ from sparkleframe.python.ast.expressions import (
     BinaryExpression,
     Cast,
     Literal,
-    UnaryExpression,
+    Star,
 )
 
 
@@ -66,4 +66,4 @@ class TestEvaluate:
 
     def test_unsupported_node_raises(self):
         with pytest.raises(NotImplementedError):
-            evaluate(UnaryExpression("neg", AttributeReference("a")), [{"a": 1}])
+            evaluate(Star(), [{"a": 1}])

@@ -6,6 +6,7 @@ flag, and the inputs deliberately left unimplemented.
 """
 
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from sparkleframe.python.types import BooleanType, DateType, DecimalType, LongType, StringType, TimestampType
@@ -47,11 +48,15 @@ def test_time_only_timestamp_not_implemented(value):
         cast_value(value, TimestampType(), strict=True)
 
 
-def test_unsupported_target_not_implemented():
-    with pytest.raises(NotImplementedError):
-        cast_value(date(2024, 1, 1), StringType(), strict=True)
+def test_date_to_string_is_iso():
+    assert cast_value(date(2024, 1, 1), StringType(), strict=True) == "2024-01-01"
 
 
-def test_unsupported_string_target_not_implemented():
-    with pytest.raises(NotImplementedError):
-        cast_value("1.5", DecimalType(10, 2), strict=True)
+def test_string_to_decimal_rounds_half_up_to_scale():
+    assert cast_value("1.555", DecimalType(10, 2), strict=True) == Decimal("1.56")
+
+
+def test_decimal_overflow_is_strict_error_or_lenient_null():
+    with pytest.raises(ArithmeticError, match="NUMERIC_VALUE_OUT_OF_RANGE"):
+        cast_value("1234.5", DecimalType(4, 2), strict=True)
+    assert cast_value("1234.5", DecimalType(4, 2), strict=False) is None

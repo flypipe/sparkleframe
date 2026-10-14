@@ -13,6 +13,7 @@ from sparkleframe.python.types import (
 
 from sparkleframe.python.ast.analyzer import analyze
 from sparkleframe.python.ast.expressions import (
+    FunctionCall,
     Alias,
     AttributeReference,
     BinaryExpression,
@@ -111,9 +112,9 @@ class TestResolvesTypes:
 class TestUnsupportedRaises:
     def test_unsupported_node_raises(self):
         with pytest.raises(NotImplementedError):
-            analyze(UnaryExpression("neg", AttributeReference("a")), _schema(("a", IntegerType())))
+            analyze(FunctionCall("no_such_function", [AttributeReference("a")]), _schema(("a", IntegerType())))
 
     def test_unsupported_operator_raises(self):
-        expr = BinaryExpression("/", AttributeReference("a"), AttributeReference("b"))
+        expr = BinaryExpression("%", AttributeReference("a"), AttributeReference("b"))
         with pytest.raises(NotImplementedError):
             analyze(expr, _schema(("a", IntegerType()), ("b", IntegerType())))

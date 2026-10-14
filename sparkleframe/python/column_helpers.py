@@ -9,20 +9,23 @@ applies for Column operators:
   target type so the strict API never delegates to its lenient sibling.
 - :func:`compare_values` — Spark's comparison operators, including its total ordering over
   NaN and nulls nested inside arrays/structs.
+- :func:`arithmetic` — ``+ - * /`` with ANSI overflow / divide-by-zero errors and exact decimal
+  math rounded to the analyzer's result type.
+- :func:`to_spark_string` — values formatted the way ``cast(... as string)`` does.
 - :func:`logical_and` / :func:`logical_or` / :func:`logical_not` — SQL three-valued logic.
-
-Only the casts the analyzer's implicit coercions insert are implemented; any other cast raises
-``not_implemented_yet``.
 """
 
 from __future__ import annotations
 
 import math
 import re
+import struct
 from datetime import date, datetime, time
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Context, Decimal
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
+
+import numpy
 
 from sparkleframe.python._errors import not_implemented_yet
 from sparkleframe.python.types import (
@@ -36,7 +39,10 @@ from sparkleframe.python.types import (
     FloatType,
     IntegerType,
     LongType,
+    MapType,
+    Row,
     ShortType,
+    StringType,
     StructType,
     TimestampType,
 )
@@ -50,18 +56,18 @@ class _Malformed(Exception):
     """Internal signal from a parser: the input is malformed for the target type."""
 
 
-def cast_value(value: Any, target_type: Any, strict: bool) -> Any:
-    """Cast one Python value to ``target_type`` (a PySpark ``DataType``) with Spark 4 semantics.
+def cast_value(value: Any, target_type: Any, strict: bool, source_type: Any = None) -> Any:
+    """Cast one Python value to ``target_type`` (an engine ``DataType``) with Spark 4 semantics.
 
-    A null stays null. Malformed input raises ``CAST_INVALID_INPUT`` when ``strict`` (ANSI
-    ``cast``) and becomes null otherwise (``try_cast``).
+    A null stays null. Malformed input raises ``CAST_INVALID_INPUT`` and an out-of-range value
+    raises ``CAST_OVERFLOW`` / ``NUMERIC_VALUE_OUT_OF_RANGE`` when ``strict`` (ANSI ``cast``); both
+    become null otherwise (``try_cast``). ``source_type`` is the value's resolved type, needed where
+    the Python value alone is ambiguous (e.g. formatting a ``float`` column as a string).
     """
     if value is None:
         return None
     try:
-        if isinstance(value, str):
-            return _cast_string(value, target_type)
-        return _cast_non_string(value, target_type)
+        return _cast(value, target_type, source_type)
     except _Malformed:
         if not strict:
             return None
@@ -71,25 +77,111 @@ def cast_value(value: Any, target_type: Any, strict: bool) -> Any:
             f"the syntax, or change its target type. Use `try_cast` to tolerate malformed input and "
             f"return NULL instead."
         ) from None
+    except _Overflow:
+        if not strict:
+            return None
+        if isinstance(target_type, DecimalType):
+            raise ArithmeticError(
+                f"[NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION] {value} cannot be represented as "
+                f"Decimal({target_type.precision}, {target_type.scale}). If necessary set "
+                f'"spark.sql.ansi.enabled" to "false" to bypass this error, and return NULL instead.'
+            ) from None
+        raise ArithmeticError(
+            f'[CAST_OVERFLOW] The value {value} cannot be cast to "{target_type.simpleString().upper()}" '
+            f"due to an overflow. Use `try_cast` to tolerate overflow and return NULL instead."
+        ) from None
 
 
-def _cast_non_string(value: Any, target_type: Any) -> Any:
-    if isinstance(target_type, (FloatType, DoubleType)):
-        return float(value)
+class _Overflow(Exception):
+    """Internal signal: the value does not fit the target type's range."""
+
+
+def _cast(value: Any, target_type: Any, source_type: Any) -> Any:
+    if isinstance(target_type, StringType):
+        return to_spark_string(value, source_type)
+    if isinstance(value, str):
+        return _cast_string(value, target_type)
+    if isinstance(target_type, BooleanType):
+        return value if isinstance(value, bool) else value != 0
     if isinstance(target_type, (ByteType, ShortType, IntegerType, LongType)):
-        return int(value)
+        return _to_integral(value, target_type)
+    if isinstance(target_type, (FloatType, DoubleType)):
+        result = float(value)
+        return _round_to_float32(result) if isinstance(target_type, FloatType) else result
     if isinstance(target_type, DecimalType):
-        return Decimal(value)
-    if isinstance(target_type, TimestampType) and isinstance(value, date) and not isinstance(value, datetime):
-        return datetime.combine(value, time())
+        return to_decimal(value, target_type)
+    if isinstance(target_type, DateType) and isinstance(value, date):
+        return value.date() if isinstance(value, datetime) else value
+    if isinstance(target_type, TimestampType) and isinstance(value, date):
+        return value if isinstance(value, datetime) else datetime.combine(value, time())
+    if isinstance(target_type, ArrayType) and isinstance(value, list):
+        element_source = getattr(source_type, "elementType", None)
+        return [None if v is None else _cast(v, target_type.elementType, element_source) for v in value]
+    if isinstance(target_type, MapType) and isinstance(value, dict):
+        key_source, value_source = getattr(source_type, "keyType", None), getattr(source_type, "valueType", None)
+        return {
+            _cast(k, target_type.keyType, key_source): (
+                None if v is None else _cast(v, target_type.valueType, value_source)
+            )
+            for k, v in value.items()
+        }
+    if isinstance(target_type, StructType) and isinstance(value, tuple):
+        sources = (
+            [f.dataType for f in source_type.fields] if isinstance(source_type, StructType) else [None] * len(value)
+        )
+        return Row.from_fields(
+            [f.name for f in target_type.fields],
+            [
+                None if v is None else _cast(v, f.dataType, src)
+                for v, f, src in zip(value, target_type.fields, sources)
+            ],
+        )
     not_implemented_yet(f"casting {type(value).__name__} to {type(target_type).__name__}")
+
+
+def _to_integral(value: Any, target_type: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        raise _Overflow
+    result = int(value)  # truncates toward zero for float and Decimal, like Spark
+    low, high = _INTEGRAL_RANGE[type(target_type)]
+    if not low <= result <= high:
+        raise _Overflow
+    return result
+
+
+_DECIMAL_CONTEXT = Context(prec=120, rounding=ROUND_HALF_UP)
+
+
+def to_decimal(value: Any, target_type: Any) -> Decimal:
+    """Round ``value`` HALF_UP to ``target_type``'s scale; raise ``_Overflow`` if it exceeds the precision."""
+    if isinstance(value, bool):
+        value = int(value)
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            raise _Overflow
+        value = Decimal(repr(value))
+    exact = value if isinstance(value, Decimal) else Decimal(value)
+    quantum = Decimal(1).scaleb(-target_type.scale)
+    result = exact.quantize(quantum, context=_DECIMAL_CONTEXT)
+    if abs(result) >= Decimal(10) ** (target_type.precision - target_type.scale):
+        raise _Overflow
+    return result
+
+
+def _round_to_float32(value: float) -> float:
+    return struct.unpack("f", struct.pack("f", value))[0] if math.isfinite(value) else value
 
 
 def _cast_string(value: str, target_type: Any) -> Any:
     if isinstance(target_type, (ByteType, ShortType, IntegerType, LongType)):
         return _parse_integral(value, target_type)
     if isinstance(target_type, (FloatType, DoubleType)):
-        return _parse_double(value)
+        result = _parse_double(value)
+        return _round_to_float32(result) if isinstance(target_type, FloatType) else result
+    if isinstance(target_type, DecimalType):
+        return to_decimal(_parse_decimal(value), target_type)
     if isinstance(target_type, BooleanType):
         return _parse_boolean(value)
     if isinstance(target_type, DateType):
@@ -99,6 +191,89 @@ def _cast_string(value: str, target_type: Any) -> Any:
     if isinstance(target_type, BinaryType):
         return value.encode("utf-8")
     not_implemented_yet(f"casting string to {type(target_type).__name__}")
+
+
+_DECIMAL_RE = re.compile(r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+
+
+def _parse_decimal(value: str) -> Decimal:
+    """Java ``BigDecimal`` syntax (optional sign, fraction, exponent) after Spark's whitespace trim."""
+    text = _trim(value)
+    if not _DECIMAL_RE.fullmatch(text):
+        raise _Malformed
+    return Decimal(text)
+
+
+# --------------------------------------------------------------------------- #
+# Values as Spark strings
+# --------------------------------------------------------------------------- #
+
+
+def to_spark_string(value: Any, source_type: Any = None) -> str:
+    """Format a non-null value the way Spark's ``cast(... as string)`` does."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return java_float_string(value, single=isinstance(source_type, FloatType))
+    if isinstance(value, Decimal):
+        return format(value, "f")
+    if isinstance(value, datetime):
+        return format_timestamp(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", errors="replace")
+    if isinstance(value, list):
+        element_type = getattr(source_type, "elementType", None)
+        return "[" + ", ".join(_nested_string(v, element_type) for v in value) + "]"
+    if isinstance(value, dict):
+        key_type, value_type = getattr(source_type, "keyType", None), getattr(source_type, "valueType", None)
+        items = (f"{_nested_string(k, key_type)} -> {_nested_string(v, value_type)}" for k, v in value.items())
+        return "{" + ", ".join(items) + "}"
+    if isinstance(value, tuple):
+        field_types = [f.dataType for f in source_type.fields] if isinstance(source_type, StructType) else []
+        field_types += [None] * (len(value) - len(field_types))
+        return "{" + ", ".join(_nested_string(v, t) for v, t in zip(value, field_types)) + "}"
+    not_implemented_yet(f"casting {type(value).__name__} to string")
+
+
+def _nested_string(value: Any, dtype: Any) -> str:
+    return "null" if value is None else to_spark_string(value, dtype)
+
+
+def format_timestamp(value: datetime) -> str:
+    """``yyyy-MM-dd HH:mm:ss`` plus the fraction with trailing zeros dropped (Spark's timestamp string)."""
+    text = value.strftime("%Y-%m-%d %H:%M:%S")
+    if value.microsecond:
+        text += "." + f"{value.microsecond:06d}".rstrip("0")
+    return text
+
+
+def java_float_string(value: float, single: bool = False) -> str:
+    """Java ``Double.toString`` / ``Float.toString``: plain in ``[1e-3, 1e7)``, else ``d.dddE±n``."""
+    if math.isnan(value):
+        return "NaN"
+    if math.isinf(value):
+        return "Infinity" if value > 0 else "-Infinity"
+    if value == 0:
+        return "-0.0" if math.copysign(1.0, value) < 0 else "0.0"
+    shortest = str(numpy.float32(value)) if single else repr(value)
+    sign, digits, exponent = Decimal(shortest).normalize().as_tuple()
+    text_digits = "".join(map(str, digits))
+    sci_exponent = exponent + len(text_digits) - 1
+    prefix = "-" if sign else ""
+    if 1e-3 <= abs(value) < 1e7:
+        if exponent >= 0:
+            return f"{prefix}{text_digits}{'0' * exponent}.0"
+        point = len(text_digits) + exponent
+        if point > 0:
+            return f"{prefix}{text_digits[:point]}.{text_digits[point:]}"
+        return f"{prefix}0.{'0' * -point}{text_digits}"
+    return f"{prefix}{text_digits[0]}.{text_digits[1:] or '0'}E{sci_exponent}"
 
 
 _SPARK_WHITESPACE = "".join(chr(c) for c in range(33))
@@ -230,6 +405,69 @@ def _is_zone_id(text: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Arithmetic
+# --------------------------------------------------------------------------- #
+
+
+def arithmetic(op: str, left: Any, right: Any, result_type: Any, strict: bool = True) -> Any:
+    """Apply ``+ - * /`` to two operands already cast by the analyzer; any null operand yields null.
+
+    Decimal results are computed exactly then rounded HALF_UP to ``result_type``. Under ANSI
+    (``strict``) a zero divisor raises ``DIVIDE_BY_ZERO`` and an out-of-range result raises
+    ``ARITHMETIC_OVERFLOW`` / ``NUMERIC_VALUE_OUT_OF_RANGE``; the lenient form (``try_divide``)
+    returns null for both.
+    """
+    if left is None or right is None:
+        return None
+    if op == "/" and right == 0:
+        if not strict:
+            return None
+        raise ZeroDivisionError(
+            "[DIVIDE_BY_ZERO] Division by zero. Use `try_divide` to tolerate divisor being 0 and return NULL "
+            'instead. If necessary set "spark.sql.ansi.enabled" to "false" to bypass this error.'
+        )
+    if isinstance(result_type, DecimalType):
+        exact = _DECIMAL_OPS[op](Decimal(left), Decimal(right), _DECIMAL_CONTEXT)
+        try:
+            return to_decimal(exact, result_type)
+        except _Overflow:
+            if not strict:
+                return None
+            raise ArithmeticError(
+                f"[NUMERIC_VALUE_OUT_OF_RANGE.WITH_SUGGESTION] {exact} cannot be represented as "
+                f"Decimal({result_type.precision}, {result_type.scale})."
+            ) from None
+    result = _FLOAT_OPS[op](left, right)
+    if isinstance(result_type, (ByteType, ShortType, IntegerType, LongType)):
+        low, high = _INTEGRAL_RANGE[type(result_type)]
+        if not low <= result <= high:
+            if not strict:
+                return None
+            raise ArithmeticError(
+                f"[ARITHMETIC_OVERFLOW] {result_type.simpleString()} overflow. Use 'try_{_OP_NAMES[op]}' to "
+                f"tolerate overflow and return NULL instead."
+            )
+    if isinstance(result_type, FloatType):
+        return _round_to_float32(result)
+    return result
+
+
+_DECIMAL_OPS = {
+    "+": lambda a, b, ctx: ctx.add(a, b),
+    "-": lambda a, b, ctx: ctx.subtract(a, b),
+    "*": lambda a, b, ctx: ctx.multiply(a, b),
+    "/": lambda a, b, ctx: ctx.divide(a, b),
+}
+_FLOAT_OPS = {
+    "+": lambda a, b: a + b,
+    "-": lambda a, b: a - b,
+    "*": lambda a, b: a * b,
+    "/": lambda a, b: a / b,
+}
+_OP_NAMES = {"+": "add", "-": "subtract", "*": "multiply", "/": "divide"}
+
+
+# --------------------------------------------------------------------------- #
 # Comparison
 # --------------------------------------------------------------------------- #
 
@@ -242,7 +480,7 @@ def compare_values(op: str, left: Any, right: Any, data_type: Any) -> Optional[b
     """
     if left is None or right is None:
         return None
-    order = _spark_order(left, right, data_type)
+    order = spark_order(left, right, data_type)
     if op == "==":
         return order == 0
     if op == "!=":
@@ -256,7 +494,7 @@ def compare_values(op: str, left: Any, right: Any, data_type: Any) -> Optional[b
     return order >= 0
 
 
-def _spark_order(left: Any, right: Any, data_type: Any) -> int:
+def spark_order(left: Any, right: Any, data_type: Any) -> int:
     """Three-way compare of two non-null values of ``data_type`` (-1, 0, 1)."""
     if isinstance(data_type, (FloatType, DoubleType)):
         left_nan, right_nan = math.isnan(left), math.isnan(right)
@@ -277,7 +515,7 @@ def _sequence_order(left: list, right: list, element_types: list) -> int:
             if left_item is None and right_item is None:
                 continue
             return -1 if left_item is None else 1
-        order = _spark_order(left_item, right_item, element_type)
+        order = spark_order(left_item, right_item, element_type)
         if order != 0:
             return order
     return (len(left) > len(right)) - (len(left) < len(right))
