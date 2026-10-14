@@ -8,7 +8,7 @@ flag, and the inputs deliberately left unimplemented.
 from datetime import date
 
 import pytest
-from pyspark.sql.types import BooleanType, DateType, DecimalType, LongType, StringType, TimestampType
+from sparkleframe.python.types import BooleanType, DateType, DecimalType, LongType, StringType, TimestampType
 
 from sparkleframe.python.column_helpers import cast_value
 

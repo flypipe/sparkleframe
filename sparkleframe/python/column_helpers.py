@@ -25,26 +25,21 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from sparkleframe.python._errors import not_implemented_yet
-
-try:  # pragma: no cover - exercised only with the real pyspark installed
-    from pyspark.sql.types import (
-        ArrayType,
-        BinaryType,
-        BooleanType,
-        ByteType,
-        DateType,
-        DecimalType,
-        DoubleType,
-        FloatType,
-        IntegerType,
-        LongType,
-        ShortType,
-        StructType,
-        TimestampType,
-    )
-except Exception:  # pragma: no cover - mock pyspark (under activate) has no real types
-    pass
-
+from sparkleframe.python.types import (
+    ArrayType,
+    BinaryType,
+    BooleanType,
+    ByteType,
+    DateType,
+    DecimalType,
+    DoubleType,
+    FloatType,
+    IntegerType,
+    LongType,
+    ShortType,
+    StructType,
+    TimestampType,
+)
 
 # --------------------------------------------------------------------------- #
 # Casting
@@ -114,12 +109,11 @@ def _trim(value: str) -> str:
     return value.strip(_SPARK_WHITESPACE)
 
 
-# Keyed by class name: the type classes are not importable under the mock pyspark.
 _INTEGRAL_RANGE = {
-    "ByteType": (-(2**7), 2**7 - 1),
-    "ShortType": (-(2**15), 2**15 - 1),
-    "IntegerType": (-(2**31), 2**31 - 1),
-    "LongType": (-(2**63), 2**63 - 1),
+    ByteType: (-(2**7), 2**7 - 1),
+    ShortType: (-(2**15), 2**15 - 1),
+    IntegerType: (-(2**31), 2**31 - 1),
+    LongType: (-(2**63), 2**63 - 1),
 }
 _INTEGRAL_RE = re.compile(r"[+-]?[0-9]+")
 
@@ -130,7 +124,7 @@ def _parse_integral(value: str, target_type: Any) -> int:
     if not _INTEGRAL_RE.fullmatch(text):
         raise _Malformed
     result = int(text)
-    low, high = _INTEGRAL_RANGE[type(target_type).__name__]
+    low, high = _INTEGRAL_RANGE[type(target_type)]
     if not low <= result <= high:
         raise _Malformed
     return result

@@ -1,14 +1,9 @@
-"""Spark type-coercion rules for the **analyze** phase, written over PySpark types.
+"""Spark type-coercion rules for the **analyze** phase, written over the engine's types.
 
-These are pure functions: given the resolved ``data_type`` of an operand (a PySpark
-``DataType``), they decide the result type of an operation and where Spark would insert an
+These are pure functions: given the resolved ``data_type`` of an operand (a
+:mod:`sparkleframe.python.types` ``DataType``), they decide the result type of an operation and where Spark would insert an
 implicit cast. They are a clean rewrite of the coercion behavior Spark documents — they do
 **not** port ``polarsdf`` internals (per #104 Q4).
-
-The ``pyspark.sql.types`` import is guarded exactly like
-:mod:`sparkleframe.python.types`: under ``activate()`` the real ``pyspark`` package is replaced
-by a mock that has no real types, but these functions only run at analyze time (under real
-pyspark), so referencing the type classes inside them is safe.
 """
 
 from __future__ import annotations
@@ -18,28 +13,24 @@ from decimal import Decimal
 from typing import Any, Optional, Tuple
 
 from sparkleframe.python._errors import not_implemented_yet
-
-try:  # pragma: no cover - exercised only with the real pyspark installed
-    from pyspark.sql.types import (
-        ArrayType,
-        BinaryType,
-        BooleanType,
-        ByteType,
-        DateType,
-        DecimalType,
-        DoubleType,
-        FloatType,
-        IntegerType,
-        LongType,
-        MapType,
-        NullType,
-        ShortType,
-        StringType,
-        StructType,
-        TimestampType,
-    )
-except Exception:  # pragma: no cover - mock pyspark (under activate) has no real types
-    pass
+from sparkleframe.python.types import (
+    ArrayType,
+    BinaryType,
+    BooleanType,
+    ByteType,
+    DateType,
+    DecimalType,
+    DoubleType,
+    FloatType,
+    IntegerType,
+    LongType,
+    MapType,
+    NullType,
+    ShortType,
+    StringType,
+    StructType,
+    TimestampType,
+)
 
 
 def _numeric_rank(dtype: Any) -> int:

@@ -20,11 +20,7 @@ from sparkleframe.python.ast.evaluator import evaluate
 from sparkleframe.python.column import Column
 from sparkleframe.python.dataframe_helpers import output_name, rows_as_dicts
 from sparkleframe.python.functions import col as _col
-
-try:  # pragma: no cover - exercised only with the real pyspark installed
-    from pyspark.sql.types import StructField, StructType
-except Exception:  # pragma: no cover - mock pyspark (under activate) has no real types
-    pass
+from sparkleframe.python.types import StructField, StructType
 
 
 class DataFrame(BaseDataFrame):

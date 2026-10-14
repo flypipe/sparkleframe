@@ -81,21 +81,36 @@ def _python_engine() -> Optional[EngineAdapter]:
 
     import sparkleframe.python.functions as functions  # type: ignore[import-not-found]
     from sparkleframe.python.dataframe import DataFrame  # type: ignore[import-not-found]
+    from sparkleframe.python.types import ArrayType, MapType, StructField, StructType, parse_ddl_type
+
+    def _to_engine_dtype(spark_dtype: SparkDataType):
+        # Recursively translate a PySpark DataType into the python engine's own DataType. Scalars
+        # route through the engine's DDL-name parser via ``simpleString()``; complex types are rebuilt
+        # so field names and nullability survive.
+        if isinstance(spark_dtype, SparkStructType):
+            return StructType(
+                [StructField(f.name, _to_engine_dtype(f.dataType), f.nullable) for f in spark_dtype.fields]
+            )
+        if isinstance(spark_dtype, SparkArrayType):
+            return ArrayType(_to_engine_dtype(spark_dtype.elementType), spark_dtype.containsNull)
+        if isinstance(spark_dtype, SparkMapType):
+            return MapType(
+                _to_engine_dtype(spark_dtype.keyType),
+                _to_engine_dtype(spark_dtype.valueType),
+                spark_dtype.valueContainsNull,
+            )
+        return parse_ddl_type(spark_dtype.simpleString())
 
     def build_df(rows: list, schema: SparkStructType):
-        # The python engine will translate the PySpark schema via its OWN spark-name -> type
-        # registry (the equivalent of polarsdf's spark_name_to_datatype), keeping engines split.
-        return DataFrame(rows, schema=schema)
+        return DataFrame(rows, schema=_to_engine_dtype(schema))
 
     def to_records(df):
         # Contract for the Python engine: expose normalized-ready records.
         return df.to_records()
 
     def dtype(spark_type: SparkDataType):
-        # The python engine consumes PySpark types directly (see build_df, which
-        # passes the PySpark schema straight through), so the cast target is the
-        # PySpark DataType as-is. Revisit if the engine grows its own type system.
-        return spark_type
+        # Map the canonical PySpark DataType to the python engine's own DataType (for ``cast`` targets).
+        return _to_engine_dtype(spark_type)
 
     return EngineAdapter("python", functions, build_df, to_records, dtype)
 

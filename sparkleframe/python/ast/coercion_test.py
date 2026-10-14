@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import pytest
-from pyspark.sql.types import (
+from sparkleframe.python.types import (
     ArrayType,
     BinaryType,
     BooleanType,

@@ -1,7 +1,7 @@
 """Unit tests for the analyze phase: type resolution + coercion-cast insertion."""
 
 import pytest
-from pyspark.sql.types import (
+from sparkleframe.python.types import (
     BooleanType,
     DoubleType,
     IntegerType,

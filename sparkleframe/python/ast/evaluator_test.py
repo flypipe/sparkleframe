@@ -1,7 +1,7 @@
 """Unit tests for the evaluate phase: run resolved trees over sample rows."""
 
 import pytest
-from pyspark.sql.types import DoubleType, IntegerType, LongType, StringType, StructField, StructType
+from sparkleframe.python.types import DoubleType, IntegerType, LongType, StringType, StructField, StructType
 
 from sparkleframe.python.ast.analyzer import analyze
 from sparkleframe.python.ast.evaluator import evaluate

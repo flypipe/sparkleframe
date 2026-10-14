@@ -10,7 +10,7 @@ Scope rules for this file:
 """
 
 import pytest
-from pyspark.sql.types import IntegerType, LongType, StructField, StructType
+from sparkleframe.python.types import IntegerType, LongType, StructField, StructType
 
 import sparkleframe.python.functions as F
 from sparkleframe.python.dataframe import DataFrame
