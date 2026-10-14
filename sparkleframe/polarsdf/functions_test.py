@@ -8,9 +8,12 @@ import pandas.testing as pdt
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
+from pyspark.sql.functions import add_months as spark_add_months
+from pyspark.sql.functions import array_max as spark_array_max
 from pyspark.sql.functions import asc as spark_asc
 from pyspark.sql.functions import asc_nulls_first as spark_asc_nulls_first
 from pyspark.sql.functions import asc_nulls_last as spark_asc_nulls_last
+from pyspark.sql.functions import coalesce as spark_coalesce
 from pyspark.sql.functions import col as spark_col
 from pyspark.sql.functions import create_map as spark_create_map
 from pyspark.sql.functions import current_timestamp as spark_current_timestamp
@@ -29,11 +32,15 @@ from pyspark.sql.functions import map_keys as spark_map_keys
 from pyspark.sql.functions import now as spark_now
 from pyspark.sql.functions import rand as spark_rand
 from pyspark.sql.functions import rank as spark_rank
+from pyspark.sql.functions import regexp_extract as spark_regexp_extract
 from pyspark.sql.functions import round as spark_round
 from pyspark.sql.functions import row_number as spark_row_number
 from pyspark.sql.functions import struct as spark_struct
+from pyspark.sql.functions import trunc as spark_trunc
 from pyspark.sql.functions import try_element_at as spark_try_element_at
 from pyspark.sql.functions import unix_millis as spark_unix_millis
+from pyspark.sql.functions import upper as spark_upper
+from pyspark.sql.functions import when as spark_when
 from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import DecimalType as SparkDecimalType
 from pyspark.sql.types import DoubleType as SparkDoubleType
@@ -47,11 +54,14 @@ from pyspark.sql.window import Window as SparkWindow
 from sparkleframe.polarsdf import Window
 from sparkleframe.polarsdf.dataframe import DataFrame
 from sparkleframe.polarsdf.functions import (
+    add_months,
     array,
+    array_max,
     asc,
     asc_nulls_first,
     asc_nulls_last,
     broadcast,
+    coalesce,
     col,
     concat,
     create_map,
@@ -71,13 +81,17 @@ from sparkleframe.polarsdf.functions import (
     now,
     rand,
     rank,
+    regexp_extract,
     round,
     row_number,
     size,
     struct,
     to_json,
+    trunc,
     try_element_at,
+    upper,
     uuid,
+    when,
 )
 from sparkleframe.polarsdf.types import DecimalType, IntegerType, MapType, StringType, StructField, StructType
 from sparkleframe.engine import Engine
@@ -154,6 +168,37 @@ class TestFunctions:
             check_exact=False,
             rtol=1e-5,
         )
+
+    def test_nested_unterminated_when_against_spark(self, spark):
+        polars_df = DataFrame(pl.DataFrame({"a": [True, True, False], "b": [True, False, True], "x": [1, 2, 3]}))
+        result_df = polars_df.select(when(col("a"), when(col("b"), col("x"))).otherwise(lit(0)).alias("v")).toPandas()
+
+        spark_df = create_spark_df(spark, polars_df)
+        expected_df = spark_df.select(
+            spark_when(spark_col("a"), spark_when(spark_col("b"), spark_col("x"))).otherwise(spark_lit(0)).alias("v")
+        ).toPandas()
+
+        pdt.assert_frame_equal(result_df.reset_index(drop=True), expected_df.reset_index(drop=True), check_dtype=False)
+
+    def test_unterminated_when_as_function_argument_against_spark(self, spark):
+        polars_df = DataFrame(pl.DataFrame({"a": [True, False, None], "x": [1, 2, 3], "y": [9, 8, 7]}))
+        result_df = polars_df.select(coalesce(when(col("a"), col("x")), col("y")).alias("v")).toPandas()
+
+        spark_df = create_spark_df(spark, polars_df)
+        expected_df = spark_df.select(
+            spark_coalesce(spark_when(spark_col("a"), spark_col("x")), spark_col("y")).alias("v")
+        ).toPandas()
+
+        pdt.assert_frame_equal(result_df.reset_index(drop=True), expected_df.reset_index(drop=True), check_dtype=False)
+
+    def test_upper_against_spark(self, spark):
+        polars_df = DataFrame(pl.DataFrame({"x": ["eq", "Tu", "XP", None]}))
+        result_df = polars_df.select(upper(col("x")).alias("upper")).toPandas()
+
+        spark_df = create_spark_df(spark, polars_df)
+        expected_df = spark_df.select(spark_upper(spark_col("x")).alias("upper")).toPandas()
+
+        pdt.assert_frame_equal(result_df.reset_index(drop=True), expected_df.reset_index(drop=True), check_dtype=False)
 
     @pytest.mark.parametrize(
         "sparkle_col_type, spark_col_type",
@@ -697,3 +742,44 @@ class TestMapEntries:
             spark_df.select(spark_map_entries(spark_from_json("j", spark_schema)).alias("e")),
             ENGINES[Engine.POLARS],
         )
+
+
+class TestCreditReportGaps:
+    """Functions std.credit_report and std.tradeline.v1_tradeline use, compared with Spark."""
+
+    @staticmethod
+    def _assert_same(result_df, expected_df):
+        pdt.assert_frame_equal(result_df.reset_index(drop=True), expected_df.reset_index(drop=True), check_dtype=False)
+
+    def test_array_max_matches_spark(self, spark):
+        polars_df = DataFrame(pl.DataFrame({"a": [[1, 5, 3], [None, 2], [], None]}))
+        result_df = polars_df.select(array_max(col("a")).alias("v")).toPandas()
+        expected_df = create_spark_df(spark, polars_df).select(spark_array_max(spark_col("a")).alias("v")).toPandas()
+        self._assert_same(result_df, expected_df)
+
+    @pytest.mark.parametrize("months", [1, -1, 13, -1200])
+    def test_add_months_matches_spark(self, spark, months):
+        polars_df = DataFrame(pl.DataFrame({"d": ["2024-01-31", "2023-03-15", None]}))
+        result_df = polars_df.select(add_months(col("d"), months).alias("v")).toPandas()
+        expected_df = (
+            create_spark_df(spark, polars_df).select(spark_add_months(spark_col("d"), months).alias("v")).toPandas()
+        )
+        self._assert_same(result_df, expected_df)
+
+    @pytest.mark.parametrize("fmt", ["month", "MM", "year", "quarter", "week", "bogus"])
+    def test_trunc_matches_spark(self, spark, fmt):
+        polars_df = DataFrame(pl.DataFrame({"d": ["2024-05-17", "2023-12-31", None]}))
+        result_df = polars_df.select(trunc(col("d"), fmt).alias("v")).toPandas()
+        expected_df = create_spark_df(spark, polars_df).select(spark_trunc(spark_col("d"), fmt).alias("v")).toPandas()
+        self._assert_same(result_df, expected_df)
+
+    def test_regexp_extract_matches_spark(self, spark):
+        polars_df = DataFrame(pl.DataFrame({"s": ["rate 12.5%", "no number", "", None]}))
+        pattern = r"(\d+\.?\d*)%"
+        result_df = polars_df.select(regexp_extract(col("s"), pattern, 1).alias("v")).toPandas()
+        expected_df = (
+            create_spark_df(spark, polars_df)
+            .select(spark_regexp_extract(spark_col("s"), pattern, 1).alias("v"))
+            .toPandas()
+        )
+        self._assert_same(result_df, expected_df)
