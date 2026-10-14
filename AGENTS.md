@@ -50,5 +50,6 @@ build → analyze → evaluate flow. The engine is selected via the `Engine` enu
 | Writing tests | [docs/contributing/testing.md](docs/contributing/testing.md) |
 | Touching cast/parse/strict-vs-lenient | [docs/contributing/spark4-semantics.md](docs/contributing/spark4-semantics.md) |
 | Working on engines / the parity gate | [docs/contributing/engines.md](docs/contributing/engines.md) |
+| Releasing a new version | [docs/contributing/release.md](docs/contributing/release.md) |
 | Curious why some edge cases fail | [docs/known_gaps.md](docs/known_gaps.md) |
 | Designing the Python engine | [docs/design/python-engine-ast.md](docs/design/python-engine-ast.md) (#104) |

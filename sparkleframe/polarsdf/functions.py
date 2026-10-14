@@ -341,7 +341,8 @@ def create_map(*cols: Any) -> Column:
     consistent with :func:`map_from_entries` and map helpers.
 
     Args:
-        *cols: Even-length sequence ``k1, v1, k2, v2, ...``.
+        *cols: Even-length sequence ``k1, v1, k2, v2, ...``, or a single list / tuple of them
+            (``create_map([k1, v1, ...])``), as PySpark accepts.
 
     Returns:
         Column: One map per row.
@@ -349,6 +350,8 @@ def create_map(*cols: Any) -> Column:
     Raises:
         ValueError: If the number of arguments is odd.
     """
+    if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+        cols = tuple(cols[0])
     if len(cols) % 2 != 0:
         raise ValueError("create_map requires an even number of arguments (key, value pairs)")
     if not cols:
@@ -382,6 +385,17 @@ def array(*cols: Any) -> Column:
         return Column(pl.lit([], dtype=pl.List(pl.Null)))
     parts: list[pl.Expr] = [pl.col(c) if isinstance(c, str) else _to_expr(c) for c in cols]
     return Column(pl.concat_list(parts))
+
+
+def map_entries(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.map_entries: an unordered array of ``struct<key, value>`` entries.
+
+    Maps are already encoded as ``List(Struct(key, value))`` (see :func:`map_from_entries`), which is
+    exactly this array, so the column passes through unchanged.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr)
 
 
 def map_keys(col_name: Union[str, Column]) -> Column:

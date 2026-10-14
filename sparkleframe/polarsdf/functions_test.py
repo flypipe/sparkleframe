@@ -11,6 +11,7 @@ from pyspark.sql.functions import asc as spark_asc
 from pyspark.sql.functions import asc_nulls_first as spark_asc_nulls_first
 from pyspark.sql.functions import asc_nulls_last as spark_asc_nulls_last
 from pyspark.sql.functions import col as spark_col
+from pyspark.sql.functions import create_map as spark_create_map
 from pyspark.sql.functions import current_timestamp as spark_current_timestamp
 from pyspark.sql.functions import dense_rank as spark_dense_rank
 from pyspark.sql.functions import desc as spark_desc
@@ -21,6 +22,7 @@ from pyspark.sql.functions import filter as spark_filter
 from pyspark.sql.functions import from_json as spark_from_json
 from pyspark.sql.functions import lit as spark_lit
 from pyspark.sql.functions import lower as spark_lower
+from pyspark.sql.functions import map_entries as spark_map_entries
 from pyspark.sql.functions import map_from_entries as spark_map_from_entries
 from pyspark.sql.functions import map_keys as spark_map_keys
 from pyspark.sql.functions import now as spark_now
@@ -32,6 +34,7 @@ from pyspark.sql.functions import struct as spark_struct
 from pyspark.sql.functions import try_element_at as spark_try_element_at
 from pyspark.sql.functions import unix_millis as spark_unix_millis
 from pyspark.sql.types import ArrayType as SparkArrayType
+from pyspark.sql.types import DecimalType as SparkDecimalType
 from pyspark.sql.types import DoubleType as SparkDoubleType
 from pyspark.sql.types import IntegerType as SparkIntegerType
 from pyspark.sql.types import MapType as SparkMapType
@@ -50,6 +53,7 @@ from sparkleframe.polarsdf.functions import (
     broadcast,
     col,
     concat,
+    create_map,
     current_timestamp,
     dense_rank,
     desc,
@@ -60,6 +64,7 @@ from sparkleframe.polarsdf.functions import (
     from_json,
     lit,
     lower,
+    map_entries,
     map_from_entries,
     map_keys,
     now,
@@ -73,7 +78,7 @@ from sparkleframe.polarsdf.functions import (
     try_element_at,
     uuid,
 )
-from sparkleframe.polarsdf.types import IntegerType, StringType, StructField, StructType
+from sparkleframe.polarsdf.types import DecimalType, IntegerType, MapType, StringType, StructField, StructType
 from sparkleframe.engine import Engine
 from sparkleframe.tests.parity.engines import ENGINES
 from sparkleframe.tests.parity.oracle import assert_matches_spark
@@ -577,3 +582,72 @@ class TestStructFieldNaming:
         plain_col._output_alias = None
         name = _struct_child_field_name(plain_col, _FakeExpr(), 2)
         assert name == "col3"
+
+
+class TestFromJsonDecimal:
+    """from_json into DecimalType: JSON numbers rounded to the scale, unparseable values null."""
+
+    @staticmethod
+    def _parse_both(spark, values: list) -> tuple:
+        sparkle = DataFrame(pl.DataFrame({"j": values}, schema={"j": pl.String}))
+        spark_df = create_spark_df(spark, sparkle, SparkStructType([SparkStructField("j", SparkStringType())]))
+        schema = StructType([StructField("d", DecimalType(13, 4))])
+        spark_schema = SparkStructType([SparkStructField("d", SparkDecimalType(13, 4))])
+        return (
+            sparkle.select(from_json("j", schema).getField("d").alias("d")),
+            spark_df.select(spark_from_json("j", spark_schema).getField("d").alias("d")),
+        )
+
+    def test_numbers_match_spark(self, spark) -> None:
+        sf, sp = self._parse_both(
+            spark, ['{"d": 0.065}', '{"d": 0.06505}', '{"d": -12.5}', '{"d": 7}', '{"d": null}', "{}", None]
+        )
+        assert_matches_spark(sf, sp, ENGINES[Engine.POLARS])
+
+    def test_malformed_values_match_spark(self, spark) -> None:
+        sf, sp = self._parse_both(spark, ['{"d": "abc"}', '{"d": true}', '{"d": [1]}', "not-json"])
+        assert_matches_spark(sf, sp, ENGINES[Engine.POLARS])
+
+    def test_precision_overflow_matches_spark(self, spark) -> None:
+        sf, sp = self._parse_both(spark, ['{"d": 123456789012.5}', '{"d": 123456789.5}'])
+        assert_matches_spark(sf, sp, ENGINES[Engine.POLARS])
+
+
+class TestCreateMapList:
+    """create_map with a single list argument, looked up by a Column key."""
+
+    _PAIRS = {"ENROLLED": "enrolled", "ERROR": "error"}
+
+    def test_list_argument_column_lookup_matches_spark(self, spark) -> None:
+        sparkle = DataFrame(pl.DataFrame({"status": ["ENROLLED", "ERROR", "UNKNOWN", None]}))
+        spark_df = create_spark_df(spark, sparkle, SparkStructType([SparkStructField("status", SparkStringType())]))
+        sf_map = create_map([lit(v) for pair in self._PAIRS.items() for v in pair])
+        sp_map = spark_create_map([spark_lit(v) for pair in self._PAIRS.items() for v in pair])
+        assert_matches_spark(
+            sparkle.select("status", sf_map[col("status")].alias("mapped")),
+            spark_df.select("status", sp_map[spark_col("status")].alias("mapped")),
+            ENGINES[Engine.POLARS],
+        )
+
+    def test_list_argument_odd_length_raises(self, spark) -> None:
+        spark_df = spark.createDataFrame([("a",)], ["k"])
+        with pytest.raises(Exception):
+            spark_df.select(spark_create_map([spark_lit("a")])).collect()
+        with pytest.raises(ValueError, match="even number"):
+            create_map([lit("a")])
+
+
+class TestMapEntries:
+    """map_entries over a map parsed with from_json."""
+
+    def test_matches_spark(self, spark) -> None:
+        values = ['{"b": "2", "a": "1"}', "{}", None, "not-json"]
+        sparkle = DataFrame(pl.DataFrame({"j": values}, schema={"j": pl.String}))
+        spark_df = create_spark_df(spark, sparkle, SparkStructType([SparkStructField("j", SparkStringType())]))
+        schema = MapType(StringType(), StringType())
+        spark_schema = SparkMapType(SparkStringType(), SparkStringType())
+        assert_matches_spark(
+            sparkle.select(map_entries(from_json("j", schema)).alias("e")),
+            spark_df.select(spark_map_entries(spark_from_json("j", spark_schema)).alias("e")),
+            ENGINES[Engine.POLARS],
+        )

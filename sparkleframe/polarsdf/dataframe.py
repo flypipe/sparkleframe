@@ -668,4 +668,13 @@ class DataFrame(BaseDataFrame):
         # Polars exposes the row count as a cheap .height property.
         return int(self.df.height)
 
+    def isEmpty(self) -> bool:
+        """
+        Mimics PySpark's DataFrame.isEmpty().
+
+        Returns:
+            bool: True when the DataFrame has no rows.
+        """
+        return self.df.height == 0
+
     orderBy = sort
