@@ -744,8 +744,8 @@ class TestMapEntries:
         )
 
 
-class TestCreditReportGaps:
-    """Functions std.credit_report and std.tradeline.v1_tradeline use, compared with Spark."""
+class TestDateArrayRegexFunctions:
+    """array_max, add_months, trunc and regexp_extract, compared with Spark."""
 
     @staticmethod
     def _assert_same(result_df, expected_df):
@@ -763,6 +763,23 @@ class TestCreditReportGaps:
         result_df = polars_df.select(add_months(col("d"), months).alias("v")).toPandas()
         expected_df = (
             create_spark_df(spark, polars_df).select(spark_add_months(spark_col("d"), months).alias("v")).toPandas()
+        )
+        self._assert_same(result_df, expected_df)
+
+    def test_add_months_column_offset_matches_spark(self, spark):
+        polars_df = DataFrame(
+            pl.DataFrame(
+                {
+                    "d": ["2024-01-31", "2023-03-15", "2024-03-31", None, "2024-01-31"],
+                    "m": [1, -1, -13, 2, None],
+                }
+            )
+        )
+        result_df = polars_df.select(add_months(col("d"), col("m")).alias("v")).toPandas()
+        expected_df = (
+            create_spark_df(spark, polars_df)
+            .select(spark_add_months(spark_col("d"), spark_col("m")).alias("v"))
+            .toPandas()
         )
         self._assert_same(result_df, expected_df)
 
