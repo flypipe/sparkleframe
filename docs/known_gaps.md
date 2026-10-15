@@ -219,3 +219,184 @@ returning wrong values. Use `element_at(col("arr"), col("i") + 1)` instead.
 The outer null is lost: `None` becomes a struct whose fields are all null, so `isNull()` on that
 column returns `False` where Spark returns `True`. Structs produced by `from_json` keep their outer
 nulls and are not affected.
+
+## Projection naming and `withColumns` resolution
+
+**Affected operations:** `select(...)` with an unaliased expression; `withColumns({...})` where a later
+entry reads a column an earlier entry replaces.
+
+Spark names an unaliased expression after its SQL text (`F.col("salary") * 1.1` is `(salary * 1.1)`).
+The Polars engine names it after the root column (`salary`), so the output can even collide with an
+existing column name.
+
+`withColumns` evaluates every entry against the **input** frame. A later entry may reference a column
+an earlier entry *adds* (lateral column alias, Spark 3.4+). A name that already exists in the input,
+though, keeps meaning the input value even if an earlier entry of the same call replaces it:
+`withColumns({"x": col("x") + 1, "z": col("x") * 2})` computes `z` from the original `x`. The Polars
+engine applies the entries one after another, so `z` sees the new `x`.
+
+**Workaround:** alias expressions explicitly, and split a `withColumns` that reads a column it also
+replaces into two calls. The pure-Python engine implements both.
+
+## Joins on same-named Column keys and cross joins
+
+**Affected operations:** `left.join(right, on=F.col("id"))` (or `[F.col("id")]`) when both sides
+have `id`; `left.join(right)` without `on`; `crossJoin`.
+
+In Spark, `F.col("id")` in a join condition is an unqualified reference that matches a column on
+both sides, so the join fails with `AMBIGUOUS_REFERENCE`. Pass the key as a string (`on="id"`), or
+compare qualified columns (`left["id"] == right["id"]`). The Polars engine treats `F.col("id")` as
+`on="id"` instead.
+
+A cross join keeps both sides' columns, so the result has two `id` columns: a bare `"id"` is
+ambiguous and `left["id"]` / `right["id"]` pick a side. The Polars engine raises on `join` without
+`on`, has no `crossJoin`, and cannot tell the two `id` columns apart.
+
+**Workaround:** join on a string key, or rename one side's key before a Column-condition join. The
+pure-Python engine implements Spark's behavior.
+
+## `explode` on null, empty and non-collection input
+
+**Affected operations:** `F.explode(col)`.
+
+Spark's `explode` emits no row for a null or empty array (`explode_outer` emits one row with a
+null), and rejects a column that is not an array or map. The Polars engine keeps a null row for both
+null and empty arrays, i.e. it behaves like `explode_outer`, and does not reject non-collection
+input.
+
+**Workaround:** filter `F.size(col) > 0` before exploding. The pure-Python engine implements Spark's
+behavior.
+
+## `months_between` rounding
+
+**Affected operations:** `F.months_between(end, start)` (default `roundOff=True`).
+
+Spark rounds the result to 8 decimal places. The Polars engine returns full precision
+(`2.16129032258` where Spark returns `2.16129032`).
+
+**Workaround:** `F.round(F.months_between(end, start), 8)`. The pure-Python engine rounds as Spark
+does.
+
+## String promotion in `union`
+
+**Affected operations:** `union` / `unionByName` of a string column with a numeric one.
+
+Spark 4 (ANSI) widens a string next to an integral type to `bigint`, and next to a fractional type
+(`float`, `double`, `decimal`) to `double`. It then casts the string side strictly, so `"20"` becomes
+`20` and `"abc"` raises `CAST_INVALID_INPUT`. The Polars engine fails to stack the two columns
+(`SchemaError: type String is incompatible with expected type Int64`).
+
+**Workaround:** cast the string column to the numeric type before the union. The pure-Python engine
+implements Spark's widening.
+
+## Decimal scale in `createDataFrame`
+
+**Affected operations:** `spark.createDataFrame(rows, schema)` with a `DecimalType(p, s)` field and
+`Decimal` values whose scale differs from `s`.
+
+Spark stores each value at the field's scale, rounded HALF_UP (`Decimal("0.065")` in `decimal(5,4)`
+is `0.0650`), and rejects a value with more integral digits than the precision allows. The Polars engine
+keeps the value's own scale, so a later `cast("string")` or `to_json` prints `0.065`, and it accepts
+the over-wide value.
+
+**Workaround:** quantize the values to the field's scale before building the frame. The pure-Python
+engine rescales as Spark does.
+
+## `to_json` decimal and timestamp output
+
+**Affected operations:** `F.to_json(...)` over structs, maps or arrays that contain `DecimalType`,
+`TimestampType` or `DateType` values.
+
+Spark writes a decimal as a JSON **number** at the column's scale (`{"apr":0.0650}`). A timestamp is
+written as a string in the `timestampFormat` option, by default `yyyy-MM-dd'T'HH:mm:ss.SSSXXX` in the
+session time zone (`"2026-10-01T15:32:10.000Z"` under UTC), and a date in `dateFormat` (default
+`yyyy-MM-dd`). The Polars engine writes decimals as JSON **strings** (`{"apr":"0.0650"}`) and timestamps
+as `yyyy-MM-dd HH:mm:ss`, and it rejects every option other than `ignoreNullFields`.
+
+**Workaround:** none that reproduces Spark's output exactly. Cast decimals to `double` if the consumer
+accepts numbers without a fixed scale. The pure-Python engine matches Spark.
+
+## Polars deviations found by the nba parity sweep
+
+The parity tests written for the Python engine (`Engine.PYTHON`), which datahub's nba function
+uses, found these Polars deviations from Spark 4. The pure-Python engine matches Spark on all of them.
+The items are grouped by area; the parity ids in parentheses are gated in `POLARS_NOT_SUPPORTED`.
+
+**Casts and arithmetic**
+
+- Decimal result types: `+ - *` widen to `decimal(38, s)` instead of Spark's precision rules
+  (`column.arithmetic.decimal_result_type`). `decimal / decimal` returns `double`
+  (`column.divide.decimal_result_type`). `sum(decimal(10,2))` stays `decimal(10,2)`; Spark gives
+  `decimal(20,2)` (`dataframe.groupby.sum_decimal_result_type`).
+- Division by zero returns null or `inf` instead of raising `DIVIDE_BY_ZERO`
+  (`column.divide.by_zero_raises`, `column.divide.integral_returns_double`,
+  `functions.try_divide.by_zero_null`).
+- String → number/decimal casts do not trim whitespace (`" 12 "`) (`column.cast.decimal_to_string_keeps_scale`,
+  `column.cast.to_decimal_overflow_raises`, `column.try_cast.malformed_string_matrix`,
+  `column.try_cast.to_decimal_overflow_null`).
+- Rounding to a decimal scale truncates or rounds half-even instead of HALF_UP, and decimal overflow under
+  `try_cast` does not become null (`column.cast.to_decimal_rounds_half_up`, `column.try_cast.ddl_string_target`).
+- String → date takes only a bare date (Spark takes the date part of `"2024-01-15T10:30:45"`), and string →
+  timestamp rejects a date-only string (`column.try_cast.malformed_string_matrix`, `column.try_cast.ddl_string_target`).
+- Timestamp → string always prints 6 fraction digits; Spark drops trailing zeros (`column.cast.timestamp_to_string`).
+- `F.round` rounds half-even and keeps the input decimal scale (`functions.round.half_up_double_and_decimal`).
+- A double cast to string prints `1e-9`; Spark prints `1.0E-9` (`functions.greatest.mixed_numeric_types`).
+
+**Comparisons and predicates**
+
+- `date <=> string` fails instead of casting the string (`column.eq_null_safe.mixed_types`).
+- `isin` does not widen mixed-type candidates, and a null candidate gives `false` instead of null when nothing
+  matches (`column.isin.coerces_candidates`, `column.isin.null_semantics`).
+- `contains(None)` raises, and a Column needle is unsupported (`column.contains.literal_and_null`).
+- Regex: Rust's `$` does not match before a trailing `\n`, and its `\d` matches non-ASCII digits
+  (`column.rlike.nba_patterns`).
+- A string compared with an int skips the ANSI cast, so `"abc"` does not raise (`dataframe.is_empty`).
+
+**Nested values**
+
+- `getField` on a missing field or a non-struct does not raise (`column.get_field.struct`).
+- An out-of-range `arr[i]` returns null instead of raising `INVALID_ARRAY_INDEX`; a `map<int,string>` column
+  cannot be built (`column.getitem.array_out_of_range_null`, `column.getitem.map_missing_key_null`).
+- An empty `create_map()` cannot fill more than one row, and a null map key does not raise `NULL_MAP_KEY`
+  (`functions.create_map.empty`, `functions.create_map.null_key_raises`).
+- `map_entries` returns the map unchanged (`functions.map_entries`).
+
+**Ordering and windows**
+
+- `asc_nulls_first` / `desc_nulls_first` are missing. `orderBy` cannot mix a plain column with a `.desc()` key.
+  The requested null ordering is ignored, so nulls sort first (`column.sort.nulls_ordering`,
+  `window.dense_rank.ties`, `window.order_by.desc_nulls_last`).
+- A ranking window with no `partitionBy` fails instead of ranking the whole frame
+  (`window.row_number.without_order_raises`).
+
+**JSON**
+
+- `from_json`: malformed JSON gives null where Spark gives a struct of nulls. A `map<string,string>` keeps
+  nested objects as Python text and booleans as `"True"` (`functions.from_json.malformed_permissive`,
+  `functions.from_json.map_and_array_schemas`).
+- `get_json_object` rejects single-quoted JSON and raises on malformed paths (`$.`, `$[`, `a`) instead of
+  returning null (`functions.get_json_object.malformed_json_null`).
+- `to_json` accepts no option other than `ignoreNullFields` (`functions.to_json.options`).
+
+**Dates**
+
+- `try_to_date` returns null for valid `M/d/yyyy`, `M/d/yy`, `d/M/yy`, `dd/MM/yy` and `MM/yy` dates. It
+  accepts `2024-1-5` for `yyyy-MM-dd` and `2/9/2024` for `MM/dd/yyyy`, and it reads `02/29/24` under
+  `MM/dd/yyyy` as year 24 (`functions.try_to_date.nba_patterns`). **The nba function uses all of these
+  patterns.**
+
+**DataFrame**
+
+- `createDataFrame` does not reject `True` in a bigint field, an `int` in a double field, or a string in a
+  boolean field. It stores `True` in a string field as `"True"` instead of `"true"`. Inference does not reject a
+  column that mixes bigint and double (`dataframe.create.value_type_mismatch_raises`,
+  `dataframe.create.names_only_schema_infers_types`).
+- `distinct` / `dropDuplicates` accept map columns, which Spark rejects. The `drop_duplicates` alias is missing
+  (`dataframe.distinct.basic`, `dataframe.drop_duplicates.all_columns`).
+- Column-condition joins rename the right side's duplicate `x` to `x_right`, support only inner/left, and do not
+  raise `AMBIGUOUS_REFERENCE` for an unqualified duplicate name (`dataframe.join.column_condition_qualified_refs`,
+  `dataframe.join.ambiguous_reference_raises`, `dataframe.join.left_anti`).
+- `first(..., ignorenulls=True)` has no whole-frame `DataFrame.agg` (`functions.first.ignorenulls`).
+- `union` does not reject a boolean column unioned with a bigint one (`dataframe.union.positional`).
+- `toPandas` gives `datetime64[us]` timestamps (Spark: `[ns]`), and an empty string column is `str`
+  (Spark: `object`) (`dataframe.to_pandas.dtypes`).

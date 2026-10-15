@@ -24,7 +24,7 @@ Tests that don't fit this shape stay co-located in the source file:
 
 import json
 import math
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pyspark.sql.functions as SF
@@ -44,6 +44,7 @@ from pyspark.sql.types import ShortType as SparkShortType
 from pyspark.sql.types import StringType as SparkStringType
 from pyspark.sql.types import StructField as SparkStructField
 from pyspark.sql.types import StructType as SparkStructType
+from pyspark.sql.types import TimestampType as SparkTimestampType
 
 from sparkleframe.tests.parity.oracle import assert_matches_spark
 
@@ -537,7 +538,9 @@ def test_monotonically_increasing_id_against_spark(engine, spark):
     schema = _schema(("k", _STR))
     rows = [("a",), ("b",), ("c",), ("d",)]
     actual = engine.build_df(rows, schema).select(F.monotonically_increasing_id().alias("id"))
-    expected = spark.createDataFrame(rows, schema).select(SF.monotonically_increasing_id().alias("id"))
+    # The id encodes the partition index; the engines are single-partition, so pin Spark to one partition
+    # (otherwise the ids depend on the session's default parallelism).
+    expected = spark.createDataFrame(rows, schema).coalesce(1).select(SF.monotonically_increasing_id().alias("id"))
     assert_matches_spark(actual, expected, engine)
 
 
@@ -949,9 +952,31 @@ def test_array_filter_and_transform_against_spark(engine, spark):
 @pytest.mark.feature("functions.explode")
 def test_explode_against_spark(engine, spark):
     F = engine.functions
-    rows = [([1, 2],), (None,), ([],)]
+    rows = [([1, 2],), ([3],)]
     actual = engine.build_df(rows, _ARR_LONG_SCHEMA).select(F.explode("arr").alias("e"))
-    expected = spark.createDataFrame(rows, _ARR_LONG_SCHEMA).select(SF.explode_outer("arr").alias("e"))
+    expected = spark.createDataFrame(rows, _ARR_LONG_SCHEMA).select(SF.explode("arr").alias("e"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.explode.non_collection_raises")
+def test_explode_non_collection_raises(engine, spark):
+    """``explode`` needs an array or map input."""
+    F = engine.functions
+    str_rows, str_schema = [("x",)], _schema(("s", _STR))
+    with pytest.raises(Exception):
+        spark.createDataFrame(str_rows, str_schema).select(SF.explode("s")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(str_rows, str_schema).select(F.explode("s")))
+
+
+@pytest.mark.feature("functions.explode.drops_null_and_empty")
+def test_explode_drops_null_and_empty_against_spark(engine, spark):
+    """``explode`` emits no row for a null or empty array (``explode_outer`` would emit a null)."""
+    F = engine.functions
+    schema = _schema(("k", _STR), ("arr", SparkArrayType(_LONG)))
+    rows = [("a", [1, 2]), ("b", None), ("c", [])]
+    actual = engine.build_df(rows, schema).withColumn("e", F.explode("arr")).select("k", "e")
+    expected = spark.createDataFrame(rows, schema).withColumn("e", SF.explode("arr")).select("k", "e")
     assert_matches_spark(actual, expected, engine)
 
 
@@ -997,11 +1022,6 @@ def test_datetime_ge_date_sub_against_spark(engine, spark):
 
 
 @pytest.mark.feature("functions.months_between")
-@pytest.mark.xfail(
-    reason="Parity gap: Spark's months_between rounds to 8 decimal places (roundOff=True); "
-    "SparkleFrame returns full precision (e.g. 2.16129032258 vs Spark's 2.16129032).",
-    strict=False,
-)
 def test_months_between_against_spark(engine, spark):
     F = engine.functions
     schema = _schema(("start", _STR), ("end", _STR))
@@ -1127,6 +1147,42 @@ def test_to_json_struct_against_spark(engine, spark):
     rows = [(1, "x"), (2, "y")]
     actual = engine.build_df(rows, schema).select(F.to_json(F.struct("a", "b")).alias("j"))
     expected = spark.createDataFrame(rows, schema).select(SF.to_json(SF.struct("a", "b")).alias("j"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.to_json.decimal_scale_preserved")
+def test_to_json_decimal_scale_preserved_against_spark(engine, spark):
+    """Decimals are written as JSON numbers at the column's scale (``0.0650``, not ``0.065`` or ``"0.0650"``)."""
+    F = engine.functions
+    schema = _schema(("amount", SparkDecimalType(13, 2)), ("apr", SparkDecimalType(5, 4)), ("rate", _DOUBLE))
+    rows = [(Decimal("180000.00"), Decimal("0.0650"), 0.065), (None, Decimal("1.5"), None)]
+    options = {"ignoreNullFields": False}
+    actual = engine.build_df(rows, schema).select(F.to_json(F.struct("amount", "apr", "rate"), options).alias("j"))
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.to_json(SF.struct("amount", "apr", "rate"), options).alias("j")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: to_json needs a struct, map or array.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.to_json("amount")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.to_json("amount")))
+
+
+@pytest.mark.feature("functions.to_json.timestamp_format")
+@pytest.mark.parametrize(
+    "options",
+    [{}, {"timestampFormat": "yyyy-MM-dd HH:mm:ss", "dateFormat": "dd/MM/yyyy"}],
+    ids=["default_formats", "custom_formats"],
+)
+def test_to_json_timestamp_format_against_spark(engine, spark, options):
+    """Timestamps default to ``yyyy-MM-dd'T'HH:mm:ss.SSSXXX`` in the session zone; dates to ``yyyy-MM-dd``."""
+    F = engine.functions
+    schema = _schema(("t", SparkTimestampType()), ("d", SparkDateType()))
+    rows = [(datetime(2026, 10, 1, 15, 32, 10), date(2026, 10, 1)), (datetime(2024, 2, 29, 0, 0, 0, 123000), None)]
+    actual = engine.build_df(rows, schema).select(F.to_json(F.struct("t", "d"), options).alias("j"))
+    expected = spark.createDataFrame(rows, schema).select(SF.to_json(SF.struct("t", "d"), options).alias("j"))
     assert_matches_spark(actual, expected, engine)
 
 
@@ -1795,3 +1851,614 @@ def test_getitem_string_key_on_map_in_filter_against_spark(engine, spark):
         .filter(SF.col("got").isNotNull())
     )
     assert_matches_spark(sf.select("got"), sp.select("got"), engine)
+
+
+# ============================================================================ #
+# nba surface: create_map / map_entries / first / from_json / get_json_object /
+# greatest / regexp_replace / round / split / to_json / try_divide / try_to_date
+# ============================================================================ #
+
+
+@pytest.mark.feature("functions.create_map.empty")
+@pytest.mark.parametrize("as_list", [False, True], ids=["varargs", "empty_list"])
+def test_create_map_empty_against_spark(engine, spark, as_list):
+    """``create_map()`` / ``create_map([])`` (datahub ``_to_map`` of an empty mapping) is an empty map."""
+    F = engine.functions
+    schema = _schema(("k", _STR))
+    rows = [("a",), (None,)]
+
+    def _cols(fn):
+        m = fn.create_map([]) if as_list else fn.create_map()
+        return [fn.size(m).alias("n"), fn.to_json(m).alias("j"), fn.map_keys(m).alias("keys")]
+
+    actual = engine.build_df(rows, schema).select("k", *_cols(F))
+    expected = spark.createDataFrame(rows, schema).select("k", *_cols(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: an odd number of arguments (a key without a value) is rejected.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.create_map(SF.lit("a")).alias("m")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.create_map(F.lit("a")).alias("m")))
+
+
+@pytest.mark.feature("functions.create_map.null_key_raises")
+def test_create_map_null_key_raises_like_spark(engine, spark):
+    """Spark 4 rejects a null map key at runtime (``NULL_MAP_KEY``); null values are fine."""
+    F = engine.functions
+    schema = _schema(("k", _STR), ("v", _STR))
+    rows = [("a", "1"), ("b", None)]
+
+    def _cols(fn):
+        # ``to_json`` materializes the map: Spark's optimizer folds a bare ``create_map(...)[key]`` lookup
+        # into a CASE WHEN, which would skip the null-key check.
+        m = fn.create_map(fn.col("k"), fn.col("v"), fn.lit("const"), fn.lit("c"))
+        return [fn.to_json(m).alias("j"), m.getItem("a").alias("a"), m.getItem("const").alias("const")]
+
+    actual = engine.build_df(rows, schema).select(*_cols(F))
+    expected = spark.createDataFrame(rows, schema).select(*_cols(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    bad_rows = rows + [(None, "x")]
+    with pytest.raises(Exception, match="NULL_MAP_KEY"):
+        spark.createDataFrame(bad_rows, schema).select(*_cols(SF)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(bad_rows, schema).select(*_cols(F)))
+
+
+@pytest.mark.feature("functions.first.ignorenulls")
+def test_first_ignorenulls_against_spark(engine, spark):
+    """datahub ``application``: ``groupBy(id, key).agg(first("value", ignorenulls=True))`` skips nulls."""
+    F = engine.functions
+    schema = _schema(("app", _STR), ("key", _STR), ("value", _STR))
+    rows = [
+        ("a1", "utm_source", None),
+        ("a1", "utm_source", "google"),
+        ("a1", "utm_source", None),
+        ("a1", "gclid", None),
+        ("a1", "gclid", None),
+        ("a2", "utm_source", "bing"),
+        ("a2", "plan", None),
+    ]
+    actual = engine.build_df(rows, schema).groupBy("app", "key").agg(F.first("value", ignorenulls=True).alias("v"))
+    expected = (
+        spark.createDataFrame(rows, schema).groupBy("app", "key").agg(SF.first("value", ignorenulls=True).alias("v"))
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Global aggregate (no groupBy) over a column whose only non-null value is in the middle.
+    actual = engine.build_df(rows, schema).filter(F.col("app") == "a1").agg(F.first("value", True).alias("v"))
+    expected = (
+        spark.createDataFrame(rows, schema).filter(SF.col("app") == "a1").agg(SF.first("value", True).alias("v"))
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: an unresolvable column fails analysis.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).groupBy("app").agg(SF.first("missing", ignorenulls=True)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).groupBy("app").agg(F.first("missing", ignorenulls=True)))
+
+
+_FROM_JSON_STRUCT = SparkStructType(
+    [SparkStructField("id", _STR), SparkStructField("count", _INT), SparkStructField("tags", SparkArrayType(_STR))]
+)
+
+
+@pytest.mark.feature("functions.from_json.malformed_permissive")
+def test_from_json_malformed_permissive_against_spark(engine, spark):
+    """Default PERMISSIVE mode: unparseable records become a struct of nulls; null input stays null."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [
+        ('{"id": "x", "count": 3, "tags": ["a", "b"]}',),
+        ('{"id": "y"}',),
+        ('{"id": "z", "count": "not-an-int"}',),
+        ('{"id": "w", "count": 1',),
+        ("not json",),
+        ("",),
+        (None,),
+    ]
+    actual = engine.build_df(rows, schema).select("j", F.from_json("j", engine.dtype(_FROM_JSON_STRUCT)).alias("p"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.from_json("j", _FROM_JSON_STRUCT).alias("p"))
+    assert_matches_spark(actual, expected, engine)
+
+    # Strict counterpart: FAILFAST raises on the same malformed record.
+    bad_rows = [('{"id": "w", "count": 1',)]
+    options = {"mode": "FAILFAST"}
+    with pytest.raises(Exception):
+        spark.createDataFrame(bad_rows, schema).select(SF.from_json("j", _FROM_JSON_STRUCT, options)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(
+            engine.build_df(bad_rows, schema).select(F.from_json("j", engine.dtype(_FROM_JSON_STRUCT), options))
+        )
+
+
+_INSURANCE_STRUCT = SparkStructType(
+    [
+        SparkStructField("enabled", SparkBooleanType()),
+        SparkStructField("provider", _STR),
+        SparkStructField("notSupportedLoanTypes", SparkArrayType(_STR)),
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    "rows, parsed_type, lookups",
+    [
+        pytest.param(
+            [
+                ('{"name": "Visa", "limit": 5000, "secured": true, "extra": {"x": 1}, "none": null}',),
+                ("{}",),
+                ('{"name": "broken"',),
+                ('["not", "an", "object"]',),
+                (None,),
+            ],
+            SparkMapType(_STR, _STR),
+            ["name", "limit", "secured", "extra", "none", "missing"],
+            id="map_string_string",
+        ),
+        pytest.param(
+            [
+                ('{"LIFE": {"enabled": true, "provider": "TRUSTAGE", "notSupportedLoanTypes": ["HELOC"]}}',),
+                ('{"GAP": {"enabled": false}}',),
+                ('{"LIFE": {"enabled": "maybe"}}',),
+                ("not json",),
+                (None,),
+            ],
+            SparkMapType(_STR, _INSURANCE_STRUCT),
+            ["LIFE", "GAP"],
+            id="map_string_struct",
+        ),
+    ],
+)
+@pytest.mark.feature("functions.from_json.map_and_array_schemas")
+def test_from_json_map_schemas_against_spark(engine, spark, rows, parsed_type, lookups):
+    """Map results are compared via key lookups + ``size`` (the oracle does not compare map columns)."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+
+    def _cols(fn, dtype):
+        m = fn.from_json("j", dtype)
+        return [fn.size(m).alias("n")] + [m.getItem(k).alias(f"k_{k}") for k in lookups]
+
+    actual = engine.build_df(rows, schema).select("j", *_cols(F, engine.dtype(parsed_type)))
+    expected = spark.createDataFrame(rows, schema).select("j", *_cols(SF, parsed_type))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.from_json.map_and_array_schemas")
+def test_from_json_array_schema_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [
+        ('["HELOC", "AUTO"]',),
+        ("[]",),
+        ('["a", null, 3]',),
+        ('["unterminated"',),
+        ('{"not": "an array"}',),
+        (None,),
+    ]
+    parsed_type = SparkArrayType(_STR)
+    actual = engine.build_df(rows, schema).select("j", F.from_json("j", engine.dtype(parsed_type)).alias("a"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.from_json("j", parsed_type).alias("a"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.get_json_object.malformed_json_null")
+@pytest.mark.parametrize("path", ["$.a", "$.a.b", "$.a[0]", "$"])
+def test_get_json_object_malformed_json_returns_null(engine, spark, path):
+    """Malformed JSON never raises: get_json_object returns null (valid rows still extract)."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [
+        ('{"a": {"b": 1}}',),
+        ('{"a": [7, 8]}',),
+        ('{"a": ',),
+        ('{"a": 1,}',),
+        ("{'a': 1}",),
+        ("not json",),
+        ("",),
+        (None,),
+    ]
+    actual = engine.build_df(rows, schema).select("j", F.get_json_object("j", path).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.get_json_object("j", path).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.get_json_object.malformed_json_null")
+@pytest.mark.parametrize("path", ["a", "$.", "$[", "$.a[x]", ""])
+def test_get_json_object_invalid_path_returns_null(engine, spark, path):
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [('{"a": [1, 2]}',), (None,)]
+    actual = engine.build_df(rows, schema).select("j", F.get_json_object("j", path).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.get_json_object("j", path).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+_TRADELINE_JSON = json.dumps(
+    {
+        "BUREAU": ["EQUIFAX"],
+        "TRADETYPE": [{"CODE": ["I"], "DESCRIPTION": ["Installment"]}],
+        "STATUS": [{"DESCRIPTION": ["Current"]}],
+        "ORIGINALAMOUNT": ["25000"],
+        "PAYMENTPATTERN": [],
+    }
+)
+_SNAPSHOT_JSON = json.dumps(
+    {
+        "firstName": 'Ana "Bea"',
+        "annualIncome": 85000.50,
+        "monthsAtEmployer": 14,
+        "authenticated": True,
+        "middleName": None,
+        "metadata": {"probabilityOfApprovalMLModel": {"approvalChance": "HIGH", "score": 0.82}},
+        "providers": {"TRUSTAGE": {"cuId": "CU-1"}},
+        "insurances": {"LIFE": {"enabled": True, "notSupportedLoanTypes": ["HELOC"]}},
+        "deal": {"id": 42},
+        "utmVariables": "utm_source=google&utm_medium=cpc",
+    }
+)
+
+
+@pytest.mark.feature("functions.get_json_object.nested_and_array_paths")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "$.firstName",
+        "$.annualIncome",
+        "$.monthsAtEmployer",
+        "$.authenticated",
+        "$.middleName",
+        "$.utmVariables",
+        "$.metadata.probabilityOfApprovalMLModel",
+        "$.providers.TRUSTAGE.cuId",
+        "$.insurances",
+        "$.deal.id",
+        "$.BUREAU[0]",
+        "$.TRADETYPE[0].CODE[0]",
+        "$.TRADETYPE[0].DESCRIPTION[0]",
+        "$.STATUS[0].DESCRIPTION[0]",
+        "$.ORIGINALAMOUNT[0]",
+        "$.TRADETYPE",
+        "$.TRADETYPE[0]",
+        "$.PAYMENTPATTERN[0]",
+        "$.BUREAU[5]",
+        "$.missing",
+        "$.deal.missing",
+        "$.firstName.nested",
+    ],
+)
+def test_get_json_object_nested_and_array_paths_against_spark(engine, spark, path):
+    """Real datahub path shapes; objects/arrays come back as compact JSON text, scalars unquoted."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [(_SNAPSHOT_JSON,), (_TRADELINE_JSON,), ('{"broken": ',), (None,)]
+    actual = engine.build_df(rows, schema).select("j", F.get_json_object("j", path).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.get_json_object("j", path).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.greatest.mixed_numeric_types")
+@pytest.mark.parametrize(
+    "a_type, b_type, rows",
+    [
+        (_INT, _LONG, [(1, 5), (-3, -7), (None, 2), (None, None), (2147483647, 2147483648)]),
+        (_INT, _DOUBLE, [(1, 0.5), (2, 2.5), (-1, -1.5), (None, 3.25), (4, None)]),
+        (_LONG, SparkFloatType(), [(1, 1.5), (10, 2.5), (None, None)]),
+        (
+            _INT,
+            SparkDecimalType(10, 2),
+            [(1, Decimal("1.25")), (3, Decimal("2.50")), (-2, Decimal("-1.75")), (None, Decimal("0.10"))],
+        ),
+        (
+            SparkDecimalType(5, 1),
+            SparkDecimalType(10, 3),
+            [(Decimal("1.5"), Decimal("1.499")), (Decimal("-0.1"), Decimal("-0.125")), (None, Decimal("7.000"))],
+        ),
+        (_DOUBLE, SparkDecimalType(10, 2), [(0.1, Decimal("0.05")), (1e-9, Decimal("0.00")), (None, None)]),
+    ],
+)
+def test_greatest_mixed_numeric_types_against_spark(engine, spark, a_type, b_type, rows):
+    """greatest widens to a common type (value + string rendering pin the result type and scale)."""
+    F = engine.functions
+    schema = _schema(("a", a_type), ("b", b_type))
+    string = engine.dtype(_STR)
+
+    actual = engine.build_df(rows, schema).select(
+        F.greatest("a", "b").alias("g"),
+        F.greatest("a", "b").cast(string).alias("g_str"),
+        F.greatest(F.col("a"), F.lit(1e-9)).alias("g_lit"),
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.greatest("a", "b").alias("g"),
+        SF.greatest("a", "b").cast(_STR).alias("g_str"),
+        SF.greatest(SF.col("a"), SF.lit(1e-9)).alias("g_lit"),
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.greatest.mixed_numeric_types")
+def test_greatest_invalid_arguments_raise_like_spark(engine, spark):
+    """greatest needs >= 2 arguments of a common type; a numeric vs array mix fails analysis."""
+    F = engine.functions
+    schema = _schema(("a", _INT), ("arr", SparkArrayType(_INT)))
+    rows = [(1, [1, 2])]
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.greatest("a")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.greatest("a")))
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.greatest("a", "arr")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.greatest("a", "arr")))
+
+
+@pytest.mark.feature("functions.map_entries")
+def test_map_entries_against_spark(engine, spark):
+    F = engine.functions
+    rows = [({"a": 1},), ({},), ({"b": None},), (None,)]
+    schema = _schema(("m", SparkMapType(_STR, _LONG)))
+    actual = engine.build_df(rows, schema).select(F.map_entries("m").alias("e"))
+    expected = spark.createDataFrame(rows, schema).select(SF.map_entries("m").alias("e"))
+    assert_matches_spark(actual, expected, engine)
+
+    # Ordered multi-entry maps built with create_map, then the datahub ``transform(map_entries(...))`` shape.
+    schema = _schema(("k", _STR), ("v", _LONG))
+    rows = [("x", 1), ("y", None)]
+
+    def _cols(fn):
+        e = fn.map_entries(fn.create_map(fn.col("k"), fn.col("v"), fn.lit("z"), fn.lit(9)))
+        return [
+            e.alias("e"),
+            fn.transform(e, lambda entry: fn.struct(entry["key"].alias("type"), entry["value"].alias("n"))).alias("t"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*_cols(F))
+    expected = spark.createDataFrame(rows, schema).select(*_cols(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: map_entries requires a map argument.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.map_entries("k")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.map_entries("k")))
+
+
+@pytest.mark.feature("functions.regexp_replace.nba_patterns")
+@pytest.mark.parametrize(
+    "pattern, replacement, values",
+    [
+        ("[{}]", "", ["{6F9619FF-8B86-D011}", "no-braces", "}{", "", None]),
+        (r"\\", "/", ["N\\A", "a\\b\\c", "n/a", "", None]),
+        ("^0+", "", ["000123", "0", "1000", "a00", "", None]),
+        ("[^0-9.]", "", ["6.99%", "APR 7.25 %", "abc", "1,234.50", None]),
+        ("Y", "", ["5Y", "YY", "10y", None]),
+        ("M", "", ["60M", "MM", "m", None]),
+        (r"\s+", " ", ["a  b\t\nc", "  lead", "none", None]),
+        ('"', "'", ['say "hi"', "none", None]),
+        (r"^(https?://)?(www\.)?", "", ["https://www.cu.org", "http://cu.org", "www.x.com", "cu.org", None]),
+        ("[\\s/-]", "_", ["Pending Review", "approved/funded", "re-opened", None]),
+    ],
+)
+def test_regexp_replace_nba_patterns_against_spark(engine, spark, pattern, replacement, values):
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [(v,) for v in values]
+    actual = engine.build_df(rows, schema).select("s", F.regexp_replace("s", pattern, replacement).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("s", SF.regexp_replace("s", pattern, replacement).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.regexp_replace.nba_patterns")
+@pytest.mark.parametrize("pattern", ["[{}", "(unclosed", "*0+"])
+def test_regexp_replace_invalid_pattern_raises_like_spark(engine, spark, pattern):
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [("abc",)]
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.regexp_replace("s", pattern, "")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.regexp_replace("s", pattern, "")))
+
+
+@pytest.mark.feature("functions.round.half_up_double_and_decimal")
+@pytest.mark.parametrize("scale", [0, 2])
+def test_round_half_up_double_against_spark(engine, spark, scale):
+    """Spark rounds doubles HALF_UP on the decimal rendering (2.5 -> 3, 1.005 -> 1.01), not banker's."""
+    F = engine.functions
+    schema = _schema(("x", _DOUBLE))
+    values = [0.5, 1.5, 2.5, -0.5, -2.5, 0.125, -0.125, 1.005, 2.675, 0.0725, 123.455, -1.115, 0.0, None]
+    rows = [(v,) for v in values]
+    string = engine.dtype(_STR)
+    actual = engine.build_df(rows, schema).select(
+        "x",
+        F.round("x", scale).alias("r"),
+        F.round("x", scale).cast(string).alias("r_str"),
+        F.round(F.col("x") * 100, scale).alias("pct"),
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        "x",
+        SF.round("x", scale).alias("r"),
+        SF.round("x", scale).cast(_STR).alias("r_str"),
+        SF.round(SF.col("x") * 100, scale).alias("pct"),
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.round.half_up_double_and_decimal")
+@pytest.mark.parametrize("scale", [0, 2])
+def test_round_half_up_decimal_against_spark(engine, spark, scale):
+    """Decimal rounding is HALF_UP and the result decimal type carries the target scale."""
+    F = engine.functions
+    schema = _schema(("x", SparkDecimalType(10, 3)))
+    values = ["0.500", "1.500", "2.500", "-2.500", "2.345", "-2.345", "2.344", "99999.995", "0.000", None]
+    rows = [(Decimal(v) if v is not None else None,) for v in values]
+    string = engine.dtype(_STR)
+    actual = engine.build_df(rows, schema).select(
+        F.round("x", scale).cast(string).alias("r_str"),
+        F.round(F.col("x") * 100, scale).cast(string).alias("pct_str"),
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.round("x", scale).cast(_STR).alias("r_str"),
+        SF.round(SF.col("x") * 100, scale).cast(_STR).alias("pct_str"),
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.round.half_up_double_and_decimal")
+def test_round_malformed_string_raises_like_spark(engine, spark):
+    """ANSI: round over a string implicitly casts to double and raises on an unparseable value."""
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [("2.5",), ("not-a-number",)]
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.round("s", 0)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.round("s", 0)))
+
+
+@pytest.mark.feature("functions.split.with_limit")
+@pytest.mark.parametrize(
+    "pattern, limit",
+    [("=", 2), ("=", 1), ("=", 0), ("=", -1), ("=", 5), ("&", -1), ("-", 2), (".", 2), (r"\.", 2)],
+)
+def test_split_with_limit_against_spark(engine, spark, pattern, limit):
+    """datahub ``split(x, "=", 2)`` on utm pairs; limit > 0 caps the parts, limit <= 0 keeps trailing empties."""
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    values = ["utm_source=google", "a=b=c", "key=", "=value", "noeq", "", "a&b&&c&", "cu-name-1", "a.b.c", None]
+    rows = [(v,) for v in values]
+    actual = engine.build_df(rows, schema).select(
+        "s", F.split("s", pattern, limit).alias("parts"), F.split("s", pattern, limit)[0].alias("first")
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        "s", SF.split("s", pattern, limit).alias("parts"), SF.split("s", pattern, limit)[0].alias("first")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.split.with_limit")
+def test_split_invalid_pattern_raises_like_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [("a=b",)]
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.split("s", "[=", 2)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.split("s", "[=", 2)))
+
+
+@pytest.mark.feature("functions.to_json.options")
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"ignoreNullFields": True},
+        {"ignoreNullFields": False},
+        {"ignoreNullFields": "false"},
+        {"ignoreNullFields": False, "timestampFormat": "yyyy/MM/dd HH:mm", "dateFormat": "MM-dd-yyyy"},
+        {"timestampFormat": "dd.MM.yyyy'T'HH:mm:ss", "dateFormat": "yyyyMMdd"},
+    ],
+    ids=["default", "ignore_true", "ignore_false", "ignore_false_str", "ignore_false_formats", "formats_only"],
+)
+def test_to_json_options_against_spark(engine, spark, options):
+    """``ignoreNullFields`` drops/keeps null struct fields at every nesting level; arrays keep their nulls."""
+    F = engine.functions
+    schema = _schema(
+        ("id", _LONG),
+        ("name", _STR),
+        ("t", SparkTimestampType()),
+        ("d", SparkDateType()),
+        ("tags", SparkArrayType(_STR)),
+    )
+    rows = [
+        (1, "a", datetime(2026, 10, 1, 15, 32, 10), date(2026, 10, 1), ["x", None]),
+        (2, None, None, None, None),
+    ]
+
+    def _payload(fn):
+        inner = fn.struct(fn.col("name").alias("name"), fn.col("d").alias("d"))
+        return fn.struct("id", "name", "t", "d", "tags", inner.alias("inner"))
+
+    actual = engine.build_df(rows, schema).select(F.to_json(_payload(F), options).alias("j"))
+    expected = spark.createDataFrame(rows, schema).select(SF.to_json(_payload(SF), options).alias("j"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.to_json.options")
+def test_to_json_invalid_timestamp_format_raises_like_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("t", SparkTimestampType()))
+    rows = [(datetime(2026, 10, 1, 15, 32, 10),)]
+    options = {"timestampFormat": "yyyy-MM-dd bbb"}
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.to_json(SF.struct("t"), options)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.to_json(F.struct("t"), options)))
+
+
+@pytest.mark.feature("functions.try_divide.by_zero_null")
+@pytest.mark.parametrize(
+    "dtype, rows",
+    [
+        (_INT, [(10, 4), (7, 0), (0, 0), (-3, 0), (None, 0), (5, None)]),
+        (_LONG, [(9, 3), (1, 0), (0, 0)]),
+        (SparkDecimalType(10, 2), [(Decimal("10.00"), Decimal("4.00")), (Decimal("1.50"), Decimal("0.00"))]),
+        (_DOUBLE, [(1.0, 3.0), (0.0, 0.0), (-2.5, 0.0)]),
+    ],
+)
+def test_try_divide_by_zero_returns_null_against_spark(engine, spark, dtype, rows):
+    """try_divide returns null on a zero divisor for every numeric type (incl. the datahub ``a / (a + b)``)."""
+    F = engine.functions
+    schema = _schema(("a", dtype), ("b", dtype))
+    string = engine.dtype(_STR)
+    actual = engine.build_df(rows, schema).select(
+        F.try_divide("a", "b").alias("q"),
+        F.try_divide("a", "b").cast(string).alias("q_str"),
+        F.try_divide(F.col("a"), F.col("a") + F.col("b")).alias("ratio"),
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.try_divide("a", "b").alias("q"),
+        SF.try_divide("a", "b").cast(_STR).alias("q_str"),
+        SF.try_divide(SF.col("a"), SF.col("a") + SF.col("b")).alias("ratio"),
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Strict counterpart: ANSI ``/`` raises DIVIDE_BY_ZERO on the same zero divisor.
+    zero_rows = [r for r in rows if r[0] is not None and r[1] is not None and r[1] == 0]
+    with pytest.raises(Exception, match="DIVIDE_BY_ZERO"):
+        spark.createDataFrame(zero_rows, schema).select((SF.col("a") / SF.col("b")).alias("q")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(zero_rows, schema).select((F.col("a") / F.col("b")).alias("q")))
+
+
+@pytest.mark.feature("functions.try_to_date.nba_patterns")
+@pytest.mark.parametrize(
+    "fmt, values",
+    [
+        (
+            "yyyy-MM-dd",
+            ["2024-02-29", "1990-01-05", "2023-02-29", "2024-13-01", "2024-1-5", "05/01/2024", "2024-01-01 10:00:00"],
+        ),
+        ("M/d/yyyy", ["1/5/2024", "12/31/1999", "01/05/2024", "2/30/2024", "13/1/2024", "1/5/24", "2024-01-05"]),
+        ("M/d/yy", ["1/5/24", "12/31/99", "01/05/70", "2/30/24", "13/1/24", "1/5/2024", "2024-01-05"]),
+        ("dd/MM/yy", ["31/12/24", "05/01/99", "5/1/24", "30/02/24", "12/31/24", "31/12/2024", "2024-12-31"]),
+        ("d/M/yy", ["5/1/24", "31/12/99", "05/01/24", "30/2/24", "1/13/24", "5/1/2024", "2024-01-05"]),
+        ("MM/yyyy", ["01/2024", "12/1999", "1/2024", "13/2024", "00/2024", "01/24", "2024-01"]),
+        ("MM/yy", ["01/24", "12/99", "1/24", "13/24", "01/2024", "2024-01"]),
+        (
+            "MM/dd/yyyy",
+            ["02/29/2024", "12/31/1999", "2/9/2024", "02/30/2024", "13/01/2024", "31/12/2024", "02/29/24"],
+        ),
+    ],
+)
+def test_try_to_date_nba_patterns_against_spark(engine, spark, fmt, values):
+    """datahub ``utils.try_to_date`` formats: valid, wrong-pattern and out-of-range values (the latter -> null)."""
+    F = engine.functions
+    schema = _schema(("d", _STR))
+    rows = [(v,) for v in values + ["", "not-a-date", None]]
+    actual = engine.build_df(rows, schema).select("d", F.try_to_date("d", fmt).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("d", SF.try_to_date("d", fmt).alias("r"))
+    assert_matches_spark(actual, expected, engine)

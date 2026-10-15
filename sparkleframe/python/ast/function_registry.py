@@ -324,13 +324,10 @@ def _eval_split(values: list, node: FunctionCall, ctx: Any) -> Any:
     regex = compile_java_regex(node.options["pattern"])
     limit = node.options.get("limit", -1)
     text = values[0]
-    if text == "":
-        return [""]
-    parts = regex.split(text, maxsplit=limit - 1 if limit > 0 else 0)
-    if limit == 0:
-        while parts and parts[-1] == "":
-            parts.pop()
-    return parts
+    if text == "" or limit == 1:
+        return [text]
+    # limit <= 0 splits as often as possible and, unlike Java's String.split, keeps trailing empty strings.
+    return regex.split(text, maxsplit=limit - 1 if limit > 1 else 0)
 
 
 register("split", FunctionSpec(_resolve_split, _eval_split))
@@ -556,7 +553,7 @@ def _eval_round(values: list, node: FunctionCall, ctx: Any) -> Any:
     if isinstance(node.data_type, DecimalType):
         return to_decimal(rounded, node.data_type)
     if isinstance(value, float):
-        return float(rounded)
+        return float(rounded) + 0.0  # Spark rounds through BigDecimal, which has no negative zero
     return int(rounded)
 
 
@@ -1110,6 +1107,8 @@ def _resolve_in(node: FunctionCall, rctx: Any) -> Any:
 
 def _eval_in(node: FunctionCall, row: Any, ctx: Any) -> Any:
     value = ctx.eval(node.children[0], row)
+    if len(node.children) == 1:
+        return False  # an empty IN list is false whatever the probe
     if value is None:
         return None
     common = node.children[0].data_type
@@ -1153,7 +1152,16 @@ def _resolve_from_json(node: FunctionCall, rctx: Any) -> Any:
             f"[DATATYPE_MISMATCH.INVALID_JSON_SCHEMA] Input schema {schema.simpleString()} must be a struct, an "
             f"array or a map."
         )
+    if _json_parse_mode(node) not in ("PERMISSIVE", "FAILFAST"):
+        raise ValueError(
+            f"[PARSE_MODE_UNSUPPORTED] The function `from_json` doesn't support the {_json_parse_mode(node)} mode. "
+            f"Acceptable modes are PERMISSIVE and FAILFAST."
+        )
     return schema
+
+
+def _json_parse_mode(node: FunctionCall) -> str:
+    return str((node.options.get("options") or {}).get("mode", "PERMISSIVE")).upper()
 
 
 class _JsonConversionError(Exception):
@@ -1231,10 +1239,17 @@ def _json_field(node: Any, dtype: Any) -> Any:
 
 def _eval_from_json(values: list, node: FunctionCall, ctx: Any) -> Any:
     schema = node.data_type
+    if not values[0].strip():
+        return None  # no JSON token at all: null, not a struct of nulls
     try:
         parsed = load_json(values[0])
         return _json_to_value(parsed, schema)
     except (ValueError, _JsonConversionError):
+        if _json_parse_mode(node) == "FAILFAST":
+            raise ValueError(
+                f"[MALFORMED_RECORD_IN_PARSING.WITHOUT_SUGGESTION] Malformed records are detected in record "
+                f"parsing: [{values[0]}]. Parse Mode: FAILFAST."
+            ) from None
         if isinstance(schema, StructType):
             return Row.from_fields(schema.names, [None] * len(schema.fields))
         return None

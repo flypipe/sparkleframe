@@ -81,6 +81,27 @@ class TimestampNTZType(DataType):
         return "timestamp_ntz"
 
 
+class DayTimeIntervalType(DataType):
+    """``interval day [to second]``; values are ``datetime.timedelta``, as PySpark collects them."""
+
+    DAY, HOUR, MINUTE, SECOND = 0, 1, 2, 3
+    _FIELD_NAMES = {DAY: "day", HOUR: "hour", MINUTE: "minute", SECOND: "second"}
+
+    def __init__(self, startField: int = DAY, endField: int = SECOND) -> None:
+        self.startField = startField
+        self.endField = endField
+
+    def simpleString(self) -> str:
+        start, end = self._FIELD_NAMES[self.startField], self._FIELD_NAMES[self.endField]
+        return f"interval {start}" if start == end else f"interval {start} to {end}"
+
+    def jsonValue(self) -> str:
+        return self.simpleString()
+
+    def __repr__(self) -> str:
+        return "DayTimeIntervalType(%d, %d)" % (self.startField, self.endField)
+
+
 class ByteType(DataType):
     def simpleString(self) -> str:
         return "tinyint"

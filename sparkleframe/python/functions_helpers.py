@@ -117,13 +117,40 @@ def java_replacement(match: "re.Match[str]", replacement: str) -> str:
 
 
 def compile_java_regex(pattern: str) -> "re.Pattern[str]":
-    """Compile a Java regex; malformed patterns raise Spark's ``INVALID_PARAMETER_VALUE.PATTERN``."""
+    """Compile a Java regex; malformed patterns raise Spark's ``INVALID_PARAMETER_VALUE.PATTERN``.
+
+    ``re.ASCII`` because Java's ``\\d``, ``\\w``, ``\\s``, ``\\b`` and ``(?i)`` are ASCII-only by default.
+    """
     try:
-        return re.compile(pattern)
+        _check_java_repetitions(pattern)
+        return re.compile(pattern, re.ASCII)
     except re.error as exc:
         raise ValueError(
             f"[INVALID_PARAMETER_VALUE.PATTERN] The value of parameter(s) `regexp` is invalid: {pattern!r} ({exc})."
         ) from None
+
+
+_JAVA_QUANTIFIER_RE = re.compile(r"\{\d+(?:,\d*)?\}")
+
+
+def _check_java_repetitions(pattern: str) -> None:
+    """Java rejects a ``{`` that does not open a ``{n}`` / ``{n,}`` / ``{n,m}`` quantifier; Python reads it literally."""
+    pos, in_class = 0, False
+    while pos < len(pattern):
+        ch = pattern[pos]
+        if ch == "\\":
+            if pattern[pos + 1 : pos + 3] in ("p{", "P{"):  # \p{Alpha}: a property name, not a quantifier
+                pos = pattern.find("}", pos) + 1 or len(pattern)
+            else:
+                pos += 2
+            continue
+        if ch == "[":
+            in_class = True
+        elif ch == "]":
+            in_class = False
+        elif ch == "{" and not in_class and not _JAVA_QUANTIFIER_RE.match(pattern, pos):
+            raise re.error("Illegal repetition", pattern, pos)
+        pos += 1
 
 
 # --------------------------------------------------------------------------- #
@@ -418,6 +445,32 @@ def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _double_quoted(text: str) -> str:
+    """Rewrite single-quoted JSON strings as double-quoted ones (``get_json_object`` accepts ``{'a': 1}``)."""
+    if "'" not in text:
+        return text
+    out: List[str] = []
+    pos = 0
+    while pos < len(text):
+        ch = text[pos]
+        if ch not in "\"'":
+            out.append(ch)
+            pos += 1
+            continue
+        end = pos + 1
+        while end < len(text) and text[end] != ch:
+            end += 2 if text[end] == "\\" else 1
+        if end >= len(text):
+            raise ValueError("unterminated string")
+        body = text[pos + 1 : end]
+        if ch == "'":
+            # A literal `"` needs escaping once double-quoted, and `\'` is just a quote.
+            body = re.sub(r'(?<!\\)"', r"\"", body.replace("\\'", "'"))
+        out.append(f'"{body}"')
+        pos = end + 1
+    return "".join(out)
+
+
 _JSON_PATH_STEP_RE = re.compile(r"\.([^.\[\]]+)|\['([^']*)'\]|\[(\d+)\]|\[\*\]")
 
 
@@ -426,7 +479,7 @@ def get_json_object(text: str, path: str) -> Optional[str]:
     if not path.startswith("$"):
         return None
     try:
-        node = load_json(text)
+        node = load_json(_double_quoted(text))
     except ValueError:
         return None
     pos = 1

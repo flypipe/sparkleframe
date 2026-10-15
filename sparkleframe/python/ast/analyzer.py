@@ -153,6 +153,12 @@ class _Analyzer:
 
     def _sort_order(self, expr: SortOrder) -> Expression:
         child = self.resolve(expr.child)
+        if not coercion.is_orderable(child.data_type):
+            raise AnalysisException(
+                f'[DATATYPE_MISMATCH.INVALID_ORDERING_TYPE] Cannot resolve "{expr.child!r}" due to data type '
+                f"mismatch: The `sortorder` does not support ordering on type "
+                f'"{child.data_type.simpleString().upper()}".'
+            )
         resolved = SortOrder(child, expr.ascending, expr.nulls_first)
         resolved.data_type = child.data_type
         return resolved

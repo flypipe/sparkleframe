@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 import re
 import struct
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from decimal import ROUND_HALF_UP, Context, Decimal
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -34,6 +34,7 @@ from sparkleframe.python.types import (
     BooleanType,
     ByteType,
     DateType,
+    DayTimeIntervalType,
     DecimalType,
     DoubleType,
     FloatType,
@@ -167,7 +168,7 @@ def to_decimal(value: Any, target_type: Any) -> Decimal:
     result = exact.quantize(quantum, context=_DECIMAL_CONTEXT)
     if abs(result) >= Decimal(10) ** (target_type.precision - target_type.scale):
         raise _Overflow
-    return result
+    return result.copy_abs() if result.is_zero() else result  # Java's BigDecimal has no negative zero
 
 
 def _round_to_float32(value: float) -> float:
@@ -247,7 +248,7 @@ def _nested_string(value: Any, dtype: Any) -> str:
 
 def format_timestamp(value: datetime) -> str:
     """``yyyy-MM-dd HH:mm:ss`` plus the fraction with trailing zeros dropped (Spark's timestamp string)."""
-    text = value.strftime("%Y-%m-%d %H:%M:%S")
+    text = f"{value.year:04d}-" + value.strftime("%m-%d %H:%M:%S")  # strftime doesn't pad years < 1000
     if value.microsecond:
         text += "." + f"{value.microsecond:06d}".rstrip("0")
     return text
@@ -351,13 +352,15 @@ _TIMESTAMP_RE = re.compile(
     re.S,
 )
 _TIME_ONLY_RE = re.compile(r"T?[0-9]{1,2}:[0-9]{1,2}.*", re.S)
-_OFFSET_ZONE_RE = re.compile(r"(?:Z|(?:UTC|GMT|UT)?[+-][0-9]{1,2}(?::?[0-9]{2}(?::?[0-9]{2})?)?)")
+_OFFSET_ZONE_RE = re.compile(
+    r"Z|(?:UTC|GMT|UT)?(?P<sign>[+-])(?P<h>[0-9]{1,2})(?::?(?P<m>[0-9]{2})(?::?(?P<s>[0-9]{2}))?)?"
+)
 
 
 def _build_date(year: str, month: Optional[str], day: Optional[str]) -> date:
     try:
         return date(int(year), int(month or 1), int(day or 1))
-    except ValueError:
+    except (ValueError, OverflowError):
         raise _Malformed from None
 
 
@@ -369,11 +372,11 @@ def _parse_date(value: str) -> date:
 
 
 def _parse_timestamp(value: str) -> datetime:
-    """Zone-less ``yyyy[-mm[-dd[ hh[:mm[:ss[.ffffff]]]]]]``; fractions beyond micros are truncated.
+    """``yyyy[-mm[-dd[ hh[:mm[:ss[.ffffff]]]]]]`` plus an optional zone; fractions beyond micros are truncated.
 
-    A zone suffix (``Z``, ``+02:00``, ``UTC``, a region id) and a time-only string (which takes
-    the current date) both depend on the session time zone, which the Python engine does not
-    model yet — those raise ``not_implemented_yet`` instead of guessing.
+    Timestamps are held as naive datetimes in the session time zone, which (as Spark's default, the
+    JVM zone) is the process-local zone. A zone suffix (``Z``, ``+02:00``, ``UTC``, a region id) is
+    converted into it. A time-only string (which takes the current date) is not modelled yet.
     """
     text = _trim(value)
     if _TIME_ONLY_RE.fullmatch(text):
@@ -381,27 +384,38 @@ def _parse_timestamp(value: str) -> datetime:
     match = _TIMESTAMP_RE.fullmatch(text)
     if match is None:
         raise _Malformed
-    zone = match["zone"].strip()
-    if zone:
-        if _is_zone_id(zone):
-            not_implemented_yet("casting a string with a time zone to timestamp")
+    zone_text = match["zone"].strip()
+    zone = _zone(zone_text) if zone_text else None
+    if zone_text and zone is None:
         raise _Malformed
     day = _build_date(match["y"], match["m"], match["d"])
     hour, minute, second = int(match["H"] or 0), int(match["M"] or 0), int(match["S"] or 0)
     if hour > 23 or minute > 59 or second > 59:
         raise _Malformed
     micros = int((match["f"] or "0")[:6].ljust(6, "0"))
-    return datetime(day.year, day.month, day.day, hour, minute, second, micros)
+    parsed = datetime(day.year, day.month, day.day, hour, minute, second, micros)
+    if zone is None:
+        return parsed
+    return parsed.replace(tzinfo=zone).astimezone().replace(tzinfo=None)
 
 
-def _is_zone_id(text: str) -> bool:
-    if _OFFSET_ZONE_RE.fullmatch(text):
-        return True
+def _zone(text: str) -> Optional[tzinfo]:
+    """A zone suffix as ``tzinfo``: ``Z``, ``[UTC|GMT|UT]±h[h][[:]mm[[:]ss]]``, or a region id; else ``None``."""
+    match = _OFFSET_ZONE_RE.fullmatch(text)
+    if match is not None:
+        if match["sign"] is None:
+            return timezone.utc
+        hours, minutes, seconds = int(match["h"]), int(match["m"] or 0), int(match["s"] or 0)
+        if hours > 18 or minutes > 59 or seconds > 59:
+            return None
+        offset = timedelta(hours=hours, minutes=minutes, seconds=seconds)
+        return timezone(-offset if match["sign"] == "-" else offset)
+    if text in ("UTC", "GMT", "UT"):
+        return timezone.utc
     try:
-        ZoneInfo(text)
+        return ZoneInfo(text)
     except Exception:
-        return False
-    return True
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -426,6 +440,12 @@ def arithmetic(op: str, left: Any, right: Any, result_type: Any, strict: bool = 
             "[DIVIDE_BY_ZERO] Division by zero. Use `try_divide` to tolerate divisor being 0 and return NULL "
             'instead. If necessary set "spark.sql.ansi.enabled" to "false" to bypass this error.'
         )
+    if isinstance(result_type, DateType):
+        days = timedelta(days=right if isinstance(left, date) else left)
+        start = left if isinstance(left, date) else right
+        return start + days if op == "+" else start - days
+    if isinstance(result_type, DayTimeIntervalType):
+        return left - right
     if isinstance(result_type, DecimalType):
         exact = _DECIMAL_OPS[op](Decimal(left), Decimal(right), _DECIMAL_CONTEXT)
         try:

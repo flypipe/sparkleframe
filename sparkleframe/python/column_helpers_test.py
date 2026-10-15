@@ -5,7 +5,8 @@ tests own what parity can't reach yet: the lenient (``try_cast``) side of the sh
 flag, and the inputs deliberately left unimplemented.
 """
 
-from datetime import date
+import time
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -31,14 +32,40 @@ def test_null_stays_null_regardless_of_flag():
     assert cast_value(None, DateType(), strict=True) is None
 
 
+@pytest.fixture
+def session_zone(monkeypatch):
+    """Pin the process-local zone (the engine's session time zone) for the duration of a test."""
+
+    def pin(name: str) -> None:
+        monkeypatch.setenv("TZ", name)
+        time.tzset()
+
+    yield pin
+    monkeypatch.undo()
+    time.tzset()
+
+
 @pytest.mark.parametrize(
-    "value",
-    ["2024-01-15 10:30:45Z", "2024-01-15 10:30:45+02:00", "2024-01-15T10:30:45 UTC", "2024-01-15 10:30 Europe/Paris"],
+    "zone, value, expected",
+    [
+        ("UTC", "2024-01-15 10:30:45Z", datetime(2024, 1, 15, 10, 30, 45)),
+        ("UTC", "2024-01-15 10:30:45+02:00", datetime(2024, 1, 15, 8, 30, 45)),
+        ("UTC", "2024-01-15T10:30:45 UTC", datetime(2024, 1, 15, 10, 30, 45)),
+        ("UTC", "2024-01-15T10:30:45GMT-0130", datetime(2024, 1, 15, 12, 0, 45)),
+        ("UTC", "2024-01-15 10:30 Europe/Paris", datetime(2024, 1, 15, 9, 30)),
+        ("America/Sao_Paulo", "2024-01-15T10:30:45Z", datetime(2024, 1, 15, 7, 30, 45)),
+    ],
 )
-def test_timestamp_with_zone_not_implemented(value):
-    # Spark converts these into the session time zone, which the engine does not model yet.
-    with pytest.raises(NotImplementedError):
+def test_timestamp_with_zone_converts_to_session_zone(session_zone, zone, value, expected):
+    session_zone(zone)
+    assert cast_value(value, TimestampType(), strict=True) == expected
+
+
+@pytest.mark.parametrize("value", ["2024-01-15 10:30:45+25:00", "2024-01-15 10:30:45 Nowhere/City"])
+def test_timestamp_with_malformed_zone_is_invalid_input(value):
+    with pytest.raises(ValueError, match="CAST_INVALID_INPUT"):
         cast_value(value, TimestampType(), strict=True)
+    assert cast_value(value, TimestampType(), strict=False) is None
 
 
 @pytest.mark.parametrize("value", ["10:30:45", "T10:30:45"])

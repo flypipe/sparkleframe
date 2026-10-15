@@ -19,6 +19,7 @@ from sparkleframe.python.types import (
     BooleanType,
     ByteType,
     DateType,
+    DayTimeIntervalType,
     DecimalType,
     DoubleType,
     FloatType,
@@ -156,15 +157,51 @@ def coerce_arithmetic(op: str, left_dt: Any, right_dt: Any) -> Tuple[Any, Option
 
     # numeric + string: Spark promotes the string to the numeric operand's arithmetic type —
     # ``long`` when the numeric is integral (``int + "3" -> long``) and ``double`` when it is
-    # floating (``double + "3.14" -> double``). The numeric operand widens to that type too.
+    # floating (``double + "3.14" -> double``). The numeric operand widens to that type too, and
+    # ``/`` then divides those as doubles (so ``int / "1.5"`` fails casting "1.5" to long).
     if is_string(left_dt) and isinstance(right_dt, numeric):
-        result = DoubleType() if op == "/" else _string_arith_promote_type(right_dt)
-        return result, result, _cast_unless(right_dt, result)
+        promoted = _string_arith_promote_type(right_dt)
+        result = DoubleType() if op == "/" else promoted
+        return result, promoted, _cast_unless(right_dt, promoted)
     if isinstance(left_dt, numeric) and is_string(right_dt):
-        result = DoubleType() if op == "/" else _string_arith_promote_type(left_dt)
-        return result, _cast_unless(left_dt, result), result
+        promoted = _string_arith_promote_type(left_dt)
+        result = DoubleType() if op == "/" else promoted
+        return result, _cast_unless(left_dt, promoted), promoted
+
+    datetime_result = _coerce_datetime_arithmetic(op, left_dt, right_dt)
+    if datetime_result is not None:
+        return datetime_result
 
     not_implemented_yet(f"arithmetic coercion for {type(left_dt).__name__} {op} {type(right_dt).__name__}")
+
+
+_DATE_OFFSET_TYPES = (ByteType, ShortType, IntegerType)
+
+
+def _coerce_datetime_arithmetic(
+    op: str, left_dt: Any, right_dt: Any
+) -> Optional[Tuple[Any, Optional[Any], Optional[Any]]]:
+    """Spark's date/timestamp arithmetic, or ``None`` when ``left <op> right`` is not one of its forms.
+
+    - ``date + n`` / ``n + date`` / ``date - n`` (``n`` a byte/short/int) is ``date_add`` / ``date_sub``.
+    - ``date - date`` is an ``interval day``.
+    - ``timestamp - timestamp`` is an ``interval day to second``; a date operand widens to a timestamp.
+    """
+    if op == "+" and (
+        (isinstance(left_dt, DateType) and isinstance(right_dt, _DATE_OFFSET_TYPES))
+        or (isinstance(left_dt, _DATE_OFFSET_TYPES) and isinstance(right_dt, DateType))
+    ):
+        return DateType(), None, None
+    if op != "-":
+        return None
+    if isinstance(left_dt, DateType) and isinstance(right_dt, _DATE_OFFSET_TYPES):
+        return DateType(), None, None
+    if isinstance(left_dt, DateType) and isinstance(right_dt, DateType):
+        return DayTimeIntervalType(DayTimeIntervalType.DAY, DayTimeIntervalType.DAY), None, None
+    if isinstance(left_dt, (DateType, TimestampType)) and isinstance(right_dt, (DateType, TimestampType)):
+        result = DayTimeIntervalType(DayTimeIntervalType.DAY, DayTimeIntervalType.SECOND)
+        return result, _cast_unless(left_dt, TimestampType()), _cast_unless(right_dt, TimestampType())
+    return None
 
 
 def _cast_unless(dtype: Any, target: Any) -> Optional[Any]:
@@ -223,6 +260,8 @@ def find_wider_type(left: Any, right: Any) -> Optional[Any]:
         return widen_numeric(left, right)
     if {type(left), type(right)} == {DateType, TimestampType}:
         return TimestampType()
+    if is_string(left) != is_string(right):
+        return _wider_type_for_string(right if is_string(left) else left)
     if isinstance(left, ArrayType) and isinstance(right, ArrayType):
         element = find_wider_type(left.elementType, right.elementType)
         return None if element is None else ArrayType(element, left.containsNull or right.containsNull)
@@ -242,6 +281,22 @@ def find_wider_type(left: Any, right: Any) -> Optional[Any]:
                 return None
             fields.append(StructField(lf.name, wider, lf.nullable or rf.nullable))
         return StructType(fields)
+    return None
+
+
+def _wider_type_for_string(other: Any) -> Optional[Any]:
+    """Spark 4 ANSI ``findWiderTypeForString``: the type a string widens to next to ``other``.
+
+    ``bigint`` next to an integral, ``double`` next to a fractional (decimal included), the other
+    type next to any other atomic type; complex types have no common type with a string. The
+    string side is then cast strictly, so a malformed value raises ``CAST_INVALID_INPUT``.
+    """
+    if _is_integral(other):
+        return LongType()
+    if isinstance(other, (FloatType, DoubleType, DecimalType)):
+        return DoubleType()
+    if isinstance(other, (BooleanType, BinaryType, DateType, TimestampType)):
+        return other
     return None
 
 
@@ -284,12 +339,12 @@ def coerce_pow(left_dt: Any, right_dt: Any) -> Tuple[Any, Optional[Any], Optiona
 _INTEGRAL_DECIMAL_PRECISION = {"ByteType": 3, "ShortType": 5, "IntegerType": 10, "LongType": 20}
 
 
-def _is_orderable(dtype: Any) -> bool:
+def is_orderable(dtype: Any) -> bool:
     """Whether Spark can compare two values of ``dtype`` (maps never; arrays/structs if their children can)."""
     if isinstance(dtype, ArrayType):
-        return _is_orderable(dtype.elementType)
+        return is_orderable(dtype.elementType)
     if isinstance(dtype, StructType):
-        return all(_is_orderable(field.dataType) for field in dtype.fields)
+        return all(is_orderable(field.dataType) for field in dtype.fields)
     return isinstance(
         dtype,
         (
@@ -310,13 +365,13 @@ def _is_orderable(dtype: Any) -> bool:
     )
 
 
-def _contains_map(dtype: Any) -> bool:
+def contains_map(dtype: Any) -> bool:
     if isinstance(dtype, MapType):
         return True
     if isinstance(dtype, ArrayType):
-        return _contains_map(dtype.elementType)
+        return contains_map(dtype.elementType)
     if isinstance(dtype, StructType):
-        return any(_contains_map(field.dataType) for field in dtype.fields)
+        return any(contains_map(field.dataType) for field in dtype.fields)
     return False
 
 
@@ -370,12 +425,12 @@ def coerce_comparison(left_dt: Any, right_dt: Any) -> Tuple[Any, Optional[Any], 
     cast to the other side's type. Spark rejects maps (``INVALID_ORDERING_TYPE``) and unrelated types
     (``BINARY_OP_DIFF_TYPES``) at analysis time, raised here as :class:`TypeError`.
     """
-    if _contains_map(left_dt) or _contains_map(right_dt):
+    if contains_map(left_dt) or contains_map(right_dt):
         raise TypeError(
             f"[DATATYPE_MISMATCH.INVALID_ORDERING_TYPE] Cannot compare values of type "
             f'"{left_dt.simpleString().upper()}" and "{right_dt.simpleString().upper()}".'
         )
-    if not (_is_orderable(left_dt) and _is_orderable(right_dt)):
+    if not (is_orderable(left_dt) and is_orderable(right_dt)):
         not_implemented_yet(f"comparison of {left_dt.simpleString()} and {right_dt.simpleString()}")
     if left_dt == right_dt:
         return BooleanType(), None, None

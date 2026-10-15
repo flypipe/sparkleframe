@@ -36,18 +36,22 @@ from sparkleframe.python.ast.expressions import (
     UnaryExpression,
     WindowExpression,
 )
-from sparkleframe.python.column_helpers import spark_order
+from sparkleframe.python.column_helpers import cast_value, spark_order, to_spark_string
 from sparkleframe.python.types import (
     ArrayType,
     BinaryType,
     BooleanType,
+    ByteType,
     DateType,
     DecimalType,
     DoubleType,
+    FloatType,
+    IntegerType,
     LongType,
     MapType,
     NullType,
     Row,
+    ShortType,
     StringType,
     StructField,
     StructType,
@@ -103,7 +107,7 @@ def normalize_rows(data: Sequence[Any], schema: StructType) -> List[tuple]:
 
 
 def _to_struct_values(value: Any, dtype: Any) -> Any:
-    """Turn nested dicts/tuples given for struct columns into ``Row`` values."""
+    """Turn nested dicts/tuples given for struct columns into ``Row`` values; rescale decimals to the field."""
     if value is None:
         return None
     if isinstance(dtype, StructType):
@@ -118,7 +122,47 @@ def _to_struct_values(value: Any, dtype: Any) -> Any:
         return [_to_struct_values(v, dtype.elementType) for v in value]
     if isinstance(dtype, MapType):
         return {k: _to_struct_values(v, dtype.valueType) for k, v in value.items()}
+    if isinstance(dtype, StringType):
+        # Spark 4 stringifies whatever a string field is given (``True`` is ``"true"``).
+        return value if isinstance(value, str) else to_spark_string(value, infer_type(value))
+    accepted = _ACCEPTED_VALUES.get(type(dtype))
+    if accepted is not None and (
+        not isinstance(value, accepted) or (isinstance(value, bool) and bool not in accepted)
+    ):
+        raise TypeError(
+            f"[FIELD_DATA_TYPE_UNACCEPTABLE] {dtype!r} can not accept object {value!r} in type {type(value)}."
+        )
+    if type(dtype) in _INTEGRAL_RANGES:
+        low, high = _INTEGRAL_RANGES[type(dtype)]
+        if not low <= value <= high:
+            raise ValueError(f"[VALUE_OUT_OF_BOUNDS] Value for `obj` must be between {low} and {high}, got {value}.")
+    if isinstance(dtype, DecimalType):
+        return cast_value(value, dtype, strict=True)  # Spark stores it at the field's scale (HALF_UP)
+    if isinstance(dtype, DateType) and isinstance(value, datetime):
+        return value.date()
     return value
+
+
+# PySpark's ``_acceptable_types``: the Python values ``createDataFrame`` takes for each field type.
+_ACCEPTED_VALUES: Dict[type, Tuple[type, ...]] = {
+    BooleanType: (bool,),
+    ByteType: (int,),
+    ShortType: (int,),
+    IntegerType: (int,),
+    LongType: (int,),
+    FloatType: (float,),
+    DoubleType: (float,),
+    DecimalType: (Decimal,),
+    BinaryType: (bytes, bytearray),
+    DateType: (date,),
+    TimestampType: (datetime,),
+}
+_INTEGRAL_RANGES = {
+    ByteType: (-(2**7), 2**7 - 1),
+    ShortType: (-(2**15), 2**15 - 1),
+    IntegerType: (-(2**31), 2**31 - 1),
+    LongType: (-(2**63), 2**63 - 1),
+}
 
 
 def infer_type(value: Any) -> Any:
@@ -152,7 +196,7 @@ def infer_type(value: Any) -> Any:
 
 
 def infer_schema(data: Sequence[Any], names: Optional[Sequence[str]]) -> StructType:
-    """A schema from rows plus optional column names (types from the first non-null value per column)."""
+    """A schema from rows plus optional column names; each column's type is merged across all rows."""
     first = data[0] if data else None
     if names is None:
         if isinstance(first, Row) and hasattr(first, "__fields__"):
@@ -166,9 +210,7 @@ def infer_schema(data: Sequence[Any], names: Optional[Sequence[str]]) -> StructT
         dtype: Any = NullType()
         for row in data:
             value = row.get(name) if isinstance(row, dict) else row[index]
-            if value is not None:
-                dtype = infer_type(value)
-                break
+            dtype = _merge_types(dtype, infer_type(value), name)
         if isinstance(dtype, NullType) and data:
             raise ValueError(
                 f"[CANNOT_DETERMINE_TYPE] Some of types cannot be determined after inferring, column `{name}` is "
@@ -176,6 +218,23 @@ def infer_schema(data: Sequence[Any], names: Optional[Sequence[str]]) -> StructT
             )
         fields.append(StructField(name, dtype if not isinstance(dtype, NullType) else StringType(), True))
     return StructType(fields)
+
+
+def _merge_types(left: Any, right: Any, name: str) -> Any:
+    """PySpark's ``_merge_type`` for inference: nulls give way, a string absorbs other atomics, else it must agree."""
+    if isinstance(left, NullType) or left == right:
+        return right
+    if isinstance(right, NullType):
+        return left
+    complex_types = (ArrayType, MapType, StructType)
+    if (isinstance(left, StringType) or isinstance(right, StringType)) and not (
+        isinstance(left, complex_types) or isinstance(right, complex_types)
+    ):
+        return StringType()
+    raise TypeError(
+        f'[CANNOT_MERGE_TYPE] Can not merge type "{left.simpleString()}" and "{right.simpleString()}" for column '
+        f"`{name}`."
+    )
 
 
 # --------------------------------------------------------------------------- #
