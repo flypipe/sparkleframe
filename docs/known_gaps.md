@@ -177,3 +177,14 @@ returning wrong values. Use `element_at(col("arr"), col("i") + 1)` instead.
 The outer null is lost: `None` becomes a struct whose fields are all null, so `isNull()` on that
 column returns `False` where Spark returns `True`. Structs produced by `from_json` keep their outer
 nulls and are not affected.
+
+## Decimal arithmetic precision
+
+**Affected operations:** `+`, `-`, `*` with a `DecimalType` operand, e.g. `col("apr") * 100` on a
+`decimal(5,4)` column.
+
+Values and scale match Spark, but the precision does not: sparkleframe widens the result to 38
+(`decimal(38,4)`) where Spark applies its `DecimalPrecision` rules (`decimal(9,4)`, an integer
+literal counting as `decimal(3,0)`). Downstream functions that derive their type from the input,
+such as `round`, inherit the wider precision (`round(col("apr") * 100, 2)` is `decimal(37,2)`, not
+`decimal(8,2)`), though the scale and the rendered values are the same.
