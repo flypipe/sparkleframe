@@ -19,6 +19,21 @@ from __future__ import annotations
 POLARS_NOT_SUPPORTED = {
     "arithmetic.numeric_plus_string",
     "arithmetic.int_plus_date",
+    # functions.pow does not cast its operands to double (Column ``**`` does) — see
+    # docs/known_gaps.md "functions.pow operand types and Java NaN semantics".
+    "functions.pow.integral_operands_return_double",
+    "functions.pow.decimal_operands",
+    "functions.pow.null_operands",
+    "functions.pow.string_operand_casts_to_double",
+    "functions.pow.java_nan_semantics",
+    # Comparison / logical operators — see docs/known_gaps.md "Ordering on nested types" and
+    # "String and non-boolean operands in comparisons and logical operators".
+    "column.comparison.nested_nulls_and_nan",
+    "column.comparison.string_implicit_cast_valid",
+    "column.comparison.string_implicit_cast_malformed_raises",
+    "column.logical.string_and_null_operands",
+    "column.logical.malformed_string_raises",
+    "column.logical.non_boolean_operand_raises",
 }
 
 # Python engine — gated behaviors awaiting the build → analyze → evaluate engine
@@ -28,11 +43,9 @@ PYTHON_NOT_IMPLEMENTED = {
     "arithmetic.int_plus_date",
     # column_parity_test.py — Column arithmetic / comparison / cast (lifted from column_test.py).
     "column.arithmetic.col_col",
-    "column.comparison.col_col",
     "column.arithmetic.with_nulls",
     "column.arithmetic.literal_col",
     "column.arithmetic.col_col_mixed_types",
-    "column.comparison.col_col_mixed_types",
     "column.cast.string_to_numeric_valid",
     "column.try_cast.string_to_numeric_invalid_null",
     "column.cast.string_to_numeric_invalid_raises",
@@ -71,7 +84,6 @@ PYTHON_NOT_IMPLEMENTED = {
     "dataframe.drop.missing_column_ignored",
     "dataframe.is_not_null",
     "dataframe.reverse_arithmetic_operators",
-    "dataframe.logical_operations",
     "dataframe.filter_and_where",
     "dataframe.rlike",
     "dataframe.isin",
@@ -147,8 +159,6 @@ PYTHON_NOT_IMPLEMENTED = {
     "functions.months_between",
     "functions.nullif.basic",
     "functions.nullif.preserves_e1",
-    "functions.pow.col_col",
-    "functions.pow.literal_exponent",
     "functions.regexp_replace.str_vs_column",
     "functions.sort_array.asc",
     "functions.sort_array.desc",
@@ -209,4 +219,4 @@ GATES = {
 # lower it (never raise it) when you delete entries. The ratchet test enforces
 # that the live set never exceeds this number, so a regression can't quietly
 # re-gate a behavior instead of being fixed.
-PYTHON_GATE_HIGH_WATER_MARK = 170
+PYTHON_GATE_HIGH_WATER_MARK = 165

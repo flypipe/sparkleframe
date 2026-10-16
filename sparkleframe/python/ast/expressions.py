@@ -13,7 +13,7 @@ public API surface, so the analyzer and evaluator dispatch on the node kind plus
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 class Expression:
@@ -49,21 +49,30 @@ class Literal(Expression):
 
 
 class AttributeReference(Expression):
-    """An unresolved column reference, e.g. ``col("x")``."""
+    """A column reference, e.g. ``col("x")``, or ``df["x"]`` qualified by the frame's ``plan_id``.
 
-    def __init__(self, name: str) -> None:
+    The analyzer resolves it to a position in the frame's row tuples (:attr:`index`).
+    """
+
+    def __init__(self, name: str, plan_id: Optional[int] = None) -> None:
         super().__init__()
         self.name = name
+        self.plan_id = plan_id
+        self.index: Optional[int] = None
 
     def __repr__(self) -> str:
         return f"AttributeReference({self.name!r})"
+
+
+class Star(Expression):
+    """``col("*")`` / ``select("*")`` — expands to every column of the frame."""
 
 
 class BinaryExpression(Expression):
     """A two-operand op: arithmetic / comparison / logical.
 
     ``op`` is the operator token, e.g. ``"+"``, ``"-"``, ``"*"``, ``"/"``, ``"**"``,
-    ``"=="``, ``"!="``, ``"<"``, ``"<="``, ``">"``, ``">="``, ``"and"``, ``"or"``.
+    ``"=="``, ``"!="``, ``"<"``, ``"<="``, ``">"``, ``">="``, ``"<=>"``, ``"and"``, ``"or"``.
     """
 
     def __init__(self, op: str, left: Expression, right: Expression) -> None:
@@ -118,11 +127,16 @@ class Cast(Expression):
 
 
 class FunctionCall(Expression):
-    """A named function applied to argument expressions, e.g. ``abs(col("x"))`` -> ``FunctionCall("abs", [...])``."""
+    """A named function applied to argument expressions, e.g. ``abs(col("x"))`` -> ``FunctionCall("abs", [...])``.
 
-    def __init__(self, name: str, args: List[Expression]) -> None:
+    ``options`` carries the non-expression parameters a function takes (a regex pattern, a date
+    format, a ``from_json`` schema, ...), so they never masquerade as columns.
+    """
+
+    def __init__(self, name: str, args: List[Expression], options: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(list(args))
         self.name = name
+        self.options: Dict[str, Any] = dict(options) if options else {}
 
     @property
     def args(self) -> List[Expression]:
@@ -172,3 +186,63 @@ class Alias(Expression):
 
     def __repr__(self) -> str:
         return f"Alias({self.child!r}, {self.name!r})"
+
+
+class SortOrder(Expression):
+    """A sort key: ``col.asc()``, ``col.desc_nulls_last()``, ... (only meaningful in ``orderBy`` / windows)."""
+
+    def __init__(self, child: Expression, ascending: bool, nulls_first: bool) -> None:
+        super().__init__([child])
+        self.ascending = ascending
+        self.nulls_first = nulls_first
+
+    @property
+    def child(self) -> Expression:
+        return self.children[0]
+
+    def __repr__(self) -> str:
+        return f"SortOrder({self.child!r}, ascending={self.ascending}, nulls_first={self.nulls_first})"
+
+
+class WindowExpression(Expression):
+    """``function.over(window)``: a ranking function evaluated over partitioned, ordered rows."""
+
+    def __init__(self, function: Expression, partition_by: List[Expression], order_by: List[SortOrder]) -> None:
+        super().__init__([function, *partition_by, *order_by])
+        self.function = function
+        self.partition_by = list(partition_by)
+        self.order_by = list(order_by)
+
+    def __repr__(self) -> str:
+        return f"WindowExpression({self.function!r}, partition_by={self.partition_by!r}, order_by={self.order_by!r})"
+
+
+class LambdaVariable(Expression):
+    """A lambda parameter (the ``x`` in ``transform(col, lambda x: x + 1)``).
+
+    The analyzer types it from the enclosing higher-order function and assigns its :attr:`slot`
+    in the lambda scope the evaluator keeps per row.
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.name = name
+        self.slot: Optional[int] = None
+
+    def __repr__(self) -> str:
+        return f"LambdaVariable({self.name!r})"
+
+
+class LambdaFunction(Expression):
+    """A Python callable passed to a higher-order function; its body is built at analyze time.
+
+    The body can only be built once the parameter types are known, so the build phase keeps the
+    callable and the analyzer calls it with :class:`LambdaVariable` columns.
+    """
+
+    def __init__(self, func: Callable[..., Any]) -> None:
+        super().__init__()
+        self.func = func
+
+    def __repr__(self) -> str:
+        return f"LambdaFunction({getattr(self.func, '__name__', 'lambda')})"

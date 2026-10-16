@@ -1,14 +1,21 @@
-"""Unit tests for the ``functions`` surface: build-wired functions and unimplemented slots.
+"""Unit tests for the ``functions`` surface: the AST node each factory builds.
 
-As functions are implemented they must move from ``_UNIMPLEMENTED`` (slot-raises) into a
-positive build-shape test that asserts the AST node produced. Removing from one list without
-adding the other leaves the surface untested.
+Values are owned by the Spark parity suite; these tests own structure — which node a factory
+builds and that every function name it emits is registered for analyze/evaluate.
 """
 
 import pytest
 
 import sparkleframe.python.functions as F
-from sparkleframe.python.ast.expressions import AttributeReference, CaseWhen, FunctionCall, Literal
+from sparkleframe.python.ast.expressions import (
+    AttributeReference,
+    BinaryExpression,
+    CaseWhen,
+    FunctionCall,
+    Literal,
+    SortOrder,
+)
+from sparkleframe.python.ast.function_registry import lookup
 from sparkleframe.python.column import Column
 
 
@@ -54,10 +61,18 @@ class TestBuildWiredFunctions:
         assert isinstance(result._expr.otherwise, Literal)
         assert result._expr.otherwise.value == "no"
 
+    def test_pow_builds_power_node_with_base_on_left(self):
+        # Same node as ``Column.__pow__``; a str names a column, a scalar becomes a literal.
+        result = F.pow("b", 2)
+        assert isinstance(result._expr, BinaryExpression)
+        assert result._expr.op == "**"
+        assert isinstance(result._expr.left, AttributeReference) and result._expr.left.name == "b"
+        assert isinstance(result._expr.right, Literal) and result._expr.right.value == 2
 
-# Every remaining function is a declared slot that raises until implemented. Calling each one
-# (with dummy arguments) both documents the surface and guards that the slot stays wired.
-_UNIMPLEMENTED = [
+
+# Every function builds an unresolved node whose function name the registry can analyze and
+# evaluate — this guards that each public factory stays wired to a registered implementation.
+_FACTORIES = [
     lambda: F.get_json_object("c", "$.a"),
     lambda: F.from_json("c", "int"),
     lambda: F.to_json("c"),
@@ -90,7 +105,6 @@ _UNIMPLEMENTED = [
     lambda: F.dense_rank(),
     lambda: F.row_number(),
     lambda: F.floor("a"),
-    lambda: F.pow("a", "b"),
     lambda: F.isnan("a"),
     lambda: F.try_divide("a", "b"),
     lambda: F.initcap("a"),
@@ -107,7 +121,6 @@ _UNIMPLEMENTED = [
     lambda: F.datediff("a", "b"),
     lambda: F.months_between("a", "b"),
     lambda: F.rand(),
-    lambda: F.broadcast(object()),
     lambda: F.sort_array("a"),
     lambda: F.array_contains("a", 1),
     lambda: F.size("a"),
@@ -124,7 +137,16 @@ _UNIMPLEMENTED = [
 ]
 
 
-@pytest.mark.parametrize("call", _UNIMPLEMENTED)
-def test_unimplemented_functions_raise(call):
-    with pytest.raises(NotImplementedError):
-        call()
+@pytest.mark.parametrize("call", _FACTORIES)
+def test_factories_build_registered_function_nodes(call):
+    expr = call()._expr
+    if isinstance(expr, SortOrder):  # asc/desc wrap the column itself
+        assert isinstance(expr.child, AttributeReference)
+        return
+    assert isinstance(expr, FunctionCall)
+    assert lookup(expr.name) is not None
+
+
+def test_broadcast_returns_frame_unchanged():
+    frame = object()
+    assert F.broadcast(frame) is frame

@@ -1,321 +1,407 @@
 """``pyspark.sql.functions`` surface for the pure-Python engine.
 
 Each function is part of the **build** phase: it constructs an unresolved AST node (see
-:mod:`sparkleframe.python.ast.expressions`) and makes no type decisions. A handful of
-representative functions are wired to show the pattern across every node kind
-(:class:`AttributeReference`, :class:`Literal`, :class:`FunctionCall`, :class:`CaseWhen`);
-the remainder are declared with their PySpark signatures and raise — build the matching node
-here, then teach the analyzer/evaluator to handle it (and drain the gate in
-``sparkleframe/tests/parity/gaps.py``).
+:mod:`sparkleframe.python.ast.expressions`) and makes no type decisions. Type resolution and
+execution for every ``FunctionCall`` name live in
+:mod:`sparkleframe.python.ast.function_registry`.
+
+Argument conventions follow PySpark: a ``str`` passed where a column is expected names a column
+(``F.lower("name")``), while non-column parameters — regex patterns, date formats, ``from_json``
+schemas — are carried as node ``options`` rather than as columns.
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable, Optional, Union
 
-from sparkleframe.python._errors import not_implemented_yet
-from sparkleframe.python.ast.expressions import AttributeReference, CaseWhen, Expression, FunctionCall, Literal
+from sparkleframe.python.ast.expressions import (
+    AttributeReference,
+    BinaryExpression,
+    CaseWhen,
+    FunctionCall,
+    LambdaFunction,
+    Literal,
+    SortOrder,
+    Star,
+)
 from sparkleframe.python.column import Column, _column_ref, _to_expression
 
+ColumnOrName = Union[str, Column]
 
-def _fn(name: str, *cols: Any) -> Column:
+
+def _fn(name: str, *cols: Any, **options: Any) -> Column:
     """Build a :class:`Column` wrapping ``FunctionCall(name, [...])`` over column arguments."""
-    return Column(FunctionCall(name, [_column_ref(c) for c in cols]))
+    return Column(FunctionCall(name, [_column_ref(c) for c in cols], options))
 
 
-# --- Column builders (build wired) -----------------------------------------
+def _varargs(cols: tuple) -> list:
+    """PySpark accepts ``f(a, b)`` and ``f([a, b])`` interchangeably for variadic functions."""
+    if len(cols) == 1 and isinstance(cols[0], (list, tuple, set)):
+        return list(cols[0])
+    return list(cols)
+
+
+def _literal_value(value: Any) -> Any:
+    """A literal parameter given either as a Python value or as ``lit(value)``."""
+    if isinstance(value, Column) and isinstance(value._expr, Literal):
+        return value._expr.value
+    return value
+
+
+# --- Column builders ---------------------------------------------------------
 def col(name: str) -> Column:
+    if name == "*":
+        return Column(Star())
     return Column(AttributeReference(name))
 
 
+column = col
+
+
 def lit(value: Any) -> Column:
+    if isinstance(value, Column):
+        return value
     return Column(Literal(value))
 
 
-class WhenBuilder:
-    """Accumulates ``when(...).when(...)`` branches; ``otherwise`` finalizes into a :class:`CaseWhen`."""
-
-    def __init__(self, condition: Any, value: Any) -> None:
-        self._branches: list[tuple[Expression, Expression]] = [(_to_expression(condition), _to_expression(value))]
-
-    def when(self, condition: Any, value: Any) -> "WhenBuilder":
-        self._branches.append((_to_expression(condition), _to_expression(value)))
-        return self
-
-    def otherwise(self, value: Any) -> Column:
-        return Column(CaseWhen(self._branches, _to_expression(value)))
-
-
-def when(condition: Any, value: Any) -> WhenBuilder:
+def when(condition: Any, value: Any) -> Column:
     """Start a multi-branch conditional; chain ``.when(...).otherwise(...)``."""
-    return WhenBuilder(condition, value)
-
-
-# --- A few representative wrappers (build wired) ---------------------------
-def abs(col_name: Union[str, Column]) -> Column:
-    return _fn("abs", col_name)
-
-
-def lower(col_name: Union[str, Column]) -> Column:
-    return _fn("lower", col_name)
-
-
-def count(col_name: Union[str, Column]) -> Column:
-    return _fn("count", col_name)
-
-
-def coalesce(*cols: Union[str, Column]) -> Column:
-    return _fn("coalesce", *cols)
-
-
-# --- Remaining surface (slots — build the node when implementing) ----------
-def get_json_object(col: Union[str, Column], path: str) -> Column:
-    not_implemented_yet("functions.get_json_object")
-
-
-def from_json(col_name: Union[str, Column], schema: Union[Any, str]) -> Column:
-    not_implemented_yet("functions.from_json")
-
-
-def to_json(col_name: Union[str, Column], options: Any = None) -> Column:
-    not_implemented_yet("functions.to_json")
-
-
-def least(*cols: Any) -> Column:
-    not_implemented_yet("functions.least")
-
-
-def greatest(*cols: Any) -> Column:
-    not_implemented_yet("functions.greatest")
-
-
-def sum(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.sum")
-
-
-def mean(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.mean")
-
-
-def min(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.min")
-
-
-def max(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.max")
-
-
-def first(col_name: Union[str, Column], ignorenulls: bool = False) -> Column:
-    not_implemented_yet("functions.first")
-
-
-def map_from_entries(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.map_from_entries")
-
-
-def create_map(*cols: Any) -> Column:
-    not_implemented_yet("functions.create_map")
-
-
-def array(*cols: Any) -> Column:
-    not_implemented_yet("functions.array")
-
-
-def map_keys(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.map_keys")
-
-
-def collect_list(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.collect_list")
-
-
-def collect_set(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.collect_set")
-
-
-def transform(col_name: Union[str, Column], func: Callable[[Column], Any]) -> Column:
-    not_implemented_yet("functions.transform")
-
-
-def round(col_name: Union[str, Column], scale: int = 0) -> Column:
-    not_implemented_yet("functions.round")
-
-
-def to_timestamp(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
-    not_implemented_yet("functions.to_timestamp")
-
-
-def date_format(col_name: Union[str, Column], fmt: str) -> Column:
-    not_implemented_yet("functions.date_format")
-
-
-def regexp_replace(col_name: Union[str, Column], pattern: str, replacement: str) -> Column:
-    not_implemented_yet("functions.regexp_replace")
-
-
-def length(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.length")
-
-
-def asc(column: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.asc")
-
-
-def asc_nulls_first(column: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.asc_nulls_first")
-
-
-def asc_nulls_last(column: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.asc_nulls_last")
-
-
-def desc(column: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.desc")
-
-
-def desc_nulls_first(column: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.desc_nulls_first")
-
-
-def desc_nulls_last(column: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.desc_nulls_last")
-
-
-def rank() -> Column:
-    not_implemented_yet("functions.rank")
-
-
-def dense_rank() -> Column:
-    not_implemented_yet("functions.dense_rank")
-
-
-def row_number() -> Column:
-    not_implemented_yet("functions.row_number")
-
-
-def floor(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.floor")
-
-
-def pow(base: Any, exponent: Any) -> Column:
-    not_implemented_yet("functions.pow")
-
-
-def isnan(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.isnan")
-
-
-def try_divide(left: Union[str, Column], right: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.try_divide")
-
-
-def initcap(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.initcap")
-
-
-def md5(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.md5")
-
-
-def trim(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.trim")
-
-
-def nullif(e1: Union[str, Column], e2: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.nullif")
-
-
-def split(col_name: Union[str, Column], pattern: str, limit: int = -1) -> Column:
-    not_implemented_yet("functions.split")
-
-
-def substring(col_name: Union[str, Column], pos: int, length: int) -> Column:
-    not_implemented_yet("functions.substring")
-
-
-def now() -> Column:
-    not_implemented_yet("functions.now")
-
-
-def monotonically_increasing_id() -> Column:
-    not_implemented_yet("functions.monotonically_increasing_id")
-
-
-def current_timestamp() -> Column:
-    not_implemented_yet("functions.current_timestamp")
-
-
-def current_date() -> Column:
-    not_implemented_yet("functions.current_date")
-
-
-def date_sub(col_name: Union[str, Column], days: int) -> Column:
-    not_implemented_yet("functions.date_sub")
-
-
-def datediff(end: Union[str, Column], start: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.datediff")
-
-
-def months_between(end: Union[str, Column], start: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.months_between")
-
-
-def rand(seed: Optional[int] = None) -> Column:
-    not_implemented_yet("functions.rand")
+    return Column(CaseWhen([(_to_expression(condition), _to_expression(value))]))
 
 
 def broadcast(df: Any) -> Any:
-    not_implemented_yet("functions.broadcast")
+    """A join hint only — the engine has a single local plan, so the frame is returned unchanged."""
+    return df
 
 
-def sort_array(col_name: Union[str, Column], asc: bool = True) -> Column:
-    not_implemented_yet("functions.sort_array")
+# --- Math ----------------------------------------------------------------------
+def abs(col_name: ColumnOrName) -> Column:
+    return _fn("abs", col_name)
 
 
-def array_contains(col_name: Union[str, Column], value: Union[str, Column, Any]) -> Column:
-    not_implemented_yet("functions.array_contains")
+def floor(col_name: ColumnOrName) -> Column:
+    return _fn("floor", col_name)
 
 
-def size(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.size")
+def round(col_name: ColumnOrName, scale: int = 0) -> Column:
+    return _fn("round", col_name, scale=_literal_value(scale))
 
 
-def filter(col_name: Union[str, Column], func: Callable[[Column], Any]) -> Column:
-    not_implemented_yet("functions.filter")
+def pow(base: Any, exponent: Any) -> Column:
+    """``base ** exponent`` as a double; a ``str`` names a column, any other scalar is a literal.
+
+    Builds the same ``**`` node as :meth:`Column.__pow__` (PySpark's ``Column.__pow__`` *is*
+    ``pow``), so both share one analyze/evaluate path.
+    """
+    return Column(BinaryExpression("**", _column_ref(base), _column_ref(exponent)))
 
 
-def explode(col_name: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.explode")
+def isnan(col_name: ColumnOrName) -> Column:
+    return _fn("isnan", col_name)
 
 
-def concat(*cols: Union[str, Column]) -> Column:
-    not_implemented_yet("functions.concat")
+def try_divide(left: ColumnOrName, right: ColumnOrName) -> Column:
+    return _fn("try_divide", left, right)
 
 
-def struct(*cols: Any) -> Column:
-    not_implemented_yet("functions.struct")
+def greatest(*cols: ColumnOrName) -> Column:
+    return _fn("greatest", *cols)
 
 
-def try_to_timestamp(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
-    not_implemented_yet("functions.try_to_timestamp")
+def least(*cols: ColumnOrName) -> Column:
+    return _fn("least", *cols)
 
 
-def to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
-    not_implemented_yet("functions.to_date")
+def coalesce(*cols: ColumnOrName) -> Column:
+    return _fn("coalesce", *cols)
 
 
-def try_to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
-    not_implemented_yet("functions.try_to_date")
+def nullif(e1: ColumnOrName, e2: ColumnOrName) -> Column:
+    return _fn("nullif", e1, e2)
 
 
-def try_element_at(col_name: Union[str, Column], extraction: Union[str, int, Column]) -> Column:
-    not_implemented_yet("functions.try_element_at")
+def isnull(col_name: ColumnOrName) -> Column:
+    return _column(col_name).isNull()
 
 
-def element_at(col_name: Union[str, Column], extraction: Union[str, int, Column]) -> Column:
-    not_implemented_yet("functions.element_at")
+# --- Strings ---------------------------------------------------------------------
+def lower(col_name: ColumnOrName) -> Column:
+    return _fn("lower", col_name)
+
+
+def upper(col_name: ColumnOrName) -> Column:
+    return _fn("upper", col_name)
+
+
+def trim(col_name: ColumnOrName) -> Column:
+    return _fn("trim", col_name)
+
+
+def initcap(col_name: ColumnOrName) -> Column:
+    return _fn("initcap", col_name)
+
+
+def md5(col_name: ColumnOrName) -> Column:
+    return _fn("md5", col_name)
+
+
+def length(col_name: ColumnOrName) -> Column:
+    return _fn("length", col_name)
+
+
+def concat(*cols: ColumnOrName) -> Column:
+    return _fn("concat", *cols)
+
+
+def concat_ws(sep: str, *cols: ColumnOrName) -> Column:
+    return Column(FunctionCall("concat_ws", [Literal(sep), *(_column_ref(c) for c in _varargs(cols))]))
+
+
+def substring(col_name: ColumnOrName, pos: Any, len: Any) -> Column:
+    return Column(FunctionCall("substring", [_column_ref(col_name), _to_expression(pos), _to_expression(len)]))
+
+
+def split(col_name: ColumnOrName, pattern: str, limit: int = -1) -> Column:
+    return _fn("split", col_name, pattern=_literal_value(pattern), limit=_literal_value(limit))
+
+
+def regexp_replace(col_name: ColumnOrName, pattern: Any, replacement: Any) -> Column:
+    return _fn("regexp_replace", col_name, pattern=_literal_value(pattern), replacement=_literal_value(replacement))
+
+
+def regexp_extract(col_name: ColumnOrName, pattern: str, idx: int) -> Column:
+    return _fn("regexp_extract", col_name, pattern=pattern, idx=idx)
+
+
+# --- Dates and time ----------------------------------------------------------------
+def current_date() -> Column:
+    return _fn("current_date")
+
+
+def current_timestamp() -> Column:
+    return _fn("current_timestamp")
+
+
+def now() -> Column:
+    return _fn("current_timestamp")
+
+
+def date_sub(start: ColumnOrName, days: Any) -> Column:
+    return Column(FunctionCall("date_sub", [_column_ref(start), _to_expression(days)]))
+
+
+def date_add(start: ColumnOrName, days: Any) -> Column:
+    return Column(FunctionCall("date_add", [_column_ref(start), _to_expression(days)]))
+
+
+def add_months(start: ColumnOrName, months: Any) -> Column:
+    return Column(FunctionCall("add_months", [_column_ref(start), _to_expression(months)]))
+
+
+def datediff(end: ColumnOrName, start: ColumnOrName) -> Column:
+    return _fn("datediff", end, start)
+
+
+def months_between(date1: ColumnOrName, date2: ColumnOrName, roundOff: bool = True) -> Column:
+    return _fn("months_between", date1, date2, roundOff=roundOff)
+
+
+def date_format(date: ColumnOrName, format: str) -> Column:
+    return _fn("date_format", date, format=format)
+
+
+def trunc(date: ColumnOrName, format: str) -> Column:
+    return _fn("trunc", date, format=format)
+
+
+def to_date(col_name: ColumnOrName, format: Optional[Any] = None) -> Column:
+    return _fn("to_date", col_name, format=_literal_value(format))
+
+
+def try_to_date(col_name: ColumnOrName, format: Optional[Any] = None) -> Column:
+    return _fn("try_to_date", col_name, format=_literal_value(format))
+
+
+def to_timestamp(col_name: ColumnOrName, format: Optional[Any] = None) -> Column:
+    return _fn("to_timestamp", col_name, format=_literal_value(format))
+
+
+def try_to_timestamp(col_name: ColumnOrName, format: Optional[Any] = None) -> Column:
+    return _fn("try_to_timestamp", col_name, format=_literal_value(format))
+
+
+# --- Complex types -------------------------------------------------------------------
+def struct(*cols: ColumnOrName) -> Column:
+    return _fn("struct", *_varargs(cols))
+
+
+def array(*cols: ColumnOrName) -> Column:
+    return _fn("array", *_varargs(cols))
+
+
+def create_map(*cols: ColumnOrName) -> Column:
+    return _fn("create_map", *_varargs(cols))
+
+
+def map_from_entries(col_name: ColumnOrName) -> Column:
+    return _fn("map_from_entries", col_name)
+
+
+def map_keys(col_name: ColumnOrName) -> Column:
+    return _fn("map_keys", col_name)
+
+
+def map_values(col_name: ColumnOrName) -> Column:
+    return _fn("map_values", col_name)
+
+
+def map_entries(col_name: ColumnOrName) -> Column:
+    return _fn("map_entries", col_name)
+
+
+def element_at(col_name: ColumnOrName, extraction: Any) -> Column:
+    """1-based array index / map key; ``extraction`` is a literal unless it is a Column (PySpark's ``lit``)."""
+    return Column(FunctionCall("element_at", [_column_ref(col_name), _to_expression(extraction)]))
+
+
+def try_element_at(col_name: ColumnOrName, extraction: ColumnOrName) -> Column:
+    """Like ``element_at`` but null on a bad index; PySpark treats a ``str`` extraction as a column name."""
+    return _fn("try_element_at", col_name, extraction)
+
+
+def array_contains(col_name: ColumnOrName, value: Any) -> Column:
+    return Column(FunctionCall("array_contains", [_column_ref(col_name), _to_expression(value)]))
+
+
+def size(col_name: ColumnOrName) -> Column:
+    return _fn("size", col_name)
+
+
+def sort_array(col_name: ColumnOrName, asc: bool = True) -> Column:
+    return _fn("sort_array", col_name, asc=asc)
+
+
+def array_max(col_name: ColumnOrName) -> Column:
+    return _fn("array_max", col_name)
+
+
+def explode(col_name: ColumnOrName) -> Column:
+    return _fn("explode", col_name)
+
+
+def transform(col_name: ColumnOrName, f: Callable[..., Any]) -> Column:
+    return Column(FunctionCall("transform", [_column_ref(col_name), LambdaFunction(f)]))
+
+
+def filter(col_name: ColumnOrName, f: Callable[..., Any]) -> Column:
+    return Column(FunctionCall("filter", [_column_ref(col_name), LambdaFunction(f)]))
+
+
+# --- JSON ----------------------------------------------------------------------------
+def get_json_object(col: ColumnOrName, path: str) -> Column:
+    return _fn("get_json_object", col, path=path)
+
+
+def from_json(col_name: ColumnOrName, schema: Any, options: Optional[dict] = None) -> Column:
+    return _fn("from_json", col_name, schema=_literal_value(schema), options=options or {})
+
+
+def to_json(col_name: ColumnOrName, options: Optional[dict] = None) -> Column:
+    return _fn("to_json", col_name, options=options or {})
+
+
+# --- Aggregates ----------------------------------------------------------------------
+def count(col_name: ColumnOrName) -> Column:
+    if isinstance(col_name, str) and col_name == "*":
+        return Column(FunctionCall("count", [Star()]))
+    return _fn("count", col_name)
+
+
+def sum(col_name: ColumnOrName) -> Column:
+    return _fn("sum", col_name)
+
+
+def avg(col_name: ColumnOrName) -> Column:
+    return _fn("avg", col_name)
+
+
+mean = avg
+
+
+def min(col_name: ColumnOrName) -> Column:
+    return _fn("min", col_name)
+
+
+def max(col_name: ColumnOrName) -> Column:
+    return _fn("max", col_name)
+
+
+def first(col_name: ColumnOrName, ignorenulls: bool = False) -> Column:
+    return _fn("first", col_name, ignorenulls=ignorenulls)
+
+
+def collect_list(col_name: ColumnOrName) -> Column:
+    return _fn("collect_list", col_name)
+
+
+def collect_set(col_name: ColumnOrName) -> Column:
+    return _fn("collect_set", col_name)
+
+
+# --- Window ranking --------------------------------------------------------------------
+def row_number() -> Column:
+    return _fn("row_number")
+
+
+def rank() -> Column:
+    return _fn("rank")
+
+
+def dense_rank() -> Column:
+    return _fn("dense_rank")
+
+
+# --- Sort orders -------------------------------------------------------------------------
+def _column(value: ColumnOrName) -> Column:
+    return value if isinstance(value, Column) else Column(_column_ref(value))
+
+
+def _sort(value: ColumnOrName, ascending: bool, nulls_first: bool) -> Column:
+    return Column(SortOrder(_column(value)._expr, ascending, nulls_first))
+
+
+def asc(column: ColumnOrName) -> Column:
+    return _sort(column, True, True)
+
+
+def asc_nulls_first(column: ColumnOrName) -> Column:
+    return _sort(column, True, True)
+
+
+def asc_nulls_last(column: ColumnOrName) -> Column:
+    return _sort(column, True, False)
+
+
+def desc(column: ColumnOrName) -> Column:
+    return _sort(column, False, False)
+
+
+def desc_nulls_first(column: ColumnOrName) -> Column:
+    return _sort(column, False, True)
+
+
+def desc_nulls_last(column: ColumnOrName) -> Column:
+    return _sort(column, False, False)
+
+
+# --- Non-deterministic -----------------------------------------------------------------------
+def rand(seed: Optional[int] = None) -> Column:
+    return _fn("rand", seed=seed)
 
 
 def uuid() -> Column:
-    not_implemented_yet("functions.uuid")
+    return _fn("uuid")
+
+
+def monotonically_increasing_id() -> Column:
+    return _fn("monotonically_increasing_id")
