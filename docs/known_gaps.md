@@ -316,6 +316,17 @@ as `yyyy-MM-dd HH:mm:ss`, and it rejects every option other than `ignoreNullFiel
 **Workaround:** none that reproduces Spark's output exactly. Cast decimals to `double` if the consumer
 accepts numbers without a fixed scale. The pure-Python engine matches Spark.
 
+## Decimal arithmetic precision
+
+**Affected operations:** `+`, `-`, `*` with a `DecimalType` operand, e.g. `col("apr") * 100` on a
+`decimal(5,4)` column.
+
+Values and scale match Spark, but the precision does not: sparkleframe widens the result to 38
+(`decimal(38,4)`) where Spark applies its `DecimalPrecision` rules (`decimal(9,4)`, an integer
+literal counting as `decimal(3,0)`). Downstream functions that derive their type from the input,
+such as `round`, inherit the wider precision (`round(col("apr") * 100, 2)` is `decimal(37,2)`, not
+`decimal(8,2)`), though the scale and the rendered values are the same.
+
 ## Polars deviations found by the nba parity sweep
 
 The parity tests written for the Python engine (`Engine.PYTHON`), which datahub's nba function
