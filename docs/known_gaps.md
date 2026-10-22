@@ -436,6 +436,11 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
   - several Spark functions (`date_format`, `datediff`) and `IN` lists with expressions don't resolve;
   - `LIKE 'a\\'` (escape at the end) and an out-of-range `128Y` don't raise.
 
+**lit**
+
+- `lit([1, 2.5])` fails instead of widening the elements to `double`, and `lit(dict)` / `lit(tuple)` build
+  struct/list literals where Spark raises `UNSUPPORTED_FEATURE.LITERAL_TYPE` (`functions.lit.list`).
+
 **from_json**
 
 - A DDL schema string must be one of a few simple forms: `struct<...>` and field lists with nested types raise

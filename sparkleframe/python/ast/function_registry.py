@@ -731,7 +731,7 @@ register(
 
 def _resolve_array(node: FunctionCall, rctx: Any) -> Any:
     if not node.children:
-        return ArrayType(StringType(), False)
+        return ArrayType(NullType(), False)  # Spark 4: array() is array<void>
     element = _coerce_all_to_wider(node, "array")
     return ArrayType(element, True)
 

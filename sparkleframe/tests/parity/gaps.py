@@ -108,6 +108,7 @@ POLARS_NOT_SUPPORTED = {
     "dataframe.create.string_field_python_str",
     "dataframe.filter.sql_string_expressions",
     "functions.from_json.ddl_schema",
+    "functions.lit.list",
 }
 
 # Python engine — gated behaviors awaiting the build → analyze → evaluate engine

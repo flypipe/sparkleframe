@@ -1299,6 +1299,53 @@ def test_array_against_spark(engine, spark):
     assert_matches_spark(actual, expected, engine)
 
 
+@pytest.mark.feature("functions.lit.list")
+def test_lit_list_against_spark(engine, spark):
+    """``lit(list)`` is ``array`` of the items' literals: element types widen, nested lists nest, ``[]`` is void."""
+    F = engine.functions
+    schema = _schema(("id", _LONG))
+    rows = [(1,), (2,)]
+    values = [[1, 2, 3], [1, None], [1, 2.5], ["a", None], [[1], [2, 3]], [], [None], [True, False]]
+
+    def build(M):
+        return [M.col("id"), M.array().alias("empty")] + [M.lit(v).alias(f"v{i}") for i, v in enumerate(values)]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    # Usable in expressions like any array column.
+    actual_contains = engine.build_df(rows, schema).select(F.array_contains(F.lit([1, 3]), F.col("id")).alias("c"))
+    expected_contains = spark.createDataFrame(rows, schema).select(
+        SF.array_contains(SF.lit([1, 3]), SF.col("id")).alias("c")
+    )
+    assert_matches_spark(actual_contains, expected_contains, engine)
+
+
+@pytest.mark.feature("functions.lit.list")
+@pytest.mark.parametrize(
+    "value", [[1, "a"], {"a": 1}, (1, 2), [{"a": 1}]], ids=["uncastable_mix", "dict", "tuple", "list_of_dict"]
+)
+def test_lit_unsupported_collections_raise_like_spark(engine, spark, value):
+    """A mix that does not cast to the widened element type, and dicts or tuples (no literal type), raise."""
+    F = engine.functions
+    schema = _schema(("id", _LONG))
+    with pytest.raises(Exception):
+        spark.createDataFrame([(1,)], schema).select(SF.lit(value)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([(1,)], schema).select(F.lit(value)))
+
+
+@pytest.mark.feature("functions.lit.list")
+def test_lit_column_in_list_raises_like_spark(engine, spark):
+    F = engine.functions
+    with pytest.raises(Exception, match="COLUMN_IN_LIST"):
+        SF.lit([SF.col("id")])
+    with pytest.raises(Exception):
+        F.lit([F.col("id")])
+
+
 # ============================================================================ #
 # TestDateFormat / TestFloor / TestPow / TestIsnan / TestTryDivide / TestNullif
 # ============================================================================ #

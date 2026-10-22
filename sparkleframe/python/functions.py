@@ -59,8 +59,18 @@ column = col
 
 
 def lit(value: Any) -> Column:
+    """A literal; a list is ``array`` of its items' literals, as in PySpark. Dicts and tuples have no literal."""
     if isinstance(value, Column):
         return value
+    if isinstance(value, list):
+        if any(isinstance(item, Column) for item in value):
+            raise ValueError("[COLUMN_IN_LIST] `lit` does not allow a Column in a list.")
+        return array(*[lit(item) for item in value])
+    if isinstance(value, (dict, tuple)):
+        raise ValueError(
+            f"[UNSUPPORTED_FEATURE.LITERAL_TYPE] The feature is not supported: Literal for {value!r} of "
+            f"{type(value).__name__}."
+        )
     return Column(Literal(value))
 
 
