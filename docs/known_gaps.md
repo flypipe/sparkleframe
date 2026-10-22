@@ -427,6 +427,11 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
 - A DDL string schema (`"a int, b string"`) fails to build rows that a `StructType` builds
   (`dataframe.create.ddl_schema`).
 
+**toArrow**
+
+- There is no `toArrow` (PySpark 4's name). `to_arrow` returns Polars' own Arrow export, whose types differ from
+  Spark's (`large_string`, `large_list`) (`dataframe.to_arrow`).
+
 **Column**
 
 - `Column.like` is not implemented (`column.like`).

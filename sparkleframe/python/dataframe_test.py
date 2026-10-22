@@ -39,14 +39,6 @@ class TestDataFrameConstruction:
         assert df._schema is None
 
 
-class TestDataFrameUnimplementedSlotsRaise:
-    @pytest.mark.parametrize("call", [lambda df: df.to_arrow()])
-    def test_slot_raises(self, call):
-        df = DataFrame([(1,)], StructType([StructField("a", IntegerType())]))
-        with pytest.raises(NotImplementedError):
-            call(df)
-
-
 class TestToRecords:
     def test_to_records_zips_schema_field_names_to_row_tuples(self):
         schema = StructType([StructField("a", IntegerType()), StructField("b", IntegerType())])

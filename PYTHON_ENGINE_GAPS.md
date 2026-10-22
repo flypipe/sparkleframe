@@ -23,7 +23,7 @@ inputs) in `sparkleframe/tests/parity/`.
 | 4 | `lit(list)` / `lit(dict)` literals (Spark: list is `array`, dict/tuple raise) | done |
 | 5 | Numeric ↔ timestamp casts (epoch seconds); ANSI-rejected datetime casts raise at analysis | done |
 | 6 | `DataFrame.alias` with `alias.col` / `alias.*` resolution (self-joins) | done |
-| 7 | `DataFrame.to_arrow` | pending |
+| 7 | `DataFrame.toArrow` (PySpark 4) and its `to_arrow` alias, with Spark's Arrow types | done |
 | 8 | Datetime pattern letters `Q`, `w`, `K`, `z`, `V`; `D` (day-of-year) ignored when parsing | pending |
 | 9 | `get_json_object` `[*]` wildcard paths | pending |
 | 10 | Time-only string → timestamp cast | pending |

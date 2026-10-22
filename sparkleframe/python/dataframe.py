@@ -16,7 +16,6 @@ import itertools
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
-from sparkleframe.python._errors import not_implemented_yet
 from sparkleframe.python.ast import coercion
 from sparkleframe.python.ast.analyzer import AnalysisException, analyze
 from sparkleframe.python.ast.evaluator import EvalContext, eval_row
@@ -42,6 +41,7 @@ from sparkleframe.python.dataframe_helpers import (
     rows_as_dicts,
     sort_rows,
     tabular_input,
+    to_arrow_table,
     window_values,
 )
 from sparkleframe.python.types import (
@@ -772,8 +772,11 @@ class DataFrame(BaseDataFrame):
         plan_sets = [frozenset(p for p in s if not isinstance(p, str)) | {alias} for s in self._plan_sets]
         return self._derive(list(self._rows), list(self._schema.fields), plan_sets)
 
-    def to_arrow(self) -> Any:
-        not_implemented_yet("DataFrame.to_arrow")
+    def toArrow(self) -> Any:
+        """The frame as a ``pyarrow.Table`` with PySpark's Arrow types."""
+        return to_arrow_table(self._rows, self._schema)
+
+    to_arrow = toArrow  # the Polars engine's name
 
 
 class _Generated:

@@ -112,6 +112,7 @@ POLARS_NOT_SUPPORTED = {
     "dataframe.create.single_datatype_schema",
     "dataframe.create.string_field_python_str",
     "dataframe.filter.sql_string_expressions",
+    "dataframe.to_arrow",
     "functions.from_json.ddl_schema",
     "functions.lit.list",
 }

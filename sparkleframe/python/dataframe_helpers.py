@@ -346,6 +346,68 @@ def _arrow_predicates() -> List[Tuple[Callable[[Any], bool], type]]:
     ]
 
 
+def to_arrow_table(rows: List[tuple], schema: StructType) -> Any:
+    """PySpark's ``toArrow``: a ``pyarrow.Table`` with ``to_arrow_type`` column types.
+
+    Timestamps are the same instants Spark produces, labelled ``UTC`` (Spark labels them with the
+    session time zone; the engine's naive timestamps are process-local).
+    """
+    import pyarrow as pa
+
+    fields = [pa.field(f.name, _to_arrow_type(f.dataType), f.nullable) for f in schema.fields]
+    arrays = [
+        pa.array([_to_arrow_value(row[i], f.dataType) for row in rows], type=field.type)
+        for i, (f, field) in enumerate(zip(schema.fields, fields))
+    ]
+    return pa.Table.from_arrays(arrays, schema=pa.schema(fields))
+
+
+def _to_arrow_type(dtype: Any) -> Any:
+    import pyarrow as pa
+
+    if isinstance(dtype, StructType):
+        return pa.struct([pa.field(f.name, _to_arrow_type(f.dataType), f.nullable) for f in dtype.fields])
+    if isinstance(dtype, ArrayType):
+        return pa.list_(pa.field("element", _to_arrow_type(dtype.elementType), dtype.containsNull))
+    if isinstance(dtype, MapType):
+        value = pa.field("value", _to_arrow_type(dtype.valueType), dtype.valueContainsNull)
+        return pa.map_(_to_arrow_type(dtype.keyType), value)
+    if isinstance(dtype, DecimalType):
+        return pa.decimal128(dtype.precision, dtype.scale)
+    if isinstance(dtype, TimestampType):
+        return pa.timestamp("us", tz="UTC")
+    atomic = {
+        BooleanType: pa.bool_,
+        ByteType: pa.int8,
+        ShortType: pa.int16,
+        IntegerType: pa.int32,
+        LongType: pa.int64,
+        FloatType: pa.float32,
+        DoubleType: pa.float64,
+        StringType: pa.string,
+        BinaryType: pa.binary,
+        DateType: pa.date32,
+        NullType: pa.null,
+    }.get(type(dtype))
+    if atomic is None:
+        raise TypeError(f"[UNSUPPORTED_DATA_TYPE_FOR_ARROW_CONVERSION] {dtype.simpleString()} is not supported.")
+    return atomic()
+
+
+def _to_arrow_value(value: Any, dtype: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(dtype, StructType):
+        return {f.name: _to_arrow_value(v, f.dataType) for f, v in zip(dtype.fields, value)}
+    if isinstance(dtype, ArrayType):
+        return [_to_arrow_value(v, dtype.elementType) for v in value]
+    if isinstance(dtype, MapType):
+        return [(_to_arrow_value(k, dtype.keyType), _to_arrow_value(v, dtype.valueType)) for k, v in value.items()]
+    if isinstance(dtype, TimestampType):
+        return value.astimezone()  # session-local wall clock -> the instant
+    return value
+
+
 # --------------------------------------------------------------------------- #
 # Output names
 # --------------------------------------------------------------------------- #

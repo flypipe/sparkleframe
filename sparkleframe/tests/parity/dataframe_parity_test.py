@@ -1830,6 +1830,57 @@ def test_to_pandas_empty_and_malformed_against_spark(engine, spark):
         engine.build_df(bad, schema).select(F.col("s").cast(engine.dtype(_LONG))).toPandas()
 
 
+_ARROW_DDL = (
+    "b boolean, y tinyint, s smallint, i int, l bigint, f float, d double, dec decimal(5,2), str string, "
+    "bin binary, dt date, ts timestamp, arr array<int>, m map<string,bigint>, st struct<x:int,y:string>"
+)
+_ARROW_ROWS = [
+    (
+        True,
+        1,
+        2,
+        3,
+        4,
+        1.5,
+        2.5,
+        Decimal("1.25"),
+        "a",
+        b"ab",
+        date(2024, 1, 1),
+        datetime(2024, 1, 1, 10, 30, 0, 250),
+        [1, None],
+        {"k": 1},
+        (1, "z"),
+    ),
+    (None,) * 15,
+]
+
+
+@pytest.mark.feature("dataframe.to_arrow")
+def test_to_arrow_against_spark(engine, spark):
+    """``toArrow`` gives a ``pyarrow.Table`` with Spark's Arrow types (``int32`` int, ``list<element>``, maps)."""
+    actual = engine.create_df(_ARROW_ROWS, _ARROW_DDL).toArrow()
+    expected = spark.createDataFrame(_ARROW_ROWS, _ARROW_DDL).toArrow()
+    assert actual.schema.equals(expected.schema), f"\n{actual.schema}\nvs\n{expected.schema}"
+    assert actual.to_pylist() == expected.to_pylist()
+
+    # An empty frame keeps the schema; a derived frame converts its own result.
+    empty = engine.create_df([], _ARROW_DDL).toArrow()
+    assert empty.num_rows == 0 and empty.schema.equals(spark.createDataFrame([], _ARROW_DDL).toArrow().schema)
+
+    F = engine.functions
+    derived = engine.create_df(_ARROW_ROWS, _ARROW_DDL).select((F.col("i") + 1).alias("n")).toArrow()
+    expected_derived = spark.createDataFrame(_ARROW_ROWS, _ARROW_DDL).select((SF.col("i") + 1).alias("n")).toArrow()
+    assert derived.schema.equals(expected_derived.schema)
+    assert derived.to_pylist() == expected_derived.to_pylist()
+
+    # Malformed: toArrow evaluates the plan, so an ANSI failure raises.
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame([("abc",)], "s string").select(SF.col("s").cast("bigint")).toArrow()
+    with pytest.raises(Exception):
+        engine.create_df([("abc",)], "s string").select(F.col("s").cast(engine.dtype(_LONG))).toArrow()
+
+
 # ----------------------------------------------------------------------------- #
 # union (positional)
 # ----------------------------------------------------------------------------- #
