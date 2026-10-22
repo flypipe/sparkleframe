@@ -425,6 +425,12 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
 **Column**
 
 - `Column.like` is not implemented (`column.like`).
+- A number cast to timestamp is read as microseconds, not seconds, since the epoch
+  (`column.cast.numeric_to_timestamp`), and a timestamp does not cast to a number
+  (`column.cast.timestamp_to_numeric`).
+- Casts that Spark 4 ANSI rejects at analysis succeed: number/boolean → date, boolean → timestamp,
+  date → number/boolean and timestamp → boolean (`column.cast.ansi_datetime_mismatch_raises`).
+- NaN / ±inf cast to decimal raises; Spark gives null even under ANSI (`column.cast.non_finite_to_decimal_null`).
 
 **filter / where SQL strings**
 

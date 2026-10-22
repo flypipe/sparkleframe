@@ -72,8 +72,9 @@ def cast_value(value: Any, target_type: Any, strict: bool, source_type: Any = No
     except _Malformed:
         if not strict:
             return None
+        source = source_type.simpleString().upper() if source_type is not None else "STRING"
         raise ValueError(
-            f"[CAST_INVALID_INPUT] The value '{value}' of the type \"STRING\" cannot be cast to "
+            f"[CAST_INVALID_INPUT] The value '{value}' of the type \"{source}\" cannot be cast to "
             f'"{target_type.simpleString().upper()}" because it is malformed. Correct the value as per '
             f"the syntax, or change its target type. Use `try_cast` to tolerate malformed input and "
             f"return NULL instead."
@@ -102,6 +103,10 @@ def _cast(value: Any, target_type: Any, source_type: Any) -> Any:
         return to_spark_string(value, source_type)
     if isinstance(value, str):
         return _cast_string(value, target_type)
+    if isinstance(value, datetime) and isinstance(target_type, _NUMERIC_TYPES):
+        return _timestamp_to_number(value, target_type)
+    if isinstance(target_type, TimestampType) and isinstance(value, (int, float, Decimal)):
+        return _seconds_to_timestamp(value)
     if isinstance(target_type, BooleanType):
         return value if isinstance(value, bool) else value != 0
     if isinstance(target_type, (ByteType, ShortType, IntegerType, LongType)):
@@ -110,6 +115,8 @@ def _cast(value: Any, target_type: Any, source_type: Any) -> Any:
         result = float(value)
         return _round_to_float32(result) if isinstance(target_type, FloatType) else result
     if isinstance(target_type, DecimalType):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None  # Spark's castToDecimal turns the NumberFormatException into null, ANSI or not
         return to_decimal(value, target_type)
     if isinstance(target_type, DateType) and isinstance(value, date):
         return value.date() if isinstance(value, datetime) else value
@@ -138,6 +145,34 @@ def _cast(value: Any, target_type: Any, source_type: Any) -> Any:
             ],
         )
     not_implemented_yet(f"casting {type(value).__name__} to {type(target_type).__name__}")
+
+
+_NUMERIC_TYPES = (ByteType, ShortType, IntegerType, LongType, FloatType, DoubleType, DecimalType)
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_MICROS = 1_000_000
+
+
+def _seconds_to_timestamp(seconds: Any) -> datetime:
+    """Spark's numeric -> timestamp: seconds since the epoch (fraction truncated to micros), session-local."""
+    if isinstance(seconds, float) and not math.isfinite(seconds):
+        raise _Malformed
+    micros = int(Decimal(repr(seconds) if isinstance(seconds, float) else seconds) * _MICROS)
+    try:
+        return (_EPOCH + timedelta(microseconds=micros)).astimezone().replace(tzinfo=None)
+    except OverflowError:
+        raise _Overflow from None
+
+
+def _timestamp_to_number(value: datetime, target_type: Any) -> Any:
+    """Spark's timestamp -> numeric: whole seconds (floored) for integrals, fractional seconds otherwise."""
+    delta = value.astimezone() - _EPOCH
+    micros = (delta.days * 86_400 + delta.seconds) * _MICROS + delta.microseconds
+    if isinstance(target_type, (ByteType, ShortType, IntegerType, LongType)):
+        return _to_integral(micros // _MICROS, target_type)
+    seconds = micros / _MICROS
+    if isinstance(target_type, DecimalType):
+        return to_decimal(seconds, target_type)  # Spark goes through the double, too
+    return _round_to_float32(seconds) if isinstance(target_type, FloatType) else seconds
 
 
 def _to_integral(value: Any, target_type: Any) -> int:

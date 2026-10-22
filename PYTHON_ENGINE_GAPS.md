@@ -21,7 +21,7 @@ inputs) in `sparkleframe/tests/parity/`.
 | 3 | `filter`/`where` SQL strings: negative literals, arithmetic, `IN`, `BETWEEN`, `LIKE`, `RLIKE`, function calls, `CAST` | done |
 | 3b | `%` / modulo with ANSI remainder semantics (`Column.__mod__` and SQL `%`, missing in both engines) | pending |
 | 4 | `lit(list)` / `lit(dict)` literals (Spark: list is `array`, dict/tuple raise) | done |
-| 5 | Numeric → timestamp cast (epoch seconds); numeric → date raises like Spark | pending |
+| 5 | Numeric ↔ timestamp casts (epoch seconds); ANSI-rejected datetime casts raise at analysis | done |
 | 6 | `DataFrame.alias` | pending |
 | 7 | `DataFrame.to_arrow` | pending |
 | 8 | Datetime pattern letters `Q`, `w`, `K`, `z`, `V`; `D` (day-of-year) ignored when parsing | pending |

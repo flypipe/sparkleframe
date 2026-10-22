@@ -147,6 +147,13 @@ class _Analyzer:
     def _cast(self, expr: Cast) -> Expression:
         child = self.resolve(expr.child)
         target = parse_ddl_type(expr.target_type) if isinstance(expr.target_type, str) else expr.target_type
+        mismatch = coercion.ansi_cast_error(child.data_type, target)
+        if mismatch is not None:
+            source_name, target_name = child.data_type.simpleString().upper(), target.simpleString().upper()
+            raise AnalysisException(
+                f'[DATATYPE_MISMATCH.{mismatch}] Cannot resolve "CAST({expr.child!r} AS {target_name})" due to data '
+                f'type mismatch: cannot cast "{source_name}" to "{target_name}" with ANSI mode on.'
+            )
         resolved = Cast(child, target, strict=expr.strict)
         resolved.data_type = target
         return resolved

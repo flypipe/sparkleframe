@@ -98,6 +98,10 @@ POLARS_NOT_SUPPORTED = {
     "window.row_number.without_order_raises",
     # Found by the Python engine gap work — see docs/known_gaps.md "Polars deviations found by the Python
     # engine gap work".
+    "column.cast.ansi_datetime_mismatch_raises",
+    "column.cast.non_finite_to_decimal_null",
+    "column.cast.numeric_to_timestamp",
+    "column.cast.timestamp_to_numeric",
     "column.like",
     "dataframe.create.ddl_schema",
     "dataframe.create.empty_inference_raises",
