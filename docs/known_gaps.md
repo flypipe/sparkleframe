@@ -461,6 +461,13 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
   ids (`VV`) or `GMT+2` offsets (`O`), and do not raise for format-only letters (`Q`, `E`, `F`)
   (`functions.to_timestamp.pattern_letters`).
 
+**get_json_object**
+
+- `[*]` wildcards return only some of the matches, and do not follow Spark's rules: a single match unwrapped,
+  `[*][*]` flattened, JSON-null fields dropped (`functions.get_json_object.wildcard`).
+- Non-integer numbers are copied from the source text; Spark rewrites them as Java doubles (`1.50` is `1.5`,
+  `1e2` is `100.0`, an overflow is `"Infinity"`) (`functions.get_json_object.number_rendering`).
+
 **lit**
 
 - `lit([1, 2.5])` fails instead of widening the elements to `double`, and `lit(dict)` / `lit(tuple)` build

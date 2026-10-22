@@ -2327,6 +2327,77 @@ def test_get_json_object_invalid_path_returns_null(engine, spark, path):
     assert_matches_spark(actual, expected, engine)
 
 
+_WILDCARD_DOCS = [
+    '{"a":[1,2,3]}',
+    '{"a":[1]}',
+    '{"a":[]}',
+    '{"a":["x","y"]}',
+    '{"a":["x"]}',
+    '{"a":[{"b":1},{"b":2},{"c":3}]}',
+    '{"a":[{"b":1}]}',
+    '{"a":[{"b":"s"},{"b":"t"}]}',
+    '{"a":[[1,2],[3]]}',
+    '{"a":[{"b":[1,2]},{"b":[3]}]}',
+    "[1,2]",
+    '[{"b":1},{"b":2}]',
+    '{"a":{"b":1}}',
+    '{"a":[null,1]}',
+    '{"a":[{"b":null},{"b":2}]}',
+    '{"a":[true,{"x":1.50}]}',
+    '{"a": [1, ',
+    "not json",
+    None,
+]
+
+
+@pytest.mark.feature("functions.get_json_object.wildcard")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "$.a[*]",
+        "$.a[*].b",
+        "$[*]",
+        "$[*].b",
+        "$.a[*][0]",
+        "$.a[0][*]",
+        "$.a[*][*]",
+        "$.a[*].b[0]",
+        "$.a[*].b[*]",
+        "$.a.b[*]",
+        "$.a[*].c",
+    ],
+)
+def test_get_json_object_wildcard_against_spark(engine, spark, path):
+    """``[*]`` collects every match: one match is unwrapped, strings are quoted, ``[*][*]`` flattens, JSON null drops."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [(d,) for d in _WILDCARD_DOCS]
+    actual = engine.build_df(rows, schema).select("j", F.get_json_object("j", path).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.get_json_object("j", path).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.get_json_object.number_rendering")
+@pytest.mark.parametrize("path", ["$.a", "$.a.x", "$.a[0]", "$.a[*]"])
+def test_get_json_object_number_rendering_against_spark(engine, spark, path):
+    """Non-integer numbers come back as Java doubles (``1.50`` is ``1.5``, ``1e2`` is ``100.0``); integers verbatim."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [
+        ('{"a":{"x":1.50}}',),
+        ('{"a":1.50}',),
+        ('{"a":[1.50,2]}',),
+        ('{"a":{"x":1e2,"y":-0.0,"z":1.0E+2,"w":12345678901234567890,"v":0.1,"u":1.23456789012345678}}',),
+        ('{"a":[{"x":1e2}]}',),
+        ('{"a":[1e400, 1e-400, 12.5e-3]}',),
+        ('{"a":[1.5',),
+        (None,),
+    ]
+    actual = engine.build_df(rows, schema).select("j", F.get_json_object("j", path).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.get_json_object("j", path).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
 _TRADELINE_JSON = json.dumps(
     {
         "BUREAU": ["EQUIFAX"],

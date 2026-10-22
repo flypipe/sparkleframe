@@ -115,6 +115,8 @@ POLARS_NOT_SUPPORTED = {
     "dataframe.to_arrow",
     "functions.date_format.pattern_letters",
     "functions.from_json.ddl_schema",
+    "functions.get_json_object.number_rendering",
+    "functions.get_json_object.wildcard",
     "functions.lit.list",
     "functions.to_timestamp.pattern_letters",
 }

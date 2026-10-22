@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sparkleframe.python._errors import not_implemented_yet
+from sparkleframe.python.column_helpers import java_float_string
 
 
 def spark_pow(base: Optional[float], exponent: Optional[float]) -> Optional[float]:
@@ -643,6 +644,26 @@ def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _jackson_text(value: Any) -> str:
+    """JSON text the way Jackson's ``copyCurrentStructure`` writes it for ``get_json_object``.
+
+    Integers keep their digits; any other number is read as a double and written with Java's
+    ``Double.toString`` (``1.50`` is ``1.5``, ``1e2`` is ``100.0``), a non-finite one as a string.
+    """
+    if isinstance(value, JsonNumber):
+        if not re.search(r"[.eE]", value.text):
+            return value.text
+        number = float(value.text)
+        return java_float_string(number) if math.isfinite(number) else f'"{java_float_string(number)}"'
+    if isinstance(value, dict):
+        return (
+            "{" + ",".join(f"{json.dumps(k, ensure_ascii=False)}:{_jackson_text(v)}" for k, v in value.items()) + "}"
+        )
+    if isinstance(value, list):
+        return "[" + ",".join(_jackson_text(v) for v in value) + "]"
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _double_quoted(text: str) -> str:
     """Rewrite single-quoted JSON strings as double-quoted ones (``get_json_object`` accepts ``{'a': 1}``)."""
     if "'" not in text:
@@ -680,6 +701,7 @@ def get_json_object(text: str, path: str) -> Optional[str]:
         node = load_json(_double_quoted(text))
     except ValueError:
         return None
+    steps: List[Tuple[str, Any]] = []
     pos = 1
     while pos < len(path):
         match = _JSON_PATH_STEP_RE.match(path, pos)
@@ -687,19 +709,78 @@ def get_json_object(text: str, path: str) -> Optional[str]:
             return None
         name = match.group(1) if match.group(1) is not None else match.group(2)
         if name is not None:
-            if not isinstance(node, dict) or name not in node:
-                return None
-            node = node[name]
+            steps.append(("key", name))
         elif match.group(3) is not None:
-            index = int(match.group(3))
-            if not isinstance(node, list) or index >= len(node):
-                return None
-            node = node[index]
+            steps.append(("index", int(match.group(3))))
         else:
-            not_implemented_yet("get_json_object wildcard paths")
+            steps.append(("wildcard", None))
         pos = match.end()
+    if any(kind == "wildcard" for kind, _ in steps):
+        out: List[str] = []
+        return "".join(out) if _evaluate_json_path(node, steps, _RAW, out) else None
+    for kind, step in steps:
+        if kind == "key":
+            if not isinstance(node, dict) or step not in node:
+                return None
+            node = node[step]
+        else:
+            if not isinstance(node, list) or step >= len(node):
+                return None
+            node = node[step]
     if node is None:
         return None
     if isinstance(node, str):
         return node
-    return json_text(node)
+    return _jackson_text(node)
+
+
+_RAW, _QUOTED, _FLATTEN = "raw", "quoted", "flatten"
+
+
+def _evaluate_json_path(node: Any, steps: List[Tuple[str, Any]], style: str, out: List[str]) -> bool:
+    """Spark's ``GetJsonObject.evaluatePath`` for paths with ``[*]``: append the JSON written, return whether it matched.
+
+    A top-level string is written unquoted (raw); under a wildcard values are quoted JSON, and a
+    wildcard that matched exactly one element drops its outer array. ``[*][*]`` flattens nested
+    arrays, and a field holding JSON null does not match.
+    """
+    if not steps:
+        if isinstance(node, str) and style == _RAW:
+            out.append(node)
+            return True
+        if isinstance(node, list) and style == _FLATTEN:
+            matched = False
+            for item in node:
+                matched |= _evaluate_json_path(item, [], style, out)
+            return matched
+        out.append(_jackson_text(node))
+        return True
+    (kind, step), rest = steps[0], steps[1:]
+    if kind == "key":
+        if not isinstance(node, dict) or node.get(step) is None:
+            return False
+        return _evaluate_json_path(node[step], rest, style, out)
+    if not isinstance(node, list):
+        return False
+    if kind == "index":
+        if step >= len(node):
+            return False
+        next_style = _QUOTED if rest and rest[0][0] == "wildcard" else style
+        return _evaluate_json_path(node[step], rest, next_style, out)
+    inner: List[str] = []
+    if rest and rest[0][0] == "wildcard" and style != _QUOTED:  # [*][*]: Hive's flattening double wildcard
+        matched = False
+        for item in node:
+            matched |= _evaluate_json_path(item, rest[1:], _FLATTEN, inner)
+        out.append("[" + ",".join(inner) + "]")
+        return matched
+    if style == _QUOTED:
+        matched = False
+        for item in node:
+            matched |= _evaluate_json_path(item, rest, _QUOTED, inner)
+        out.append("[" + ",".join(inner) + "]")
+        return matched
+    count = sum(_evaluate_json_path(item, rest, _QUOTED if style == _RAW else _FLATTEN, inner) for item in node)
+    if count:
+        out.append(",".join(inner) if count == 1 else "[" + ",".join(inner) + "]")
+    return count > 0
