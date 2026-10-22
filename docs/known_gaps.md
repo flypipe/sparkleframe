@@ -426,6 +426,16 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
 
 - `Column.like` is not implemented (`column.like`).
 
+**filter / where SQL strings**
+
+- Predicate strings go to `pl.sql_expr`, whose SQL dialect is not Spark's
+  (`dataframe.filter.sql_string_expressions`):
+  - typed number literals (`1e0`, `2S`, `1Y`), double-quoted strings and `\'` escapes are not understood;
+  - string escapes (`\u0031`, `\061`, `\d`) are not unescaped, and adjacent literals (`'a' '1'`) don't concatenate;
+  - `LIKE` escapes, `IS [NOT] TRUE/FALSE/UNKNOWN`, `NOT IN` with a null candidate and `round` give different rows;
+  - several Spark functions (`date_format`, `datediff`) and `IN` lists with expressions don't resolve;
+  - `LIKE 'a\\'` (escape at the end) and an out-of-range `128Y` don't raise.
+
 **from_json**
 
 - A DDL schema string must be one of a few simple forms: `struct<...>` and field lists with nested types raise

@@ -1347,6 +1347,151 @@ def test_filter_sql_string_malformed_raises(engine, spark, predicate, spark_erro
         engine.to_records(engine.build_df(_SQL_FILTER_ROWS, _SQL_FILTER_SCHEMA).filter(predicate))
 
 
+_SQL_EXPR_SCHEMA = _schema(
+    ("id", _LONG), ("s", _STR), ("d", SparkDateType()), ("x", SparkDoubleType()), ("b", SparkBooleanType())
+)
+_SQL_EXPR_ROWS = [
+    (1, "a1", date(2024, 1, 1), 1.5, True),
+    (2, "B_2", date(2024, 6, 1), None, False),
+    (-3, None, None, -2.0, None),
+    (4, "it's", date(2025, 1, 1), 0.0, True),
+    (5, "a%b", date(2024, 3, 1), 2.5, False),
+    (None, "nil", None, None, None),
+]
+
+
+@pytest.mark.feature("dataframe.filter.sql_string_expressions")
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        # arithmetic, unary sign and typed number literals
+        "id > -1",
+        "-id < 0",
+        "+id = 1",
+        "id + 1 = 3",
+        "id - 1 >= 1 AND id * 2 <= 8",
+        "id / 2 > 1",
+        "x * 2 > id",
+        "1.5 = x",
+        "x = 1.50",
+        "1e0 = id",
+        "10L > id",
+        "2S = id",
+        "1Y = id",
+        "x = 2.5D",
+        "id = 1BD",
+        "id < 9223372036854775807",
+        # IN / BETWEEN
+        "id IN (1, 4)",
+        "id NOT IN (1, 4)",
+        "id IN (1, NULL)",
+        "id NOT IN (1, NULL)",
+        "s IN ('a1', 'nil')",
+        "id IN (1 + 1, -3)",
+        "id BETWEEN 1 AND 2",
+        "id NOT BETWEEN 1 AND 2 AND s IS NOT NULL",
+        "x BETWEEN -2 AND 1.5",
+        "d BETWEEN DATE '2024-02-01' AND DATE '2024-12-31'",
+        # LIKE / RLIKE
+        "s LIKE 'a%'",
+        "s NOT LIKE 'a%'",
+        "s LIKE '%\\\\_%'",
+        "s LIKE 'a\\\\%b'",
+        "s LIKE '_1'",
+        "s RLIKE '^[A-Z]'",
+        "s REGEXP '\\\\d$'",
+        "s RLIKE '\\d$'",
+        "s NOT RLIKE 'a'",
+        # IS
+        "b IS TRUE",
+        "b IS NOT TRUE",
+        "b IS FALSE",
+        "b IS NOT FALSE",
+        "b IS UNKNOWN",
+        "b IS NOT UNKNOWN",
+        "id IS DISTINCT FROM 1",
+        "id IS NOT DISTINCT FROM NULL",
+        # strings: escapes, double quotes, adjacent literals, concatenation
+        "s = 'it\\'s'",
+        "s = 'it''s'",
+        's = "it\'s"',
+        's = "a1"',
+        "s = 'a' '1'",
+        "s || 'x' = 'a1x'",
+        "s = 'a\\u0031'",
+        "s = 'a\\061'",
+        # function calls and casts
+        "upper(s) = 'A1'",
+        "lower(s) = 'b_2'",
+        "coalesce(x, 0) > 0",
+        "coalesce(id, 0) = 0",
+        "length(s) = 3",
+        "trim(s) = 'a1'",
+        "round(x, 0) = 2",
+        "abs(id) = 3",
+        "date_format(d, 'yyyy') = '2025'",
+        "datediff(d, DATE '2024-01-01') > 100",
+        "CAST(s AS string) = 'a1'",
+        "cast(id as double) > 1.5",
+        "CAST(id AS decimal(10, 2)) = 4.00",
+        "CAST(x AS int) = 1",
+        "d > DATE '2024-03-01'",
+        "TIMESTAMP '2024-03-01 00:00:00' < CAST(d AS timestamp)",
+        # precedence
+        "NOT id = 1",
+        "NOT id IN (1, 2) AND s IS NOT NULL",
+        "(id = 1 OR id = 2) AND s IS NOT NULL",
+        "id = 1 OR id = 2 AND s IS NULL",
+        "id + 2 * 3 = 7",
+        "(id + 2) * 3 = 9",
+        "-id * 2 = 6",
+    ],
+)
+def test_filter_sql_string_expressions_against_spark(engine, spark, predicate):
+    """SQL predicate strings beyond plain comparisons, with Spark's literal typing, string escapes and precedence."""
+    actual = engine.build_df(_SQL_EXPR_ROWS, _SQL_EXPR_SCHEMA).filter(predicate)
+    expected = spark.createDataFrame(_SQL_EXPR_ROWS, _SQL_EXPR_SCHEMA).filter(predicate)
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("dataframe.filter.sql_string_expressions")
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "CAST(s AS int) > 0",
+        "id IN (1, 2",
+        "id BETWEEN 1",
+        "s LIKE 'a\\\\'",
+        "s RLIKE '['",
+        "nosuchfn(id) = 1",
+        "CAST(id AS nosuchtype) = 1",
+        "d > DATE 'not-a-date'",
+        "id = 99999999999999999999L",
+        "id = 128Y",
+        "id NOT = 1",
+    ],
+    ids=[
+        "ansi_cast",
+        "unclosed_in",
+        "between_without_and",
+        "like_escape_at_end",
+        "bad_regex",
+        "unknown_function",
+        "unknown_type",
+        "bad_date_literal",
+        "bigint_literal_overflow",
+        "tinyint_literal_overflow",
+        "not_without_predicate",
+    ],
+)
+def test_filter_sql_string_expressions_malformed_raises(engine, spark, predicate):
+    """Malformed predicate strings, invalid literals and ANSI cast failures raise."""
+    with pytest.raises(Exception):
+        spark.createDataFrame(_SQL_EXPR_ROWS, _SQL_EXPR_SCHEMA).filter(predicate).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(_SQL_EXPR_ROWS, _SQL_EXPR_SCHEMA).filter(predicate))
+
+
 # ----------------------------------------------------------------------------- #
 # __getattr__
 # ----------------------------------------------------------------------------- #

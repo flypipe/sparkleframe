@@ -56,6 +56,7 @@ from sparkleframe.python.types import (
     StructField,
     StructType,
     TimestampType,
+    parse_ddl_type,
 )
 
 # --------------------------------------------------------------------------- #
@@ -493,14 +494,36 @@ def find_nodes(expr: Expression, predicate: Callable[[Expression], bool], stop_a
 # --------------------------------------------------------------------------- #
 
 _SQL_TOKEN_RE = re.compile(
-    r"\s*(?:(?P<num>\d+\.\d*|\.\d+|\d+)|(?P<str>'(?:[^']|'')*')|(?P<ident>`[^`]+`|[A-Za-z_][A-Za-z0-9_.]*)"
-    r"|(?P<op><=>|<=|>=|<>|!=|==|=|<|>|\(|\)))"
+    r"\s*(?:(?P<num>(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?(?i:BD|[LSYD])?(?![A-Za-z0-9_]))"
+    r"|(?P<str>'(?:[^'\\]|\\.|'')*'|\"(?:[^\"\\]|\\.|\"\")*\")"
+    r"|(?P<ident>`[^`]+`|[A-Za-z_][A-Za-z0-9_.]*)"
+    r"|(?P<op><=>|<=|>=|<>|!=|==|\|\||[=<>()+\-*/,]))"
 )
+_COMPARISONS = {
+    "=": "==",
+    "==": "==",
+    "<>": "!=",
+    "!=": "!=",
+    "<": "<",
+    "<=": "<=",
+    ">": ">",
+    ">=": ">=",
+    "<=>": "<=>",
+}
+# Spark's ``unescapeSQLString`` single-character escapes; ``\%`` and ``\_`` keep their backslash for LIKE.
+_SQL_ESCAPES = {"0": "\0", "b": "\b", "n": "\n", "r": "\r", "t": "\t", "Z": "\x1a", "%": "\\%", "_": "\\_"}
+_TYPED_LITERALS = {"DATE": DateType, "TIMESTAMP": TimestampType}
 
 
 def parse_sql_predicate(text: str) -> Expression:
-    """Parse the predicate grammar ``filter("...")`` supports: comparisons, IS [NOT] NULL, AND/OR/NOT."""
-    tokens: List[Tuple[str, str]] = []
+    """Parse a ``filter("...")`` SQL predicate with Spark's precedence, loosest first.
+
+    ``OR``; ``AND``; ``NOT``; comparisons, ``IS [NOT] NULL|TRUE|FALSE|UNKNOWN|DISTINCT FROM``,
+    ``[NOT] IN (...)``, ``[NOT] BETWEEN``, ``[NOT] LIKE|RLIKE|REGEXP``; ``+ - ||``; ``* /``; unary sign;
+    then literals (typed numbers, escaped strings, ``DATE '...'``), ``CAST(x AS type)``, function
+    calls and column names.
+    """
+    tokens: List[Tuple[str, str, int, int]] = []
     pos = 0
     while pos < len(text):
         match = _SQL_TOKEN_RE.match(text, pos)
@@ -509,86 +532,265 @@ def parse_sql_predicate(text: str) -> Expression:
                 break
             not_implemented_yet(f"SQL predicate syntax in filter({text!r})")
         kind = match.lastgroup
-        tokens.append((kind, match.group(kind)))
+        tokens.append((kind, match.group(kind), match.start(kind), match.end(kind)))
         pos = match.end()
     parser = _PredicateParser(tokens, text)
     expr = parser.disjunction()
     if parser.pos != len(tokens):
-        not_implemented_yet(f"SQL predicate syntax in filter({text!r})")
+        parser.unsupported()
     return expr
 
 
+def _sql_string(token: str) -> str:
+    """A quoted SQL string literal's value, unescaped the way Spark's ``unescapeSQLString`` does (a doubled
+    quote is one quote)."""
+    quote = token[0]
+    body, out, index = token[1:-1].replace(quote * 2, quote), [], 0
+    while index < len(body):
+        char = body[index]
+        if char != "\\" or index + 1 == len(body):
+            out.append(char)
+            index += 1
+            continue
+        following = body[index + 1]
+        if following == "u" and re.fullmatch(r"[0-9a-fA-F]{4}", body[index + 2 : index + 6]):
+            out.append(chr(int(body[index + 2 : index + 6], 16)))
+            index += 6
+        elif re.fullmatch(r"[0-3][0-7]{2}", body[index + 1 : index + 4]):
+            out.append(chr(int(body[index + 1 : index + 4], 8)))
+            index += 4
+        else:
+            out.append(_SQL_ESCAPES.get(following, following))
+            index += 2
+    return "".join(out)
+
+
+def _sql_number(text: str, negative: bool) -> Literal:
+    """A numeric literal typed as Spark types it: ``1`` int (bigint, then decimal when wider), ``1.5`` decimal,
+    ``1e3`` double, and the ``L``/``S``/``Y``/``D``/``BD`` suffixes."""
+    sign = "-" if negative else ""
+    upper = text.upper()
+    if upper.endswith("BD"):
+        return Literal(Decimal(sign + text[:-2]))
+    suffix = upper[-1] if upper[-1] in "LSYD" else ""
+    digits = sign + (text[:-1] if suffix else text)
+    if suffix == "D" or (not suffix and "E" in upper):
+        return Literal(float(digits))
+    if suffix:
+        dtype = {"L": LongType, "S": ShortType, "Y": ByteType}[suffix]()
+        value = int(digits)
+        low, high = _INTEGRAL_RANGES[type(dtype)]
+        if not low <= value <= high:
+            raise ValueError(
+                f"[INVALID_NUMERIC_LITERAL_RANGE] Numeric literal {digits} is outside the range of {dtype!r}."
+            )
+        return Literal(value, dtype)
+    if "." in digits:
+        return Literal(Decimal(digits))
+    value = int(digits)
+    return Literal(value) if -(2**63) <= value < 2**63 else Literal(Decimal(value))
+
+
 class _PredicateParser:
-    def __init__(self, tokens: List[Tuple[str, str]], text: str) -> None:
+    def __init__(self, tokens: List[Tuple[str, str, int, int]], text: str) -> None:
         self.tokens = tokens
         self.text = text
         self.pos = 0
 
-    def _peek_word(self) -> Optional[str]:
-        if self.pos < len(self.tokens) and self.tokens[self.pos][0] == "ident":
-            return self.tokens[self.pos][1].upper()
+    def unsupported(self) -> Any:
+        not_implemented_yet(f"SQL predicate syntax in filter({self.text!r})")
+
+    def _peek(self, kind: str, offset: int = 0) -> Optional[str]:
+        index = self.pos + offset
+        if index < len(self.tokens) and self.tokens[index][0] == kind:
+            value = self.tokens[index][1]
+            return value.upper() if kind == "ident" else value
         return None
 
-    def _next(self) -> Tuple[str, str]:
-        if self.pos >= len(self.tokens):
-            not_implemented_yet(f"SQL predicate syntax in filter({self.text!r})")
-        token = self.tokens[self.pos]
-        self.pos += 1
-        return token
+    def _accept_word(self, *words: str) -> Optional[str]:
+        word = self._peek("ident")
+        if word in words:
+            self.pos += 1
+            return word
+        return None
+
+    def _accept_op(self, *ops: str) -> Optional[str]:
+        op = self._peek("op")
+        if op in ops:
+            self.pos += 1
+            return op
+        return None
+
+    def _expect_op(self, op: str) -> None:
+        if self._accept_op(op) is None:
+            self.unsupported()
 
     def disjunction(self) -> Expression:
         expr = self.conjunction()
-        while self._peek_word() == "OR":
-            self.pos += 1
+        while self._accept_word("OR"):
             expr = BinaryExpression("or", expr, self.conjunction())
         return expr
 
     def conjunction(self) -> Expression:
         expr = self.negation()
-        while self._peek_word() == "AND":
-            self.pos += 1
+        while self._accept_word("AND"):
             expr = BinaryExpression("and", expr, self.negation())
         return expr
 
     def negation(self) -> Expression:
-        if self._peek_word() == "NOT":
-            self.pos += 1
+        if self._accept_word("NOT"):
             return UnaryExpression("not", self.negation())
-        return self.comparison()
+        return self.predicate()
 
-    def comparison(self) -> Expression:
-        left = self.operand()
-        if self._peek_word() == "IS":
+    def predicate(self) -> Expression:
+        left = self.additive()
+        op = self._accept_op(*_COMPARISONS)
+        if op is not None:
+            return BinaryExpression(_COMPARISONS[op], left, self.additive())
+        if self._accept_word("IS"):
+            return self._is_predicate(left, negate=self._accept_word("NOT") is not None)
+        negate = self._peek("ident") == "NOT" and self._peek("ident", 1) in (
+            "IN",
+            "BETWEEN",
+            "LIKE",
+            "RLIKE",
+            "REGEXP",
+        )
+        if negate:
             self.pos += 1
-            negate = self._peek_word() == "NOT"
-            if negate:
-                self.pos += 1
-            if self._peek_word() != "NULL":
-                not_implemented_yet(f"SQL predicate syntax in filter({self.text!r})")
-            self.pos += 1
+        expr = self._keyword_predicate(left)
+        if expr is None:
+            return self.unsupported() if negate else left
+        return UnaryExpression("not", expr) if negate else expr
+
+    def _is_predicate(self, left: Expression, negate: bool) -> Expression:
+        if self._accept_word("NULL"):
             return UnaryExpression("isnotnull" if negate else "isnull", left)
-        if self.pos < len(self.tokens) and self.tokens[self.pos][0] == "op" and self.tokens[self.pos][1] not in "()":
-            op = self._next()[1]
-            op = {"=": "==", "<>": "!="}.get(op, op)
-            return BinaryExpression(op, left, self.operand())
-        return left
+        if self._accept_word("DISTINCT"):
+            if not self._accept_word("FROM"):
+                self.unsupported()
+            same = BinaryExpression("<=>", left, self.additive())
+            return same if negate else UnaryExpression("not", same)
+        word = self._accept_word("TRUE", "FALSE", "UNKNOWN")
+        if word is None:
+            self.unsupported()
+        expr = (
+            UnaryExpression("isnull", left)
+            if word == "UNKNOWN"
+            else BinaryExpression("<=>", left, Literal(word == "TRUE"))
+        )
+        return UnaryExpression("not", expr) if negate else expr
 
-    def operand(self) -> Expression:
-        kind, value = self._next()
+    def _keyword_predicate(self, left: Expression) -> Optional[Expression]:
+        if self._accept_word("IN"):
+            self._expect_op("(")
+            items = [self.disjunction()]
+            while self._accept_op(","):
+                items.append(self.disjunction())
+            self._expect_op(")")
+            return FunctionCall("in", [left, *items])
+        if self._accept_word("BETWEEN"):
+            low = self.additive()
+            if not self._accept_word("AND"):
+                self.unsupported()
+            return BinaryExpression(
+                "and", BinaryExpression(">=", left, low), BinaryExpression("<=", left, self.additive())
+            )
+        word = self._accept_word("LIKE", "RLIKE", "REGEXP")
+        if word is not None:
+            pattern = self._peek("str")
+            if pattern is None:
+                self.unsupported()
+            self.pos += 1
+            return FunctionCall("like" if word == "LIKE" else "rlike", [left], {"pattern": _sql_string(pattern)})
+        return None
+
+    def additive(self) -> Expression:
+        expr = self.multiplicative()
+        while True:
+            op = self._accept_op("+", "-", "||")
+            if op is None:
+                return expr
+            right = self.multiplicative()
+            expr = FunctionCall("concat", [expr, right]) if op == "||" else BinaryExpression(op, expr, right)
+
+    def multiplicative(self) -> Expression:
+        expr = self.unary()
+        while True:
+            op = self._accept_op("*", "/")
+            if op is None:
+                return expr
+            expr = BinaryExpression(op, expr, self.unary())
+
+    def unary(self) -> Expression:
+        op = self._accept_op("-", "+")
+        if op is None:
+            return self.primary()
+        number = self._peek("num")
+        if number is not None:  # ``-1`` is a negative literal, not a negation
+            self.pos += 1
+            return _sql_number(number, negative=op == "-")
+        child = self.unary()
+        return UnaryExpression("neg", child) if op == "-" else UnaryExpression("pos", child)
+
+    def primary(self) -> Expression:
+        if self.pos >= len(self.tokens):
+            return self.unsupported()
+        kind, value, _, _ = self.tokens[self.pos]
+        self.pos += 1
         if kind == "num":
-            return Literal(Decimal(value) if "." in value else int(value))
+            return _sql_number(value, negative=False)
         if kind == "str":
-            return Literal(value[1:-1].replace("''", "'"))
+            text = _sql_string(value)
+            while self._peek("str") is not None:  # adjacent literals concatenate: 'a' 'b' is 'ab'
+                text += _sql_string(self.tokens[self.pos][1])
+                self.pos += 1
+            return Literal(text)
         if kind == "op" and value == "(":
             expr = self.disjunction()
-            if self._next() != ("op", ")"):
-                not_implemented_yet(f"SQL predicate syntax in filter({self.text!r})")
+            self._expect_op(")")
             return expr
-        if kind == "ident":
-            upper = value.upper()
-            if upper in ("TRUE", "FALSE"):
-                return Literal(upper == "TRUE")
-            if upper == "NULL":
-                return Literal(None)
-            return AttributeReference(value)
-        not_implemented_yet(f"SQL predicate syntax in filter({self.text!r})")
+        if kind != "ident":
+            return self.unsupported()
+        upper = value.upper()
+        if upper in ("TRUE", "FALSE"):
+            return Literal(upper == "TRUE")
+        if upper == "NULL":
+            return Literal(None)
+        if upper in _TYPED_LITERALS and self._peek("str") is not None:
+            literal = Literal(_sql_string(self.tokens[self.pos][1]))
+            self.pos += 1
+            return Cast(literal, _TYPED_LITERALS[upper](), strict=True)
+        if self._peek("op") == "(":
+            self.pos += 1
+            return self._cast() if upper == "CAST" else self._call(value)
+        return AttributeReference(value)
+
+    def _cast(self) -> Expression:
+        child = self.disjunction()
+        if not self._accept_word("AS"):
+            self.unsupported()
+        start, depth = self.pos, 0
+        while self.pos < len(self.tokens) and (depth or self.tokens[self.pos][1] != ")"):
+            depth += {"(": 1, ")": -1}.get(self.tokens[self.pos][1], 0)
+            self.pos += 1
+        if self.pos == start or self.pos == len(self.tokens):
+            self.unsupported()
+        type_text = self.text[self.tokens[start][2] : self.tokens[self.pos - 1][3]]
+        self.pos += 1
+        return Cast(child, parse_ddl_type(type_text), strict=True)
+
+    def _call(self, name: str) -> Expression:
+        import sparkleframe.python.functions as F
+        from sparkleframe.python.column import Column
+
+        args: List[Expression] = []
+        if self._accept_op(")") is None:
+            args.append(self.disjunction())
+            while self._accept_op(","):
+                args.append(self.disjunction())
+            self._expect_op(")")
+        function = getattr(F, name.lower(), None)
+        if name.startswith("_") or not callable(function):
+            not_implemented_yet(f"function {name}() in filter({self.text!r})")
+        return function(*(Column(arg) for arg in args))._expr
