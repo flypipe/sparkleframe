@@ -519,6 +519,80 @@ _JOIN_RIGHT_SCHEMA = _schema(("id", _LONG), ("right_val", _STR))
 _JOIN_LEFT_ROWS = [(1, "a"), (2, "b"), (3, "c")]
 _JOIN_RIGHT_ROWS = [(2, "x"), (3, "y"), (4, "z")]
 
+_EMPLOYEE_SCHEMA = _schema(("id", _LONG), ("mgr", _LONG), ("name", _STR))
+_EMPLOYEE_ROWS = [(1, None, "ceo"), (2, 1, "vp"), (3, 2, "eng"), (4, 2, "ops"), (5, 9, "orphan")]
+
+
+@pytest.mark.feature("dataframe.alias.qualified_references")
+def test_alias_self_join_against_spark(engine, spark):
+    """``df.alias("e")`` makes ``e.col`` and ``e.*`` resolve to that side of a self-join."""
+    F = engine.functions
+
+    def run(M, df):
+        e, m = df.alias("e"), df.alias("m")
+        joined = e.join(m, M.col("e.mgr") == M.col("m.id"), "left")
+        return [
+            joined.select(M.col("e.name").alias("emp"), M.col("m.name").alias("boss")),
+            joined.select("e.*"),
+            joined.select("m.*", M.col("e.id").alias("emp_id")),
+            joined.filter(M.col("m.name") == "vp").select("e.id", "e.name"),
+            joined.filter("m.id IS NULL").select("e.name"),
+            joined.groupBy("m.name").agg(M.count(M.col("e.id")).alias("reports")),
+        ]
+
+    actual = run(F, engine.build_df(_EMPLOYEE_ROWS, _EMPLOYEE_SCHEMA))
+    expected = run(SF, spark.createDataFrame(_EMPLOYEE_ROWS, _EMPLOYEE_SCHEMA))
+    for a, e in zip(actual, expected):
+        assert a.columns == e.columns
+        assert_matches_spark(a, e, engine)
+
+
+@pytest.mark.feature("dataframe.alias.qualified_references")
+def test_alias_survives_projection_and_name_keys_against_spark(engine, spark):
+    """A pass-through column keeps its alias qualifier; a join on a key name keeps both sides' qualifiers."""
+    F = engine.functions
+
+    def run(M, left, right):
+        a, b = left.alias("a"), right.alias("b")
+        projected = a.select("id", "left_val").filter(M.col("a.id") > 1).select("a.left_val")
+        keyed = a.join(b, ["id"]).select("a.id", "b.right_val", "a.left_val")
+        return [projected, keyed]
+
+    actual = run(
+        F, engine.build_df(_JOIN_LEFT_ROWS, _JOIN_LEFT_SCHEMA), engine.build_df(_JOIN_RIGHT_ROWS, _JOIN_RIGHT_SCHEMA)
+    )
+    expected = run(
+        SF,
+        spark.createDataFrame(_JOIN_LEFT_ROWS, _JOIN_LEFT_SCHEMA),
+        spark.createDataFrame(_JOIN_RIGHT_ROWS, _JOIN_RIGHT_SCHEMA),
+    )
+    for a, e in zip(actual, expected):
+        assert a.columns == e.columns
+        assert_matches_spark(a, e, engine)
+
+
+@pytest.mark.feature("dataframe.alias.qualified_references")
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda M, e, m, j: j.select("id"),
+        lambda M, e, m, j: j.select("x.*"),
+        lambda M, e, m, j: j.select(M.col("e.nope")),
+        lambda M, e, m, j: e.alias("z").select("e.id"),
+        lambda M, e, m, j: j.select(M.col("x.id")),
+    ],
+    ids=["unqualified_ambiguous", "unknown_alias_star", "unknown_column", "replaced_alias_hidden", "unknown_alias"],
+)
+def test_alias_unresolvable_references_raise_like_spark(engine, spark, build):
+    def run(M, df):
+        e, m = df.alias("e"), df.alias("m")
+        return build(M, e, m, e.join(m, M.col("e.mgr") == M.col("m.id")))
+
+    with pytest.raises(Exception):
+        run(SF, spark.createDataFrame(_EMPLOYEE_ROWS, _EMPLOYEE_SCHEMA)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(run(engine.functions, engine.build_df(_EMPLOYEE_ROWS, _EMPLOYEE_SCHEMA)))
+
 
 @pytest.mark.feature("dataframe.join.polars_joins")
 @pytest.mark.parametrize(

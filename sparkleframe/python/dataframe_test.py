@@ -40,7 +40,7 @@ class TestDataFrameConstruction:
 
 
 class TestDataFrameUnimplementedSlotsRaise:
-    @pytest.mark.parametrize("call", [lambda df: df.alias("x"), lambda df: df.to_arrow()])
+    @pytest.mark.parametrize("call", [lambda df: df.to_arrow()])
     def test_slot_raises(self, call):
         df = DataFrame([(1,)], StructType([StructField("a", IntegerType())]))
         with pytest.raises(NotImplementedError):

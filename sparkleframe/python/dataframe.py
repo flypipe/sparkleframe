@@ -167,17 +167,28 @@ class DataFrame(BaseDataFrame):
         items: List[Expression] = []
         for col in cols:
             if isinstance(col, str):
-                col = Column(Star()) if col == "*" else Column(AttributeReference(col))
+                import sparkleframe.python.functions as F
+
+                col = F.col(col)
             if not isinstance(col, Column):
                 raise TypeError(
                     f"[NOT_LIST_OF_COLUMN_OR_STR] Argument `cols` should be a list of Column or str, got "
                     f"{type(col).__name__}."
                 )
             if isinstance(col._expr, Star):
-                items.extend(self._bound(i) for i in range(len(self._schema.fields)))
+                items.extend(self._bound(i) for i in self._star_indices(col._expr.qualifier))
             else:
                 items.append(col._expr)
         return self._project(items)
+
+    def _star_indices(self, qualifier: Optional[str]) -> List[int]:
+        indices = [i for i, s in enumerate(self._plan_sets) if qualifier is None or qualifier in s]
+        if qualifier is not None and not indices:
+            raise AnalysisException(
+                f"[CANNOT_RESOLVE_STAR_EXPAND] Cannot resolve `{qualifier}`.* given input columns "
+                f"{', '.join(f'`{name}`' for name in self.columns)}."
+            )
+        return indices
 
     def _project(self, items: List[Expression], names: Optional[List[Optional[str]]] = None) -> "DataFrame":
         """Evaluate ``items`` per row into a new frame (``names`` overrides output names)."""
@@ -757,7 +768,9 @@ class DataFrame(BaseDataFrame):
         return self._project(items, self.columns)
 
     def alias(self, alias: str) -> "DataFrame":
-        not_implemented_yet("DataFrame.alias")
+        """Name the frame so ``alias.column`` and ``alias.*`` reference its columns (an earlier alias is hidden)."""
+        plan_sets = [frozenset(p for p in s if not isinstance(p, str)) | {alias} for s in self._plan_sets]
+        return self._derive(list(self._rows), list(self._schema.fields), plan_sets)
 
     def to_arrow(self) -> Any:
         not_implemented_yet("DataFrame.to_arrow")

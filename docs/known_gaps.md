@@ -407,6 +407,11 @@ Parity tests written while closing the Python engine's gaps against Polars (`PYT
 these Polars deviations from Spark 4. The pure-Python engine matches Spark on all of them; the parity ids in
 parentheses are gated in `POLARS_NOT_SUPPORTED`.
 
+**DataFrame.alias**
+
+- `alias` stores the name but nothing resolves it: `F.col("e.id")`, `select("e.*")` and `filter("e.id > 1")` fail
+  with `ColumnNotFoundError`, so a self-join cannot tell its sides apart (`dataframe.alias.qualified_references`).
+
 **createDataFrame**
 
 - A pandas frame goes through Arrow instead of PySpark's `to_records` path, so a mixed `object` column

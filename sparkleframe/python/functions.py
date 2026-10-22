@@ -50,8 +50,8 @@ def _literal_value(value: Any) -> Any:
 
 # --- Column builders ---------------------------------------------------------
 def col(name: str) -> Column:
-    if name == "*":
-        return Column(Star())
+    if name == "*" or name.endswith(".*"):
+        return Column(Star(name[:-2] or None))
     return Column(AttributeReference(name))
 
 

@@ -103,6 +103,7 @@ POLARS_NOT_SUPPORTED = {
     "column.cast.numeric_to_timestamp",
     "column.cast.timestamp_to_numeric",
     "column.like",
+    "dataframe.alias.qualified_references",
     "dataframe.create.ddl_schema",
     "dataframe.create.empty_inference_raises",
     "dataframe.create.from_arrow",
