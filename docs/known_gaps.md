@@ -452,6 +452,15 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
   - several Spark functions (`date_format`, `datediff`) and `IN` lists with expressions don't resolve;
   - `LIKE 'a\\'` (escape at the end) and an out-of-range `128Y` don't raise.
 
+**Datetime patterns**
+
+- `date_format` copies pattern letters it does not know into the output (`Q` gives `"Q"`, `K` gives `"K"`) instead
+  of formatting them, and does not raise for the letters and widths Spark rejects (week-based `w`/`u`/`e`,
+  `V`, `B`, `QQQQQ`, ...) (`functions.date_format.pattern_letters`).
+- `to_timestamp` / `try_to_timestamp` do not parse day-of-year (`D`), `K`/`k` hours, zone names (`z`), region
+  ids (`VV`) or `GMT+2` offsets (`O`), and do not raise for format-only letters (`Q`, `E`, `F`)
+  (`functions.to_timestamp.pattern_letters`).
+
 **lit**
 
 - `lit([1, 2.5])` fails instead of widening the elements to `double`, and `lit(dict)` / `lit(tuple)` build

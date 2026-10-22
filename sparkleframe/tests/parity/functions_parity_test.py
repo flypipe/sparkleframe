@@ -1350,6 +1350,156 @@ def test_lit_column_in_list_raises_like_spark(engine, spark):
 # TestDateFormat / TestFloor / TestPow / TestIsnan / TestTryDivide / TestNullif
 # ============================================================================ #
 
+_PATTERN_TIMESTAMPS = [
+    (datetime(2024, 2, 29, 0, 5, 6, 789000),),
+    (datetime(2024, 11, 3, 13, 45, 0),),
+    (datetime(2023, 7, 15, 12, 0, 0),),
+    (datetime(2023, 12, 31, 23, 59, 59, 1),),
+    (None,),
+]
+
+
+@pytest.mark.feature("functions.date_format.pattern_letters")
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "Q QQ QQQ QQQQ",
+        "q qq",
+        "K KK k kk h hh H HH a",
+        "D DD DDD",
+        "F",
+        "G",
+        "z zzz zzzz",
+        "O OOOO",
+        "X XX XXX XXXX XXXXX",
+        "x xx xxx xxxx xxxxx",
+        "Z ZZ ZZZ ZZZZ ZZZZZ",
+        "E EEE EEEE",
+        "yyyy-'Q'Q 'day' DDD",
+    ],
+)
+def test_date_format_pattern_letters_against_spark(engine, spark, pattern):
+    """Quarter, hour variants, day-of-year, aligned weekday, era and the zone / offset letters."""
+    F = engine.functions
+    schema = _schema(("t", SparkTimestampType()))
+    actual = engine.build_df(_PATTERN_TIMESTAMPS, schema).select("t", F.date_format("t", pattern).alias("f"))
+    expected = spark.createDataFrame(_PATTERN_TIMESTAMPS, schema).select("t", SF.date_format("t", pattern).alias("f"))
+    assert_matches_spark(actual, expected, engine)
+
+
+_PATTERN_ERROR = "DATETIME_(WEEK_BASED_)?PATTERN"
+_UNSUPPORTED_FORMAT_PATTERNS = [
+    "w",
+    "W",
+    "u",
+    "e",
+    "c",
+    "Y",
+    "V",
+    "VVV",
+    "OO",
+    "B",
+    "n",
+    "N",
+    "A",
+    "QQQQQ",
+    "KKK",
+    "FF",
+]
+
+
+@pytest.mark.feature("functions.date_format.pattern_letters")
+@pytest.mark.parametrize("pattern", _UNSUPPORTED_FORMAT_PATTERNS)
+def test_date_format_unsupported_pattern_raises_like_spark(engine, spark, pattern):
+    """Week-based fields, illegal letters and unsupported widths are pattern errors."""
+    F = engine.functions
+    schema = _schema(("t", SparkTimestampType()))
+    with pytest.raises(Exception, match=_PATTERN_ERROR):
+        spark.createDataFrame(_PATTERN_TIMESTAMPS, schema).select(SF.date_format("t", pattern)).collect()
+    with pytest.raises(Exception, match=_PATTERN_ERROR):
+        engine.to_records(engine.build_df(_PATTERN_TIMESTAMPS, schema).select(F.date_format("t", pattern).alias("f")))
+
+
+@pytest.mark.feature("functions.to_timestamp.pattern_letters")
+@pytest.mark.parametrize(
+    "pattern, values",
+    [
+        ("yyyy-DDD", ["2024-060", "2024-366", "2023-001", "2023-366", "2024-000", "2024-60"]),
+        ("yyyy-D", ["2024-60", "2024-1", "2024-366"]),
+        ("yyyy-MM-DDD", ["2024-02-060", "2024-03-060"]),
+        (
+            "yyyy-MM-dd KK:mm a",
+            ["2024-01-05 01:30 PM", "2024-01-05 00:15 AM", "2024-01-05 11:59 PM", "2024-01-05 12:30 PM"],
+        ),
+        ("yyyy-MM-dd kk:mm", ["2024-01-05 24:30", "2024-01-05 01:00", "2024-01-05 00:30", "2024-01-05 25:00"]),
+        (
+            "yyyy-MM-dd HH:mm z",
+            ["2024-01-05 10:30 UTC", "2024-01-05 10:30 EST", "2024-07-05 10:30 PST", "2024-01-05 10:30 XYZ"],
+        ),
+        (
+            "yyyy-MM-dd HH:mm VV",
+            ["2024-01-05 10:30 America/New_York", "2024-07-05 10:30 Europe/Paris", "2024-01-05 10:30 Nowhere/City"],
+        ),
+        (
+            "yyyy-MM-dd HH:mm O",
+            ["2024-01-05 10:30 GMT+2", "2024-01-05 10:30 GMT-5:30", "2024-01-05 10:30 GMT", "2024-01-05 10:30 +02"],
+        ),
+        ("yyyy G", ["2024 AD", "2024 XX"]),
+    ],
+    ids=[
+        "day_of_year",
+        "day_of_year_short",
+        "day_of_year_and_month",
+        "hour_of_ampm",
+        "clock_hour",
+        "zone_name",
+        "zone_id",
+        "gmt_offset",
+        "era",
+    ],
+)
+def test_to_timestamp_pattern_letters_against_spark(engine, spark, pattern, values):
+    """``try_to_timestamp`` with day-of-year, ``K``/``k`` hours and zone letters; values that do not fit are null."""
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [(v,) for v in values] + [(None,)]
+    actual = engine.build_df(rows, schema).select("s", F.try_to_timestamp("s", F.lit(pattern)).alias("t"))
+    expected = spark.createDataFrame(rows, schema).select("s", SF.try_to_timestamp("s", SF.lit(pattern)).alias("t"))
+    assert_matches_spark(actual, expected, engine)
+
+    # Strict counterpart: the first value parses; the ones try_ nulls out make to_timestamp raise.
+    valid = [(values[0],)]
+    assert_matches_spark(
+        engine.build_df(valid, schema).select(F.to_timestamp("s", pattern).alias("t")),
+        spark.createDataFrame(valid, schema).select(SF.to_timestamp("s", pattern).alias("t")),
+        engine,
+    )
+    nulls = [r["t"] for r in expected.collect()]
+    bad = [(v,) for v, t in zip(values, nulls) if t is None]
+    for row in bad:
+        with pytest.raises(Exception):
+            spark.createDataFrame([row], schema).select(SF.to_timestamp("s", pattern)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.build_df([row], schema).select(F.to_timestamp("s", pattern).alias("t")))
+
+
+@pytest.mark.feature("functions.to_timestamp.pattern_letters")
+@pytest.mark.parametrize("pattern", ["yyyy Q", "yyyy q", "yyyy w", "yyyy E", "yyyy-MM-dd EEEE", "yyyy F", "yyyy u"])
+def test_to_timestamp_format_only_pattern_raises_like_spark(engine, spark, pattern):
+    """Quarters, day-of-week text and week-based fields cannot parse; even ``try_to_timestamp`` raises."""
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [("2024 1",)]
+    builds = [  # PySpark's to_timestamp takes the format as a str, try_to_timestamp as a Column
+        (lambda M: M.to_timestamp("s", pattern)),
+        (lambda M: M.try_to_timestamp("s", M.lit(pattern))),
+    ]
+    for build in builds:
+        with pytest.raises(Exception, match=_PATTERN_ERROR):
+            spark.createDataFrame(rows, schema).select(build(SF)).collect()
+        with pytest.raises(Exception, match=_PATTERN_ERROR):
+            engine.to_records(engine.build_df(rows, schema).select(build(F).alias("t")))
+
 
 @pytest.mark.feature("functions.date_format.basic")
 def test_date_format_against_spark(engine, spark):
