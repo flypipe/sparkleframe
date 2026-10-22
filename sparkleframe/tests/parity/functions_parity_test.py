@@ -1081,6 +1081,59 @@ def test_from_json_struct_against_spark(engine, spark):
     assert_matches_spark(actual, expected, engine)
 
 
+@pytest.mark.feature("functions.from_json.ddl_schema")
+@pytest.mark.parametrize(
+    "ddl",
+    ["a int, b string", "a INT, b STRING, c array<bigint>", "struct<a:int,b:string>", "a struct<x int>"],
+)
+def test_from_json_ddl_schema_against_spark(engine, spark, ddl):
+    """A DDL schema string is a field list (a struct) or a single struct/array/map type, as ``DataType.fromDDL``."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [
+        ('{"a": 1, "b": "x", "c": [1, 2]}',),
+        ('{"a": "not-an-int", "b": "y"}',),
+        ('{"b": "z"}',),
+        ("not json",),
+        (None,),
+    ]
+    actual = engine.build_df(rows, schema).select("j", F.from_json("j", ddl).alias("p"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.from_json("j", ddl).alias("p"))
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.from_json.ddl_schema")
+def test_from_json_ddl_array_schema_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [('["a", "b"]',), ("[]",), ('{"not": "an array"}',), (None,)]
+    actual = engine.build_df(rows, schema).select("j", F.from_json("j", "array<string>").alias("p"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.from_json("j", "array<string>").alias("p"))
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.from_json.ddl_schema")
+@pytest.mark.parametrize(
+    "ddl",
+    ["a intx", "a int,", "a: int, b: string", "int", "string"],
+    ids=["unknown_type", "trailing_comma", "top_level_colon", "int", "string"],
+)
+def test_from_json_malformed_ddl_schema_raises_like_spark(engine, spark, ddl):
+    """An unparseable DDL, or one naming a type that is not a struct/array/map, is rejected.
+
+    Unlike ``createDataFrame``'s PySpark-side parser, ``fromDDL`` takes no ``name: type`` field list.
+    """
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [('{"a": 1}',)]
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.from_json("j", ddl)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.from_json("j", ddl)))
+
+
 @pytest.mark.feature("functions.first_agg")
 def test_first_agg_against_spark(engine, spark):
     F = engine.functions

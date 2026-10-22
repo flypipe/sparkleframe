@@ -91,7 +91,9 @@ _JOIN_TYPES = {
 class DataFrame(BaseDataFrame):
     def __init__(self, data: Any, schema: Optional[Any] = None, _plan_sets: Optional[List[frozenset]] = None) -> None:
         super().__init__(df=None)
-        rows, schema = tabular_input(data, parse_ddl_schema(schema) if isinstance(schema, str) else schema)
+        rows, schema = tabular_input(
+            data, parse_ddl_schema(schema, pyspark_colons=True) if isinstance(schema, str) else schema
+        )
         if isinstance(schema, DataType) and not isinstance(schema, StructType):
             # A single type names one ``value`` column; each input item is that column's value.
             rows, schema = [(value,) for value in rows], StructType([StructField("value", schema, True)])

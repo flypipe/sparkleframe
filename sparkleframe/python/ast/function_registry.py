@@ -86,7 +86,7 @@ from sparkleframe.python.types import (
     StructField,
     StructType,
     TimestampType,
-    parse_ddl_type,
+    parse_ddl_schema,
 )
 
 _INTEGRAL = (ByteType, ShortType, IntegerType, LongType)
@@ -1141,7 +1141,7 @@ register(
 
 def _json_schema(node: FunctionCall) -> Any:
     schema = node.options["schema"]
-    return parse_ddl_type(schema) if isinstance(schema, str) else schema
+    return parse_ddl_schema(schema) if isinstance(schema, str) else schema  # Spark's ``DataType.fromDDL``
 
 
 def _resolve_from_json(node: FunctionCall, rctx: Any) -> Any:

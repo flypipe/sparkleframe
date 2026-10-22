@@ -1169,6 +1169,23 @@ def test_create_from_arrow_stream_frame_against_spark(engine, spark):
         engine.to_records(engine.create_df(bad, _schema(("x", _LONG))))
 
 
+@pytest.mark.feature("dataframe.create.ddl_schema")
+@pytest.mark.parametrize("ddl", ["a int, b string", "a: int, b: string", "a:int,b:string", "struct<a:int,b:string>"])
+def test_create_ddl_schema_against_spark(engine, spark, ddl):
+    """PySpark's ``_parse_datatype_string`` takes a field list with or without ``name: type`` colons."""
+    rows = [(1, "x"), (None, None)]
+    actual = engine.create_df(rows, ddl)
+    expected = spark.createDataFrame(rows, ddl)
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: an unparseable DDL is rejected.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, "a int,")
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(rows, "a int,"))
+
+
 @pytest.mark.feature("dataframe.create.single_datatype_schema")
 def test_create_single_datatype_schema_against_spark(engine, spark):
     """A single ``DataType`` (or a type DDL) schema makes one ``value`` column holding each item."""

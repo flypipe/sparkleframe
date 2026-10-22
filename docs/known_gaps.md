@@ -419,3 +419,12 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
   JSON (`dataframe.create.string_field_python_str`).
 - Empty data with only column names builds an empty frame; Spark raises `CANNOT_INFER_EMPTY_SCHEMA`
   (`dataframe.create.empty_inference_raises`).
+- A DDL string schema (`"a int, b string"`) fails to build rows that a `StructType` builds
+  (`dataframe.create.ddl_schema`).
+
+**from_json**
+
+- A DDL schema string must be one of a few simple forms: `struct<...>` and field lists with nested types raise
+  `Unsupported Spark type name`, a top-level `name: type` list is accepted (Spark's `fromDDL` rejects it), and a
+  non-container type (`"int"`) is accepted instead of raising `INVALID_JSON_SCHEMA`. An unparseable record
+  gives null instead of a struct of nulls (`functions.from_json.ddl_schema`).
