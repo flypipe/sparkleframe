@@ -376,6 +376,18 @@ def parse_ddl_type(ddl: str) -> DataType:
     return dtype
 
 
+def parse_ddl_schema(ddl: str) -> DataType:
+    """A schema string the way PySpark's ``_parse_datatype_string`` reads it.
+
+    A field list (``"a int, b string"``) is a struct; otherwise the string is a single type
+    (``"int"``, ``"struct<a:int>"``, ``"array<string>"``).
+    """
+    try:
+        return parse_ddl_type(f"struct<{ddl}>")
+    except ValueError:
+        return parse_ddl_type(ddl)
+
+
 class _DdlParser:
     def __init__(self, tokens: List[str]) -> None:
         self.tokens = tokens

@@ -400,3 +400,22 @@ The items are grouped by area; the parity ids in parentheses are gated in `POLAR
 - `union` does not reject a boolean column unioned with a bigint one (`dataframe.union.positional`).
 - `toPandas` gives `datetime64[us]` timestamps (Spark: `[ns]`), and an empty string column is `str`
   (Spark: `object`) (`dataframe.to_pandas.dtypes`).
+
+## Polars deviations found by the Python engine gap work
+
+Parity tests written while closing the Python engine's gaps against Polars (`PYTHON_ENGINE_GAPS.md`) found
+these Polars deviations from Spark 4. The pure-Python engine matches Spark on all of them; the parity ids in
+parentheses are gated in `POLARS_NOT_SUPPORTED`.
+
+**createDataFrame**
+
+- A pandas frame goes through Arrow instead of PySpark's `to_records` path, so a mixed `object` column
+  (`[1, "x"]`) raises `ArrowInvalid` instead of becoming `string` (`dataframe.create.from_pandas`).
+- `dtypes` prints nested types without their element types (`array`, not `array<bigint>`), and an Arrow map
+  column reports `array` (`dataframe.create.from_arrow`, `dataframe.create.from_arrow_stream`).
+- A single-`DataType` schema treats a list item as a row, so `createDataFrame([[1, 2]], ArrayType(...))`
+  raises instead of giving one `value` (`dataframe.create.single_datatype_schema`).
+- A string field stores Python's `str` without PySpark's bool lowercasing (`"True"`) and renders dicts as
+  JSON (`dataframe.create.string_field_python_str`).
+- Empty data with only column names builds an empty frame; Spark raises `CANNOT_INFER_EMPTY_SCHEMA`
+  (`dataframe.create.empty_inference_raises`).

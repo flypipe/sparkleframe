@@ -15,14 +15,17 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pandas as pd
+import pyarrow as pa
 import pyspark.sql.functions as SF
 import pytest
 from pyspark.sql.functions import col as spark_col
+from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import BooleanType as SparkBooleanType
 from pyspark.sql.types import DateType as SparkDateType
 from pyspark.sql.types import DecimalType as SparkDecimalType
 from pyspark.sql.types import DoubleType as SparkDoubleType
 from pyspark.sql.types import FloatType as SparkFloatType
+from pyspark.sql.types import IntegerType as SparkIntegerType
 from pyspark.sql.types import LongType as SparkLongType
 from pyspark.sql.types import StringType as SparkStringType
 from pyspark.sql.types import StructField as SparkStructField
@@ -989,6 +992,208 @@ def test_create_value_type_mismatch_raises(engine, spark, dtype, good, bad):
     # The same values in a string field are stringified rather than rejected.
     str_schema = _schema(("id", _LONG), ("v", _STR))
     assert_matches_spark(engine.build_df(bad_rows, str_schema), spark.createDataFrame(bad_rows, str_schema), engine)
+
+
+@pytest.mark.feature("dataframe.create.string_field_python_str")
+def test_create_string_field_stringifies_like_python_against_spark(engine, spark):
+    """A non-string value in a string field is Python's ``str`` of it (bools lowercased), not a SQL cast."""
+    values = [
+        float("nan"),
+        float("inf"),
+        1e20,
+        1.5e-7,
+        -0.0,
+        True,
+        10**20,
+        Decimal("1.50"),
+        date(2024, 1, 2),
+        datetime(2024, 1, 2, 3, 4, 5, 600),
+        b"ab",
+        [1, 2],
+        {"k": 1},
+    ]
+    schema = _schema(("i", _LONG), ("s", _STR))
+    rows = [(i, v) for i, v in enumerate(values)]
+    assert_matches_spark(engine.build_df(rows, schema), spark.createDataFrame(rows, schema), engine)
+
+    # Malformed: the lenient string field does not extend to other types.
+    with pytest.raises(Exception, match="FIELD_DATA_TYPE_UNACCEPTABLE"):
+        spark.createDataFrame([(1, "x")], _schema(("i", _LONG), ("s", _LONG))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([(1, "x")], _schema(("i", _LONG), ("s", _LONG))))
+
+
+@pytest.mark.feature("dataframe.create.empty_inference_raises")
+def test_create_empty_without_types_raises_like_spark(engine, spark):
+    """With no rows and only column names there is nothing to infer types from."""
+    with pytest.raises(Exception, match="CANNOT_INFER_EMPTY_SCHEMA"):
+        spark.createDataFrame([], ["a", "b"])
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df([], ["a", "b"]))
+
+    # Valid: the same empty input with a typed schema builds an empty frame.
+    schema = _schema(("a", _LONG), ("b", _STR))
+    assert_matches_spark(engine.create_df([], schema), spark.createDataFrame([], schema), engine)
+
+
+def _pandas_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "i": [1, 2, 3],
+            "f": [1.5, float("nan"), None],
+            "s": ["a", None, "c"],
+            "b": [True, False, True],
+            "t": pd.to_datetime(["2024-01-01 10:00:00", "2024-01-02 00:00:00", None]),
+            "n": pd.array([1, None, 3], dtype="Int64"),
+            "o": [1, "x", None],
+            "d": [date(2024, 1, 1), None, date(2024, 3, 1)],
+            "dec": [Decimal("1.50"), None, Decimal("-2")],
+            "l": [[1, 2], None, []],
+        }
+    )
+
+
+@pytest.mark.feature("dataframe.create.from_pandas")
+def test_create_from_pandas_against_spark(engine, spark):
+    """A pandas frame goes through PySpark's ``to_records`` path: names become the schema, types are inferred.
+
+    pandas' own representation leaks through, as in Spark: a missing value in a ``str`` column is the string
+    ``"nan"``, nullable ``Int64`` becomes ``double`` and a mixed ``object`` column becomes ``string``.
+    """
+    frame = _pandas_frame()
+    actual = engine.create_df(frame, None)
+    expected = spark.createDataFrame(frame)
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    subset = frame[["i", "s"]]
+    renamed = engine.create_df(subset, ["x", "y"])
+    expected_renamed = spark.createDataFrame(subset, ["x", "y"])
+    assert renamed.dtypes == expected_renamed.dtypes
+    assert_matches_spark(renamed, expected_renamed, engine)
+
+    schema = _schema(("i", _LONG), ("s", _STR))
+    assert_matches_spark(engine.create_df(subset, schema), spark.createDataFrame(subset, schema), engine)
+    typed = engine.create_df(subset, "i bigint, s string")
+    assert typed.dtypes == spark.createDataFrame(subset, "i bigint, s string").dtypes
+
+    zoned = pd.DataFrame({"t": pd.to_datetime(["2024-01-01 12:00:00+02:00", None])})
+    assert_matches_spark(engine.create_df(zoned, None), spark.createDataFrame(zoned), engine)
+
+    # Malformed: an all-null column, an empty frame and a value that does not fit its field are rejected.
+    all_null = pd.DataFrame({"a": [None, None]})
+    with pytest.raises(Exception, match="CANNOT_DETERMINE_TYPE"):
+        spark.createDataFrame(all_null)
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(all_null, None))
+
+    empty = pd.DataFrame({"a": pd.Series([], dtype="int64")})
+    with pytest.raises(Exception, match="CANNOT_INFER_EMPTY_SCHEMA"):
+        spark.createDataFrame(empty)
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(empty, None))
+
+    mismatched = pd.DataFrame({"i": ["one"]})
+    with pytest.raises(Exception, match="FIELD_DATA_TYPE_UNACCEPTABLE"):
+        spark.createDataFrame(mismatched, _schema(("i", _LONG))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(mismatched, _schema(("i", _LONG))))
+
+
+def _arrow_table() -> pa.Table:
+    return pa.table(
+        {
+            "i": pa.array([1, None], pa.int32()),
+            "l": pa.array([10, 20], pa.int64()),
+            "f": pa.array([1.5, None], pa.float32()),
+            "s": ["a", None],
+            "b": [True, None],
+            "dec": pa.array([Decimal("1.25"), None], pa.decimal128(5, 2)),
+            "t": pa.array([datetime(2024, 1, 1, 10), None], pa.timestamp("us")),
+            "tz": pa.array([datetime(2024, 1, 1, 12), None], pa.timestamp("us", tz="+02:00")),
+            "d": pa.array([date(2024, 1, 1), None]),
+            "arr": pa.array([[1, 2], None]),
+            "m": pa.array([[("k", 1)], None], pa.map_(pa.string(), pa.int64())),
+            "st": pa.array([{"x": 1, "y": "a"}, None]),
+        }
+    )
+
+
+@pytest.mark.feature("dataframe.create.from_arrow")
+def test_create_from_arrow_against_spark(engine, spark):
+    """An Arrow table keeps its Arrow types (``int32`` is ``int``); names or a schema may be given instead."""
+    table = _arrow_table()
+    actual = engine.create_df(table, None)
+    expected = spark.createDataFrame(table)
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    subset = table.select(["i", "s"])
+    renamed = engine.create_df(subset, ["x", "y"])
+    expected_renamed = spark.createDataFrame(subset, ["x", "y"])
+    assert renamed.dtypes == expected_renamed.dtypes
+    assert_matches_spark(renamed, expected_renamed, engine)
+
+    schema = _schema(("i", _LONG), ("s", _STR))
+    widened = engine.create_df(subset, schema)
+    expected_widened = spark.createDataFrame(subset, schema)
+    assert widened.dtypes == expected_widened.dtypes
+    assert_matches_spark(widened, expected_widened, engine)
+
+    # Malformed: a string that is not a number does not fit a bigint field.
+    bad = pa.table({"i": ["not-a-number"]})
+    with pytest.raises(Exception):
+        spark.createDataFrame(bad, _schema(("i", _LONG))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(bad, _schema(("i", _LONG))))
+
+
+@pytest.mark.feature("dataframe.create.from_arrow_stream")
+def test_create_from_arrow_stream_frame_against_spark(engine, spark):
+    """Any frame exporting the Arrow C stream (here polars) builds like the Arrow table it exports."""
+    import polars as pl
+
+    rows = [(1, "a", [1]), (2, None, None), (None, "c", [])]
+    frame = pl.DataFrame(rows, schema=["x", "y", "z"], orient="row")
+    actual = engine.create_df(frame, None)
+    # Spark cannot ingest polars' ``string_view`` export, so its side gets the same rows and Arrow-derived types.
+    expected = spark.createDataFrame(rows, "x bigint, y string, z array<bigint>")
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a value that does not fit the requested field type is rejected.
+    bad = pl.DataFrame({"x": ["not-a-number"]})
+    with pytest.raises(Exception):
+        spark.createDataFrame([("not-a-number",)], _schema(("x", _LONG))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(bad, _schema(("x", _LONG))))
+
+
+@pytest.mark.feature("dataframe.create.single_datatype_schema")
+def test_create_single_datatype_schema_against_spark(engine, spark):
+    """A single ``DataType`` (or a type DDL) schema makes one ``value`` column holding each item."""
+    cases = [
+        ([1, 2, None], SparkIntegerType()),
+        (["a", None], _STR),
+        ([[1, 2], None], SparkArrayType(SparkIntegerType())),
+    ]
+    for data, dtype in cases:
+        actual = engine.create_df(data, engine.dtype(dtype))
+        expected = spark.createDataFrame(data, dtype)
+        assert actual.dtypes == expected.dtypes
+        assert_matches_spark(actual, expected, engine)
+
+    actual_ddl = engine.create_df([1, 2], "int")
+    expected_ddl = spark.createDataFrame([1, 2], "int")
+    assert actual_ddl.dtypes == expected_ddl.dtypes
+    assert_matches_spark(actual_ddl, expected_ddl, engine)
+
+    # Malformed: a value of another type, or a tuple row, does not fit the single field.
+    for bad in (["a"], [(1,)]):
+        with pytest.raises(Exception, match="FIELD_DATA_TYPE_UNACCEPTABLE"):
+            spark.createDataFrame(bad, SparkIntegerType()).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.create_df(bad, engine.dtype(SparkIntegerType())))
 
 
 # ----------------------------------------------------------------------------- #

@@ -15,7 +15,7 @@ inputs) in `sparkleframe/tests/parity/`.
 
 | # | Gap | Status |
 |---|---|---|
-| 1 | `createDataFrame` / `DataFrame(...)` from pandas, polars and arrow frames; bare `DataType` schema | pending |
+| 1 | `createDataFrame` / `DataFrame(...)` from pandas, polars and arrow frames; bare `DataType` schema | done |
 | 2 | `from_json` with a DDL field-list schema (`"a int, b string"`) | pending |
 | 3 | `filter`/`where` SQL strings: negative literals, arithmetic, `IN`, `BETWEEN`, `LIKE`, `RLIKE`, function calls, `CAST` | pending |
 | 4 | `lit(list)` / `lit(dict)` literals | pending |

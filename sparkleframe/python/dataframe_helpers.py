@@ -36,7 +36,7 @@ from sparkleframe.python.ast.expressions import (
     UnaryExpression,
     WindowExpression,
 )
-from sparkleframe.python.column_helpers import cast_value, spark_order, to_spark_string
+from sparkleframe.python.column_helpers import cast_value, spark_order
 from sparkleframe.python.types import (
     ArrayType,
     BinaryType,
@@ -123,8 +123,8 @@ def _to_struct_values(value: Any, dtype: Any) -> Any:
     if isinstance(dtype, MapType):
         return {k: _to_struct_values(v, dtype.valueType) for k, v in value.items()}
     if isinstance(dtype, StringType):
-        # Spark 4 stringifies whatever a string field is given (``True`` is ``"true"``).
-        return value if isinstance(value, str) else to_spark_string(value, infer_type(value))
+        # PySpark's ``convert_string``: Python's ``str`` of whatever a string field is given, bools lowercased.
+        return str(value).lower() if isinstance(value, bool) else str(value)
     accepted = _ACCEPTED_VALUES.get(type(dtype))
     if accepted is not None and (
         not isinstance(value, accepted) or (isinstance(value, bool) and bool not in accepted)
@@ -197,31 +197,34 @@ def infer_type(value: Any) -> Any:
 
 def infer_schema(data: Sequence[Any], names: Optional[Sequence[str]]) -> StructType:
     """A schema from rows plus optional column names; each column's type is merged across all rows."""
-    first = data[0] if data else None
+    if not data:
+        raise ValueError("[CANNOT_INFER_EMPTY_SCHEMA] Can not infer schema from an empty dataset.")
+    first = data[0]
     if names is None:
         if isinstance(first, Row) and hasattr(first, "__fields__"):
             names = list(first.__fields__)
         elif isinstance(first, dict):
             names = list(first)
         else:
-            names = [f"_{i + 1}" for i in range(len(first) if first is not None else 0)]
+            names = [f"_{i + 1}" for i in range(len(first))]
     fields = []
     for index, name in enumerate(names):
         dtype: Any = NullType()
         for row in data:
             value = row.get(name) if isinstance(row, dict) else row[index]
             dtype = _merge_types(dtype, infer_type(value), name)
-        if isinstance(dtype, NullType) and data:
+        if isinstance(dtype, NullType):
             raise ValueError(
                 f"[CANNOT_DETERMINE_TYPE] Some of types cannot be determined after inferring, column `{name}` is "
                 f"all null."
             )
-        fields.append(StructField(name, dtype if not isinstance(dtype, NullType) else StringType(), True))
+        fields.append(StructField(name, dtype, True))
     return StructType(fields)
 
 
 def _merge_types(left: Any, right: Any, name: str) -> Any:
-    """PySpark's ``_merge_type`` for inference: nulls give way, a string absorbs other atomics, else it must agree."""
+    """PySpark's ``_merge_type`` for inference: nulls give way, a string absorbs other atomics, nested types
+    merge element-wise, else the types must agree."""
     if isinstance(left, NullType) or left == right:
         return right
     if isinstance(right, NullType):
@@ -231,10 +234,115 @@ def _merge_types(left: Any, right: Any, name: str) -> Any:
         isinstance(left, complex_types) or isinstance(right, complex_types)
     ):
         return StringType()
+    if isinstance(left, ArrayType) and isinstance(right, ArrayType):
+        return ArrayType(_merge_types(left.elementType, right.elementType, name), True)
+    if isinstance(left, MapType) and isinstance(right, MapType):
+        key = _merge_types(left.keyType, right.keyType, name)
+        return MapType(key, _merge_types(left.valueType, right.valueType, name), True)
     raise TypeError(
         f'[CANNOT_MERGE_TYPE] Can not merge type "{left.simpleString()}" and "{right.simpleString()}" for column '
         f"`{name}`."
     )
+
+
+def tabular_input(data: Any, schema: Any) -> Tuple[List[Any], Any]:
+    """``createDataFrame`` input as row values plus the schema to build them with.
+
+    A pandas frame follows PySpark's non-Arrow path: ``to_records`` values, with the column names
+    as the schema unless one is given. An Arrow table, or any frame exporting the Arrow C stream
+    (polars), takes its schema from the Arrow types. Anything else is an iterable of rows.
+    """
+    if type(data).__module__.split(".")[0] == "pandas":
+        return _pandas_rows(data), list(data.columns) if schema is None else schema
+    if hasattr(data, "__arrow_c_stream__"):
+        import pyarrow as pa
+
+        table = pa.table(data)
+        columns = [[_from_arrow_value(v, c.type) for v in c.to_pylist()] for c in table.columns]
+        rows = list(zip(*columns)) if columns else [()] * table.num_rows
+        if schema is None or isinstance(schema, (list, tuple)):
+            names = list(schema) if schema is not None else table.column_names
+            schema = StructType([StructField(n, _from_arrow_type(c.type), True) for n, c in zip(names, table.columns)])
+        return rows, schema
+    return list(data) if data is not None else [], schema
+
+
+def _pandas_rows(frame: Any) -> List[list]:
+    """PySpark's ``_convert_from_pandas``: zoned timestamps to session-local, then numpy records as lists."""
+    import numpy as np
+    import pandas as pd
+
+    frame = frame.copy()
+    for index in range(frame.shape[1]):
+        series = frame.iloc[:, index]
+        if isinstance(series.dtype, pd.DatetimeTZDtype):
+            local = datetime.now().astimezone().tzinfo
+            frame.isetitem(index, series.dt.tz_convert(local).dt.tz_localize(None))
+    records = frame.set_axis([f"col_{i}" for i in range(frame.shape[1])], axis="columns").to_records(index=False)
+    # datetime64[ns] values come out of ``tolist`` as ints; microseconds give ``datetime`` (SPARK-22417).
+    fixed = np.dtype(
+        [
+            (n, "datetime64[us]" if records.dtype[n] == np.dtype("datetime64[ns]") else records.dtype[n])
+            for n in records.dtype.names
+        ]
+    )
+    return [r.astype(fixed).tolist() for r in records]
+
+
+def _from_arrow_type(arrow_type: Any) -> Any:
+    """PySpark's ``from_arrow_type``: the Spark type of an Arrow column."""
+    import pyarrow.types as pat
+
+    if pat.is_struct(arrow_type):
+        return StructType([StructField(f.name, _from_arrow_type(f.type), True) for f in arrow_type])
+    if pat.is_map(arrow_type):
+        return MapType(_from_arrow_type(arrow_type.key_type), _from_arrow_type(arrow_type.item_type), True)
+    if pat.is_list(arrow_type) or pat.is_large_list(arrow_type):
+        return ArrayType(_from_arrow_type(arrow_type.value_type), True)
+    if pat.is_decimal(arrow_type):
+        return DecimalType(arrow_type.precision, arrow_type.scale)
+    for predicate, spark_type in _arrow_predicates():
+        if predicate(arrow_type):
+            return spark_type()
+    raise TypeError(
+        f"[UNSUPPORTED_DATA_TYPE_FOR_ARROW_CONVERSION] {arrow_type} is not supported in conversion to Arrow."
+    )
+
+
+def _from_arrow_value(value: Any, arrow_type: Any) -> Any:
+    """An Arrow ``to_pylist`` value as a Spark row value: maps as dicts, zoned timestamps session-local."""
+    import pyarrow.types as pat
+
+    if value is None:
+        return None
+    if pat.is_struct(arrow_type):
+        return {f.name: _from_arrow_value(value[f.name], f.type) for f in arrow_type}
+    if pat.is_map(arrow_type):
+        return {k: _from_arrow_value(v, arrow_type.item_type) for k, v in value}
+    if pat.is_list(arrow_type) or pat.is_large_list(arrow_type):
+        return [_from_arrow_value(v, arrow_type.value_type) for v in value]
+    if pat.is_timestamp(arrow_type) and value.tzinfo is not None:
+        return value.astimezone().replace(tzinfo=None)
+    return value
+
+
+def _arrow_predicates() -> List[Tuple[Callable[[Any], bool], type]]:
+    import pyarrow.types as pat
+
+    return [
+        (pat.is_boolean, BooleanType),
+        (pat.is_int8, ByteType),
+        (pat.is_int16, ShortType),
+        (pat.is_int32, IntegerType),
+        (pat.is_int64, LongType),
+        (pat.is_float32, FloatType),
+        (pat.is_float64, DoubleType),
+        (lambda t: pat.is_string(t) or pat.is_large_string(t) or pat.is_string_view(t), StringType),
+        (lambda t: pat.is_binary(t) or pat.is_large_binary(t), BinaryType),
+        (pat.is_date32, DateType),
+        (pat.is_timestamp, TimestampType),
+        (pat.is_null, NullType),
+    ]
 
 
 # --------------------------------------------------------------------------- #
