@@ -422,6 +422,10 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
 - A DDL string schema (`"a int, b string"`) fails to build rows that a `StructType` builds
   (`dataframe.create.ddl_schema`).
 
+**Column**
+
+- `Column.like` is not implemented (`column.like`).
+
 **from_json**
 
 - A DDL schema string must be one of a few simple forms: `struct<...>` and field lists with nested types raise

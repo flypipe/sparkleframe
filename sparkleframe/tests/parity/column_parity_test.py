@@ -1456,6 +1456,42 @@ def test_contains_literal_and_null(engine, spark):
         engine.to_records(engine.build_df([([1],)], arr_schema).select(F.col("arr").contains("a").alias("r")))
 
 
+@pytest.mark.feature("column.like")
+def test_like_against_spark(engine, spark):
+    """``_`` is one character and ``%`` any run (newlines included); ``\\`` escapes them; the whole string must match."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("t", SparkStringType()), SparkStructField("n", SparkIntegerType())])
+    rows = [("abc", 123), ("a_c", 10), ("a%c", None), ("ab\nc", 1), ("", 0), ("ABC", 12), (None, 5)]
+    patterns = ["a%", "a_c", "%c", "a\\_c", "a\\%c", "a%c", "%", "", "abc", "a.c", "[a]%", "a\\\\%"]
+
+    def build(M):
+        cols = [M.col("t").like(p).alias(f"p{i}") for i, p in enumerate(patterns)]
+        return cols + [M.col("n").like("1%").alias("int_input")]
+
+    actual = engine.build_df(rows, schema).select("t", *build(F))
+    expected = spark.createDataFrame(rows, schema).select("t", *build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.like")
+@pytest.mark.parametrize("pattern", ["a\\", "a\\bc"], ids=["escape_at_end", "escape_before_other"])
+def test_like_invalid_escape_raises_like_spark(engine, spark, pattern):
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("t", SparkStringType())])
+    rows = [("abc",)]
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.col("t").like(pattern)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.col("t").like(pattern).alias("r")))
+
+    # Malformed input type: an array is not implicitly cast to string.
+    arr_schema = SparkStructType([SparkStructField("arr", SparkArrayType(SparkIntegerType()))])
+    with pytest.raises(Exception):
+        spark.createDataFrame([([1],)], arr_schema).select(SF.col("arr").like("a")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([([1],)], arr_schema).select(F.col("arr").like("a").alias("r")))
+
+
 @pytest.mark.feature("column.rlike.invalid_regex_raises")
 @pytest.mark.parametrize(
     "pattern", ["[", "a(b", "*a", "a{2,1}"], ids=["open_class", "open_group", "dangling", "range"]

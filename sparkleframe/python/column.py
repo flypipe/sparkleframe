@@ -155,6 +155,10 @@ class Column:
             values = tuple(values[0])
         return Column(FunctionCall("in", [self._expr, *(_to_expression(v) for v in values)]))
 
+    def like(self, other: str) -> "Column":
+        """SQL ``LIKE``: ``_`` matches one character, ``%`` any run; ``\\`` escapes them. Matches the whole string."""
+        return Column(FunctionCall("like", [self._expr], {"pattern": other}))
+
     def rlike(self, pattern: str) -> "Column":
         return Column(FunctionCall("rlike", [self._expr], {"pattern": pattern}))
 

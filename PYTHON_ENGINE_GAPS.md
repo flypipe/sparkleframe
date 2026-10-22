@@ -17,7 +17,9 @@ inputs) in `sparkleframe/tests/parity/`.
 |---|---|---|
 | 1 | `createDataFrame` / `DataFrame(...)` from pandas, polars and arrow frames; bare `DataType` schema | done |
 | 2 | `from_json` with a DDL field-list schema (`"a int, b string"`) | done |
+| 3a | `Column.like` (missing in both engines; needed by SQL `LIKE`) | done |
 | 3 | `filter`/`where` SQL strings: negative literals, arithmetic, `IN`, `BETWEEN`, `LIKE`, `RLIKE`, function calls, `CAST` | pending |
+| 3b | `%` / modulo with ANSI remainder semantics (`Column.__mod__` and SQL `%`, missing in both engines) | pending |
 | 4 | `lit(list)` / `lit(dict)` literals | pending |
 | 5 | Numeric → timestamp cast (epoch seconds); numeric → date raises like Spark | pending |
 | 6 | `DataFrame.alias` | pending |

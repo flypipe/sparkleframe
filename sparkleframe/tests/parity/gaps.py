@@ -98,6 +98,7 @@ POLARS_NOT_SUPPORTED = {
     "window.row_number.without_order_raises",
     # Found by the Python engine gap work — see docs/known_gaps.md "Polars deviations found by the Python
     # engine gap work".
+    "column.like",
     "dataframe.create.ddl_schema",
     "dataframe.create.empty_inference_raises",
     "dataframe.create.from_arrow",

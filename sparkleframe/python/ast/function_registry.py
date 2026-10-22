@@ -56,6 +56,7 @@ from sparkleframe.python.column_helpers import (
 from sparkleframe.python.functions_helpers import (
     JsonNumber,
     compile_java_regex,
+    compile_like,
     format_datetime,
     get_json_object,
     java_replacement,
@@ -378,6 +379,18 @@ def _resolve_rlike(node: FunctionCall, rctx: Any) -> Any:
 register(
     "rlike",
     FunctionSpec(_resolve_rlike, lambda v, n, c: compile_java_regex(n.options["pattern"]).search(v[0]) is not None),
+)
+
+
+def _resolve_like(node: FunctionCall, rctx: Any) -> Any:
+    _require_string(node, 0)
+    compile_like(node.options["pattern"])
+    return BooleanType()
+
+
+register(
+    "like",
+    FunctionSpec(_resolve_like, lambda v, n, c: compile_like(n.options["pattern"]).fullmatch(v[0]) is not None),
 )
 
 

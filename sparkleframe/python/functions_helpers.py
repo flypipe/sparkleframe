@@ -130,6 +130,35 @@ def compile_java_regex(pattern: str) -> "re.Pattern[str]":
         ) from None
 
 
+def compile_like(pattern: str, escape: str = "\\") -> "re.Pattern[str]":
+    """Spark's ``escapeLikeRegex``: ``_`` is one character, ``%`` any run; the escape may precede only those or itself.
+
+    The result is matched against the whole string (``fullmatch``), across line breaks.
+    """
+    out, chars = [], iter(pattern)
+    for char in chars:
+        if char == escape:
+            following = next(chars, None)
+            if following is None:
+                raise ValueError(
+                    f"[INVALID_FORMAT.ESC_AT_THE_END] The format is invalid: '{pattern}'. The escape character is "
+                    f"not allowed to end with."
+                )
+            if following not in ("_", "%", escape):
+                raise ValueError(
+                    f"[INVALID_FORMAT.ESC_IN_THE_MIDDLE] The format is invalid: '{pattern}'. The escape character "
+                    f"is not allowed to precede '{following}'."
+                )
+            out.append(re.escape(following))
+        elif char == "_":
+            out.append(".")
+        elif char == "%":
+            out.append(".*")
+        else:
+            out.append(re.escape(char))
+    return re.compile("".join(out), re.DOTALL)
+
+
 _JAVA_QUANTIFIER_RE = re.compile(r"\{\d+(?:,\d*)?\}")
 
 
