@@ -65,7 +65,11 @@ class AttributeReference(Expression):
 
 
 class Star(Expression):
-    """``col("*")`` / ``select("*")`` — expands to every column of the frame."""
+    """``col("*")`` / ``select("*")`` — expands to every column of the frame; ``col("a.*")`` to alias ``a``'s."""
+
+    def __init__(self, qualifier: Optional[str] = None) -> None:
+        super().__init__()
+        self.qualifier = qualifier
 
 
 class BinaryExpression(Expression):

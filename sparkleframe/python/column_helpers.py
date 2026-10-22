@@ -20,7 +20,7 @@ from __future__ import annotations
 import math
 import re
 import struct
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from decimal import ROUND_HALF_UP, Context, Decimal
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -34,6 +34,7 @@ from sparkleframe.python.types import (
     BooleanType,
     ByteType,
     DateType,
+    DayTimeIntervalType,
     DecimalType,
     DoubleType,
     FloatType,
@@ -71,8 +72,9 @@ def cast_value(value: Any, target_type: Any, strict: bool, source_type: Any = No
     except _Malformed:
         if not strict:
             return None
+        source = source_type.simpleString().upper() if source_type is not None else "STRING"
         raise ValueError(
-            f"[CAST_INVALID_INPUT] The value '{value}' of the type \"STRING\" cannot be cast to "
+            f"[CAST_INVALID_INPUT] The value '{value}' of the type \"{source}\" cannot be cast to "
             f'"{target_type.simpleString().upper()}" because it is malformed. Correct the value as per '
             f"the syntax, or change its target type. Use `try_cast` to tolerate malformed input and "
             f"return NULL instead."
@@ -101,6 +103,10 @@ def _cast(value: Any, target_type: Any, source_type: Any) -> Any:
         return to_spark_string(value, source_type)
     if isinstance(value, str):
         return _cast_string(value, target_type)
+    if isinstance(value, datetime) and isinstance(target_type, _NUMERIC_TYPES):
+        return _timestamp_to_number(value, target_type)
+    if isinstance(target_type, TimestampType) and isinstance(value, (int, float, Decimal)):
+        return _seconds_to_timestamp(value)
     if isinstance(target_type, BooleanType):
         return value if isinstance(value, bool) else value != 0
     if isinstance(target_type, (ByteType, ShortType, IntegerType, LongType)):
@@ -109,6 +115,8 @@ def _cast(value: Any, target_type: Any, source_type: Any) -> Any:
         result = float(value)
         return _round_to_float32(result) if isinstance(target_type, FloatType) else result
     if isinstance(target_type, DecimalType):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None  # Spark's castToDecimal turns the NumberFormatException into null, ANSI or not
         return to_decimal(value, target_type)
     if isinstance(target_type, DateType) and isinstance(value, date):
         return value.date() if isinstance(value, datetime) else value
@@ -139,6 +147,34 @@ def _cast(value: Any, target_type: Any, source_type: Any) -> Any:
     not_implemented_yet(f"casting {type(value).__name__} to {type(target_type).__name__}")
 
 
+_NUMERIC_TYPES = (ByteType, ShortType, IntegerType, LongType, FloatType, DoubleType, DecimalType)
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_MICROS = 1_000_000
+
+
+def _seconds_to_timestamp(seconds: Any) -> datetime:
+    """Spark's numeric -> timestamp: seconds since the epoch (fraction truncated to micros), session-local."""
+    if isinstance(seconds, float) and not math.isfinite(seconds):
+        raise _Malformed
+    micros = int(Decimal(repr(seconds) if isinstance(seconds, float) else seconds) * _MICROS)
+    try:
+        return (_EPOCH + timedelta(microseconds=micros)).astimezone().replace(tzinfo=None)
+    except OverflowError:
+        raise _Overflow from None
+
+
+def _timestamp_to_number(value: datetime, target_type: Any) -> Any:
+    """Spark's timestamp -> numeric: whole seconds (floored) for integrals, fractional seconds otherwise."""
+    delta = value.astimezone() - _EPOCH
+    micros = (delta.days * 86_400 + delta.seconds) * _MICROS + delta.microseconds
+    if isinstance(target_type, (ByteType, ShortType, IntegerType, LongType)):
+        return _to_integral(micros // _MICROS, target_type)
+    seconds = micros / _MICROS
+    if isinstance(target_type, DecimalType):
+        return to_decimal(seconds, target_type)  # Spark goes through the double, too
+    return _round_to_float32(seconds) if isinstance(target_type, FloatType) else seconds
+
+
 def _to_integral(value: Any, target_type: Any) -> int:
     if isinstance(value, bool):
         return int(value)
@@ -167,7 +203,7 @@ def to_decimal(value: Any, target_type: Any) -> Decimal:
     result = exact.quantize(quantum, context=_DECIMAL_CONTEXT)
     if abs(result) >= Decimal(10) ** (target_type.precision - target_type.scale):
         raise _Overflow
-    return result
+    return result.copy_abs() if result.is_zero() else result  # Java's BigDecimal has no negative zero
 
 
 def _round_to_float32(value: float) -> float:
@@ -247,7 +283,7 @@ def _nested_string(value: Any, dtype: Any) -> str:
 
 def format_timestamp(value: datetime) -> str:
     """``yyyy-MM-dd HH:mm:ss`` plus the fraction with trailing zeros dropped (Spark's timestamp string)."""
-    text = value.strftime("%Y-%m-%d %H:%M:%S")
+    text = f"{value.year:04d}-" + value.strftime("%m-%d %H:%M:%S")  # strftime doesn't pad years < 1000
     if value.microsecond:
         text += "." + f"{value.microsecond:06d}".rstrip("0")
     return text
@@ -350,14 +386,21 @@ _TIMESTAMP_RE = re.compile(
     r"(?P<zone>.*)",
     re.S,
 )
-_TIME_ONLY_RE = re.compile(r"T?[0-9]{1,2}:[0-9]{1,2}.*", re.S)
-_OFFSET_ZONE_RE = re.compile(r"(?:Z|(?:UTC|GMT|UT)?[+-][0-9]{1,2}(?::?[0-9]{2}(?::?[0-9]{2})?)?)")
+# A time with no date: ``[T]h[h][:m[m][:s[s][.f*]]]`` then an optional zone; without the ``T`` a ``:`` is required.
+_TIME_ONLY_RE = re.compile(
+    r"(?=T|[0-9]{1,2}:)T?(?P<H>[0-9]{1,2})(?::(?P<M>[0-9]{1,2})(?::(?P<S>[0-9]{1,2})(?:\.(?P<f>[0-9]*))?)?)?"
+    r"(?P<zone>.*)",
+    re.S,
+)
+_OFFSET_ZONE_RE = re.compile(
+    r"Z|(?:UTC|GMT|UT)?(?P<sign>[+-])(?P<h>[0-9]{1,2})(?::?(?P<m>[0-9]{2})(?::?(?P<s>[0-9]{2}))?)?"
+)
 
 
 def _build_date(year: str, month: Optional[str], day: Optional[str]) -> date:
     try:
         return date(int(year), int(month or 1), int(day or 1))
-    except ValueError:
+    except (ValueError, OverflowError):
         raise _Malformed from None
 
 
@@ -369,39 +412,51 @@ def _parse_date(value: str) -> date:
 
 
 def _parse_timestamp(value: str) -> datetime:
-    """Zone-less ``yyyy[-mm[-dd[ hh[:mm[:ss[.ffffff]]]]]]``; fractions beyond micros are truncated.
+    """``yyyy[-mm[-dd[ hh[:mm[:ss[.ffffff]]]]]]`` plus an optional zone; fractions beyond micros are truncated.
 
-    A zone suffix (``Z``, ``+02:00``, ``UTC``, a region id) and a time-only string (which takes
-    the current date) both depend on the session time zone, which the Python engine does not
-    model yet — those raise ``not_implemented_yet`` instead of guessing.
+    Timestamps are held as naive datetimes in the session time zone, which (as Spark's default, the
+    JVM zone) is the process-local zone. A zone suffix (``Z``, ``+02:00``, ``UTC``, a region id) is
+    converted into it. A time-only string (``10:30``, ``T10:30:00Z``) is on the current date in its zone.
     """
     text = _trim(value)
-    if _TIME_ONLY_RE.fullmatch(text):
-        not_implemented_yet("casting a time-only string to timestamp")
-    match = _TIMESTAMP_RE.fullmatch(text)
+    match = _TIME_ONLY_RE.fullmatch(text) or _TIMESTAMP_RE.fullmatch(text)
     if match is None:
         raise _Malformed
-    zone = match["zone"].strip()
-    if zone:
-        if _is_zone_id(zone):
-            not_implemented_yet("casting a string with a time zone to timestamp")
+    zone_text = match["zone"].strip()
+    zone = _zone(zone_text) if zone_text else None
+    if zone_text and zone is None:
         raise _Malformed
-    day = _build_date(match["y"], match["m"], match["d"])
+    if "y" in match.re.groupindex:
+        day = _build_date(match["y"], match["m"], match["d"])
+    else:  # Spark's ``justTime``: today's date where the time is read
+        day = datetime.now(zone).date() if zone is not None else date.today()
     hour, minute, second = int(match["H"] or 0), int(match["M"] or 0), int(match["S"] or 0)
     if hour > 23 or minute > 59 or second > 59:
         raise _Malformed
     micros = int((match["f"] or "0")[:6].ljust(6, "0"))
-    return datetime(day.year, day.month, day.day, hour, minute, second, micros)
+    parsed = datetime(day.year, day.month, day.day, hour, minute, second, micros)
+    if zone is None:
+        return parsed
+    return parsed.replace(tzinfo=zone).astimezone().replace(tzinfo=None)
 
 
-def _is_zone_id(text: str) -> bool:
-    if _OFFSET_ZONE_RE.fullmatch(text):
-        return True
+def _zone(text: str) -> Optional[tzinfo]:
+    """A zone suffix as ``tzinfo``: ``Z``, ``[UTC|GMT|UT]±h[h][[:]mm[[:]ss]]``, or a region id; else ``None``."""
+    match = _OFFSET_ZONE_RE.fullmatch(text)
+    if match is not None:
+        if match["sign"] is None:
+            return timezone.utc
+        hours, minutes, seconds = int(match["h"]), int(match["m"] or 0), int(match["s"] or 0)
+        if hours > 18 or minutes > 59 or seconds > 59:
+            return None
+        offset = timedelta(hours=hours, minutes=minutes, seconds=seconds)
+        return timezone(-offset if match["sign"] == "-" else offset)
+    if text in ("UTC", "GMT", "UT"):
+        return timezone.utc
     try:
-        ZoneInfo(text)
+        return ZoneInfo(text)
     except Exception:
-        return False
-    return True
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -426,6 +481,12 @@ def arithmetic(op: str, left: Any, right: Any, result_type: Any, strict: bool = 
             "[DIVIDE_BY_ZERO] Division by zero. Use `try_divide` to tolerate divisor being 0 and return NULL "
             'instead. If necessary set "spark.sql.ansi.enabled" to "false" to bypass this error.'
         )
+    if isinstance(result_type, DateType):
+        days = timedelta(days=right if isinstance(left, date) else left)
+        start = left if isinstance(left, date) else right
+        return start + days if op == "+" else start - days
+    if isinstance(result_type, DayTimeIntervalType):
+        return left - right
     if isinstance(result_type, DecimalType):
         exact = _DECIMAL_OPS[op](Decimal(left), Decimal(right), _DECIMAL_CONTEXT)
         try:

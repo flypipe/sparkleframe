@@ -12,11 +12,13 @@ from __future__ import annotations
 import json
 import math
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sparkleframe.python._errors import not_implemented_yet
+from sparkleframe.python.column_helpers import java_float_string
 
 
 def spark_pow(base: Optional[float], exponent: Optional[float]) -> Optional[float]:
@@ -117,20 +119,76 @@ def java_replacement(match: "re.Match[str]", replacement: str) -> str:
 
 
 def compile_java_regex(pattern: str) -> "re.Pattern[str]":
-    """Compile a Java regex; malformed patterns raise Spark's ``INVALID_PARAMETER_VALUE.PATTERN``."""
+    """Compile a Java regex; malformed patterns raise Spark's ``INVALID_PARAMETER_VALUE.PATTERN``.
+
+    ``re.ASCII`` because Java's ``\\d``, ``\\w``, ``\\s``, ``\\b`` and ``(?i)`` are ASCII-only by default.
+    """
     try:
-        return re.compile(pattern)
+        _check_java_repetitions(pattern)
+        return re.compile(pattern, re.ASCII)
     except re.error as exc:
         raise ValueError(
             f"[INVALID_PARAMETER_VALUE.PATTERN] The value of parameter(s) `regexp` is invalid: {pattern!r} ({exc})."
         ) from None
 
 
+def compile_like(pattern: str, escape: str = "\\") -> "re.Pattern[str]":
+    """Spark's ``escapeLikeRegex``: ``_`` is one character, ``%`` any run; the escape may precede only those or itself.
+
+    The result is matched against the whole string (``fullmatch``), across line breaks.
+    """
+    out, chars = [], iter(pattern)
+    for char in chars:
+        if char == escape:
+            following = next(chars, None)
+            if following is None:
+                raise ValueError(
+                    f"[INVALID_FORMAT.ESC_AT_THE_END] The format is invalid: '{pattern}'. The escape character is "
+                    f"not allowed to end with."
+                )
+            if following not in ("_", "%", escape):
+                raise ValueError(
+                    f"[INVALID_FORMAT.ESC_IN_THE_MIDDLE] The format is invalid: '{pattern}'. The escape character "
+                    f"is not allowed to precede '{following}'."
+                )
+            out.append(re.escape(following))
+        elif char == "_":
+            out.append(".")
+        elif char == "%":
+            out.append(".*")
+        else:
+            out.append(re.escape(char))
+    return re.compile("".join(out), re.DOTALL)
+
+
+_JAVA_QUANTIFIER_RE = re.compile(r"\{\d+(?:,\d*)?\}")
+
+
+def _check_java_repetitions(pattern: str) -> None:
+    """Java rejects a ``{`` that does not open a ``{n}`` / ``{n,}`` / ``{n,m}`` quantifier; Python reads it literally."""
+    pos, in_class = 0, False
+    while pos < len(pattern):
+        ch = pattern[pos]
+        if ch == "\\":
+            if pattern[pos + 1 : pos + 3] in ("p{", "P{"):  # \p{Alpha}: a property name, not a quantifier
+                pos = pattern.find("}", pos) + 1 or len(pattern)
+            else:
+                pos += 2
+            continue
+        if ch == "[":
+            in_class = True
+        elif ch == "]":
+            in_class = False
+        elif ch == "{" and not in_class and not _JAVA_QUANTIFIER_RE.match(pattern, pos):
+            raise re.error("Illegal repetition", pattern, pos)
+        pos += 1
+
+
 # --------------------------------------------------------------------------- #
 # Datetime patterns (Spark's DateTimeFormatter subset)
 # --------------------------------------------------------------------------- #
 
-_PATTERN_LETTERS = set("GyuYDMLdQqwWEeFaBhKkHmsSnAzVvOXxZ")
+_PATTERN_LETTERS = set("GyuYDMLdQqwWEeFaBhKkHmsSnAzVvOXxZpc")
 _MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 _MONTHS_LONG = [
     "January",
@@ -148,10 +206,50 @@ _MONTHS_LONG = [
 ]
 _DAYS_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 _DAYS_LONG = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+_QUARTERS_LONG = ["1st quarter", "2nd quarter", "3rd quarter", "4th quarter"]
+
+# The widths Spark 4's formatter accepts per letter (``None``: any width). Anything else fails the way
+# DateTimeFormatterHelper does: unknown widths and the week-based ``Y w W u`` are
+# DATETIME_PATTERN_RECOGNITION errors, ``e c`` DATETIME_WEEK_BASED_PATTERN, and the checks below name the rest.
+_FORMAT_WIDTHS: Dict[str, Optional[range]] = {
+    "y": None,
+    "M": range(1, 5),
+    "L": range(1, 5),
+    "d": range(1, 3),
+    "D": range(1, 4),
+    "Q": range(1, 5),
+    "q": range(1, 5),
+    "E": range(1, 5),
+    "F": range(1, 2),
+    "G": range(1, 4),
+    "a": range(1, 2),
+    "h": range(1, 3),
+    "K": range(1, 3),
+    "k": range(1, 3),
+    "H": range(1, 3),
+    "m": range(1, 3),
+    "s": range(1, 3),
+    "S": range(1, 10),
+    "z": range(1, 5),
+    "VV": range(2, 3),
+    "O": range(1, 5),
+    "X": range(1, 6),
+    "x": range(1, 6),
+    "Z": range(1, 6),
+}
+_ILLEGAL_LETTERS = set("ABnNp")
+_PARSE_ILLEGAL_LETTERS = set("Qq")  # quarters only format
+_PARSE_UNSUPPORTED_LETTERS = set("EF")  # day-of-week text and aligned week days only format
+_LENGTH_LIMITS = {"G": 5, "M": 5, "L": 5, "E": 5, "Q": 5, "q": 5, "y": 7}
 
 
-def _tokenize_pattern(pattern: str) -> List[Tuple[str, str]]:
-    """Split a Spark datetime pattern into ``("field", "yyyy")`` / ``("literal", "-")`` tokens."""
+def _tokenize_pattern(pattern: str, parsing: bool) -> List[Tuple[str, str]]:
+    """Split a Spark datetime pattern into ``("field", "yyyy")`` / ``("literal", "-")`` tokens.
+
+    Raises Spark's pattern errors (``INVALID_DATETIME_PATTERN.*``,
+    ``INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_PATTERN_RECOGNITION``) for letters and widths its
+    formatter rejects; these are not data errors, so ``try_*`` functions raise them too.
+    """
     tokens: List[Tuple[str, str]] = []
     i = 0
     while i < len(pattern):
@@ -166,14 +264,51 @@ def _tokenize_pattern(pattern: str) -> List[Tuple[str, str]]:
             j = i
             while j < len(pattern) and pattern[j] == ch:
                 j += 1
+            _check_field(pattern, pattern[i:j], parsing)
             tokens.append(("field", pattern[i:j]))
             i = j
         elif ch.isalpha():
-            raise ValueError(f"[INVALID_DATETIME_PATTERN] Illegal pattern character '{ch}' in {pattern!r}.")
+            raise _illegal_character(pattern, ch)
         else:
             tokens.append(("literal", ch))
             i += 1
     return tokens
+
+
+def _check_field(pattern: str, token: str, parsing: bool) -> None:
+    letter, width = token[0], len(token)
+    if letter in "ec":
+        raise ValueError(
+            f"[INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_WEEK_BASED_PATTERN] You may get a different result due to "
+            f"the upgrading to Spark >= 3.0: All week-based patterns are unsupported since Spark 3.0, detected "
+            f"week-based character: {letter}."
+        )
+    if letter in _ILLEGAL_LETTERS or (parsing and letter in _PARSE_ILLEGAL_LETTERS):
+        raise _illegal_character(pattern, letter)
+    if width >= _LENGTH_LIMITS.get(letter, width + 1):
+        raise ValueError(
+            f"[INVALID_DATETIME_PATTERN.LENGTH] Unrecognized datetime pattern: {token}. Too many letters in datetime "
+            f"pattern: {token}. Please reduce pattern length."
+        )
+    if (letter == "V" and width != 2) or (letter == "O" and width in (2, 3)):
+        raise ValueError(
+            f"[INVALID_DATETIME_PATTERN.WITH_SUGGESTION] Unrecognized datetime pattern: '{token}'. You can form a "
+            f"valid datetime pattern with the guide from 'https://spark.apache.org/docs/latest/sql-ref-datetime-"
+            f"pattern.html'."
+        )
+    widths = _FORMAT_WIDTHS.get("VV" if letter == "V" else letter, range(0))
+    if (widths is not None and width not in widths) or (parsing and letter in _PARSE_UNSUPPORTED_LETTERS):
+        raise ValueError(
+            f"[INCONSISTENT_BEHAVIOR_CROSS_VERSION.DATETIME_PATTERN_RECOGNITION] You may get a different result due "
+            f"to the upgrading to Spark >= 3.0: Fail to recognize '{pattern}' pattern in the DateTimeFormatter."
+        )
+
+
+def _illegal_character(pattern: str, letter: str) -> ValueError:
+    return ValueError(
+        f"[INVALID_DATETIME_PATTERN.ILLEGAL_CHARACTER] Unrecognized datetime pattern: {pattern}. Illegal pattern "
+        f"character found in datetime pattern: {letter}. Please provide legal character."
+    )
 
 
 def parse_datetime(text: str, pattern: str) -> Optional[datetime]:
@@ -181,11 +316,12 @@ def parse_datetime(text: str, pattern: str) -> Optional[datetime]:
 
     Field widths follow ``DateTimeFormatter``: a single letter (``M``, ``d``, ``H``) reads one or
     more digits, a doubled letter (``MM``) exactly two, ``yyyy`` four or more, and ``yy`` is a
-    two-digit year in 2000–2099. The whole string must be consumed and the date must exist.
+    two-digit year in 2000–2099. The whole string must be consumed and the date must exist; a
+    day-of-year (``D``) must fall in the year and agree with any month or day also given.
     """
-    fields: Dict[str, int] = {}
+    fields: Dict[str, Any] = {}
     pos = 0
-    tokens = _tokenize_pattern(pattern)
+    tokens = _tokenize_pattern(pattern, parsing=True)
     for index, (kind, token) in enumerate(tokens):
         if kind == "literal":
             if not text.startswith(token, pos):
@@ -194,7 +330,7 @@ def parse_datetime(text: str, pattern: str) -> Optional[datetime]:
             continue
         letter, width = token[0], len(token)
         next_is_digit_field = index + 1 < len(tokens) and tokens[index + 1][0] == "field"
-        if letter in "yu":
+        if letter == "y":
             if width == 2:
                 digits, pos = _read_digits(text, pos, 2, 2)
                 if digits is None:
@@ -213,14 +349,10 @@ def parse_datetime(text: str, pattern: str) -> Optional[datetime]:
                     break
             else:
                 return None
-        elif letter in "E":
-            names = _DAYS_LONG if width >= 4 else _DAYS_SHORT
-            for name in names:
-                if text[pos : pos + len(name)].lower() == name.lower():
-                    pos += len(name)
-                    break
-            else:
+        elif letter == "G":
+            if text[pos : pos + 2].upper() != "AD":
                 return None
+            pos += 2
         elif letter == "a":
             marker = text[pos : pos + 2].upper()
             if marker not in ("AM", "PM"):
@@ -236,7 +368,12 @@ def parse_datetime(text: str, pattern: str) -> Optional[datetime]:
             offset, pos = _read_offset(text, pos)
             if offset is None:
                 return None
-            fields["offset"] = offset
+            fields["zone"] = timezone(offset)
+        elif letter in "zVO":
+            zone, pos = _read_zone(text, pos, letter)
+            if zone is None:
+                return None
+            fields["zone"] = zone
         else:
             key = {
                 "M": "month",
@@ -244,13 +381,12 @@ def parse_datetime(text: str, pattern: str) -> Optional[datetime]:
                 "d": "day",
                 "H": "hour",
                 "h": "hour12",
-                "k": "hour",
+                "K": "hour_of_ampm",
+                "k": "clock_hour",
                 "m": "minute",
                 "s": "second",
                 "D": "day_of_year",
-            }.get(letter)
-            if key is None:
-                not_implemented_yet(f"datetime pattern letter {letter!r}")
+            }[letter]
             max_width = 2 if width == 1 and next_is_digit_field else (width if width > 1 else 9)
             digits, pos = _read_digits(text, pos, width, max_width)
             if digits is None:
@@ -258,26 +394,45 @@ def parse_datetime(text: str, pattern: str) -> Optional[datetime]:
             fields[key] = digits
     if pos != len(text):
         return None
-    hour = fields.get("hour", 0)
-    if "hour12" in fields:
-        if not 1 <= fields["hour12"] <= 12:
-            return None
-        hour = fields["hour12"] % 12 + fields.get("ampm", 0)
+    hour = _parsed_hour(fields)
+    if hour is None:
+        return None
     try:
-        result = datetime(
-            fields.get("year", 1970),
-            fields.get("month", 1),
-            fields.get("day", 1),
-            hour,
-            fields.get("minute", 0),
-            fields.get("second", 0),
-            fields.get("micro", 0),
-        )
+        day = _parsed_date(fields)
+        if day is None:
+            return None
+        result = datetime.combine(
+            day, datetime.min.time().replace(hour=hour, minute=fields.get("minute", 0), second=fields.get("second", 0))
+        ).replace(microsecond=fields.get("micro", 0))
     except ValueError:
         return None
-    if "offset" in fields:
-        result = (result - fields["offset"]).replace(tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+    if "zone" in fields:
+        result = result.replace(tzinfo=fields["zone"]).astimezone().replace(tzinfo=None)
     return result
+
+
+def _parsed_hour(fields: Dict[str, Any]) -> Optional[int]:
+    """The hour of day from ``H``, ``h``/``K`` (with ``a``) or ``k`` (1-24, where 24 is midnight)."""
+    if "hour12" in fields:
+        return fields["hour12"] % 12 + fields.get("ampm", 0) if 1 <= fields["hour12"] <= 12 else None
+    if "hour_of_ampm" in fields:
+        return fields["hour_of_ampm"] + fields.get("ampm", 0) if fields["hour_of_ampm"] <= 11 else None
+    if "clock_hour" in fields:
+        return fields["clock_hour"] % 24 if 1 <= fields["clock_hour"] <= 24 else None
+    hour = fields.get("hour", 0)
+    return hour if hour <= 23 else None
+
+
+def _parsed_date(fields: Dict[str, Any]) -> Optional[date]:
+    year = fields.get("year", 1970)
+    if "day_of_year" not in fields:
+        return date(year, fields.get("month", 1), fields.get("day", 1))
+    day = date(year, 1, 1) + timedelta(days=fields["day_of_year"] - 1)
+    if not 1 <= fields["day_of_year"] or day.year != year:
+        return None
+    if fields.get("month", day.month) != day.month or fields.get("day", day.day) != day.day:
+        return None  # DateTimeFormatter's "Conflict found" between the day-of-year and the month/day
+    return day
 
 
 def _read_digits(text: str, pos: int, min_width: int, max_width: int) -> Tuple[Optional[int], int]:
@@ -290,6 +445,19 @@ def _read_digits(text: str, pos: int, min_width: int, max_width: int) -> Tuple[O
 
 
 _OFFSET_RE = re.compile(r"Z|[+-]\d{2}(?::?\d{2})?")
+_GMT_OFFSET_RE = re.compile(r"GMT(?:([+-])(\d{1,2})(?::(\d{2}))?)?")
+_ZONE_NAME_RE = re.compile(r"[A-Za-z][A-Za-z0-9_/+\-]*")
+# Java's zone-text parser maps the common North American abbreviations to their regions (so DST applies).
+_ZONE_ABBREVIATIONS = {
+    "EST": "America/New_York",
+    "EDT": "America/New_York",
+    "CST": "America/Chicago",
+    "CDT": "America/Chicago",
+    "MST": "America/Denver",
+    "MDT": "America/Denver",
+    "PST": "America/Los_Angeles",
+    "PDT": "America/Los_Angeles",
+}
 
 
 def _read_offset(text: str, pos: int) -> Tuple[Optional[timedelta], int]:
@@ -304,15 +472,37 @@ def _read_offset(text: str, pos: int) -> Tuple[Optional[timedelta], int]:
     return sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:4] or 0)), match.end()
 
 
+def _read_zone(text: str, pos: int, letter: str) -> Tuple[Optional[tzinfo], int]:
+    """A zone name (``z``: ``UTC``, ``PST``), region id (``VV``) or localized offset (``O``: ``GMT+2``)."""
+    if letter == "O":
+        match = _GMT_OFFSET_RE.match(text, pos)
+        if match is None:
+            return None, pos
+        if match.group(1) is None:
+            return timezone.utc, match.end()
+        offset = timedelta(hours=int(match.group(2)), minutes=int(match.group(3) or 0))
+        return timezone(-offset if match.group(1) == "-" else offset), match.end()
+    match = _ZONE_NAME_RE.match(text, pos)
+    if match is None:
+        return None, pos
+    name = match.group(0)
+    if name in ("UTC", "GMT", "UT", "Z"):
+        return timezone.utc, match.end()
+    try:
+        return ZoneInfo(_ZONE_ABBREVIATIONS.get(name, name) if letter == "z" else name), match.end()
+    except (ValueError, ZoneInfoNotFoundError):
+        return None, pos
+
+
 def format_datetime(value: datetime, pattern: str) -> str:
     """Format a (session-local, naive) datetime with a Spark datetime pattern."""
     out = []
-    for kind, token in _tokenize_pattern(pattern):
+    for kind, token in _tokenize_pattern(pattern, parsing=False):
         if kind == "literal":
             out.append(token)
             continue
         letter, width = token[0], len(token)
-        if letter in "yu":
+        if letter == "y":
             out.append(f"{value.year % 100:02d}" if width == 2 else f"{value.year:0{width}d}")
         elif letter in "ML":
             if width >= 4:
@@ -321,12 +511,23 @@ def format_datetime(value: datetime, pattern: str) -> str:
                 out.append(_MONTHS_SHORT[value.month - 1])
             else:
                 out.append(f"{value.month:0{width}d}")
+        elif letter in "Qq":
+            quarter = (value.month - 1) // 3 + 1
+            out.append({3: f"Q{quarter}", 4: _QUARTERS_LONG[quarter - 1]}.get(width, f"{quarter:0{width}d}"))
         elif letter == "d":
             out.append(f"{value.day:0{width}d}")
         elif letter == "D":
             out.append(f"{value.timetuple().tm_yday:0{width}d}")
-        elif letter in "Hk":
+        elif letter == "F":
+            out.append(str((value.day - 1) % 7 + 1))  # aligned day-of-week in month
+        elif letter == "G":
+            out.append("AD")
+        elif letter == "H":
             out.append(f"{value.hour:0{width}d}")
+        elif letter == "k":
+            out.append(f"{value.hour or 24:0{width}d}")
+        elif letter == "K":
+            out.append(f"{value.hour % 12:0{width}d}")
         elif letter == "h":
             out.append(f"{(value.hour % 12) or 12:0{width}d}")
         elif letter == "m":
@@ -339,23 +540,48 @@ def format_datetime(value: datetime, pattern: str) -> str:
             out.append("AM" if value.hour < 12 else "PM")
         elif letter == "E":
             out.append((_DAYS_LONG if width >= 4 else _DAYS_SHORT)[value.weekday()])
-        elif letter in "XxZ":
+        elif letter in "XxZO":
             out.append(_format_offset(value, letter, width))
+        elif letter == "z":
+            out.append(_format_zone_name(value, width))
         else:
-            not_implemented_yet(f"datetime pattern letter {letter!r}")
+            not_implemented_yet(f"datetime pattern letter {token!r}")
     return "".join(out)
+
+
+def _format_zone_name(value: datetime, width: int) -> str:
+    """``z``: the zone's abbreviation (``UTC``, ``EST``); ``zzzz`` its full name, known here only for UTC."""
+    name = value.astimezone().tzname() or ""
+    if width < 4:
+        return name
+    if name == "UTC":
+        return "Coordinated Universal Time"
+    return not_implemented_yet(f"the full time-zone name 'zzzz' for {name}")
 
 
 def _format_offset(value: datetime, letter: str, width: int) -> str:
     offset = value.astimezone().utcoffset() or timedelta(0)
-    if offset == timedelta(0) and letter == "X":
-        return "Z"
     total = int(offset.total_seconds() // 60)
     sign = "-" if total < 0 else "+"
     hours, minutes = divmod(abs(total), 60)
+    if letter == "O" or (letter == "Z" and width == 4):
+        # Localized offset: ``GMT``, ``GMT+2`` / ``GMT+5:30`` (``O``), ``GMT+02:00`` (``OOOO`` / ``ZZZZ``).
+        if total == 0:
+            return "GMT"
+        if width == 1:
+            return f"GMT{sign}{hours}" + (f":{minutes:02d}" if minutes else "")
+        return f"GMT{sign}{hours:02d}:{minutes:02d}"
+    if letter == "Z":
+        return (
+            f"{sign}{hours:02d}{minutes:02d}"
+            if width < 4
+            else ("Z" if total == 0 else f"{sign}{hours:02d}:{minutes:02d}")
+        )
+    if total == 0 and letter == "X":
+        return "Z"
     if width == 1:
         return f"{sign}{hours:02d}" + (f"{minutes:02d}" if minutes else "")
-    if width == 2 or letter == "Z":
+    if width in (2, 4):
         return f"{sign}{hours:02d}{minutes:02d}"
     return f"{sign}{hours:02d}:{minutes:02d}"
 
@@ -418,6 +644,52 @@ def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _jackson_text(value: Any) -> str:
+    """JSON text the way Jackson's ``copyCurrentStructure`` writes it for ``get_json_object``.
+
+    Integers keep their digits; any other number is read as a double and written with Java's
+    ``Double.toString`` (``1.50`` is ``1.5``, ``1e2`` is ``100.0``), a non-finite one as a string.
+    """
+    if isinstance(value, JsonNumber):
+        if not re.search(r"[.eE]", value.text):
+            return value.text
+        number = float(value.text)
+        return java_float_string(number) if math.isfinite(number) else f'"{java_float_string(number)}"'
+    if isinstance(value, dict):
+        return (
+            "{" + ",".join(f"{json.dumps(k, ensure_ascii=False)}:{_jackson_text(v)}" for k, v in value.items()) + "}"
+        )
+    if isinstance(value, list):
+        return "[" + ",".join(_jackson_text(v) for v in value) + "]"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _double_quoted(text: str) -> str:
+    """Rewrite single-quoted JSON strings as double-quoted ones (``get_json_object`` accepts ``{'a': 1}``)."""
+    if "'" not in text:
+        return text
+    out: List[str] = []
+    pos = 0
+    while pos < len(text):
+        ch = text[pos]
+        if ch not in "\"'":
+            out.append(ch)
+            pos += 1
+            continue
+        end = pos + 1
+        while end < len(text) and text[end] != ch:
+            end += 2 if text[end] == "\\" else 1
+        if end >= len(text):
+            raise ValueError("unterminated string")
+        body = text[pos + 1 : end]
+        if ch == "'":
+            # A literal `"` needs escaping once double-quoted, and `\'` is just a quote.
+            body = re.sub(r'(?<!\\)"', r"\"", body.replace("\\'", "'"))
+        out.append(f'"{body}"')
+        pos = end + 1
+    return "".join(out)
+
+
 _JSON_PATH_STEP_RE = re.compile(r"\.([^.\[\]]+)|\['([^']*)'\]|\[(\d+)\]|\[\*\]")
 
 
@@ -426,9 +698,10 @@ def get_json_object(text: str, path: str) -> Optional[str]:
     if not path.startswith("$"):
         return None
     try:
-        node = load_json(text)
+        node = load_json(_double_quoted(text))
     except ValueError:
         return None
+    steps: List[Tuple[str, Any]] = []
     pos = 1
     while pos < len(path):
         match = _JSON_PATH_STEP_RE.match(path, pos)
@@ -436,19 +709,78 @@ def get_json_object(text: str, path: str) -> Optional[str]:
             return None
         name = match.group(1) if match.group(1) is not None else match.group(2)
         if name is not None:
-            if not isinstance(node, dict) or name not in node:
-                return None
-            node = node[name]
+            steps.append(("key", name))
         elif match.group(3) is not None:
-            index = int(match.group(3))
-            if not isinstance(node, list) or index >= len(node):
-                return None
-            node = node[index]
+            steps.append(("index", int(match.group(3))))
         else:
-            not_implemented_yet("get_json_object wildcard paths")
+            steps.append(("wildcard", None))
         pos = match.end()
+    if any(kind == "wildcard" for kind, _ in steps):
+        out: List[str] = []
+        return "".join(out) if _evaluate_json_path(node, steps, _RAW, out) else None
+    for kind, step in steps:
+        if kind == "key":
+            if not isinstance(node, dict) or step not in node:
+                return None
+            node = node[step]
+        else:
+            if not isinstance(node, list) or step >= len(node):
+                return None
+            node = node[step]
     if node is None:
         return None
     if isinstance(node, str):
         return node
-    return json_text(node)
+    return _jackson_text(node)
+
+
+_RAW, _QUOTED, _FLATTEN = "raw", "quoted", "flatten"
+
+
+def _evaluate_json_path(node: Any, steps: List[Tuple[str, Any]], style: str, out: List[str]) -> bool:
+    """Spark's ``GetJsonObject.evaluatePath`` for paths with ``[*]``: append the JSON written, return whether it matched.
+
+    A top-level string is written unquoted (raw); under a wildcard values are quoted JSON, and a
+    wildcard that matched exactly one element drops its outer array. ``[*][*]`` flattens nested
+    arrays, and a field holding JSON null does not match.
+    """
+    if not steps:
+        if isinstance(node, str) and style == _RAW:
+            out.append(node)
+            return True
+        if isinstance(node, list) and style == _FLATTEN:
+            matched = False
+            for item in node:
+                matched |= _evaluate_json_path(item, [], style, out)
+            return matched
+        out.append(_jackson_text(node))
+        return True
+    (kind, step), rest = steps[0], steps[1:]
+    if kind == "key":
+        if not isinstance(node, dict) or node.get(step) is None:
+            return False
+        return _evaluate_json_path(node[step], rest, style, out)
+    if not isinstance(node, list):
+        return False
+    if kind == "index":
+        if step >= len(node):
+            return False
+        next_style = _QUOTED if rest and rest[0][0] == "wildcard" else style
+        return _evaluate_json_path(node[step], rest, next_style, out)
+    inner: List[str] = []
+    if rest and rest[0][0] == "wildcard" and style != _QUOTED:  # [*][*]: Hive's flattening double wildcard
+        matched = False
+        for item in node:
+            matched |= _evaluate_json_path(item, rest[1:], _FLATTEN, inner)
+        out.append("[" + ",".join(inner) + "]")
+        return matched
+    if style == _QUOTED:
+        matched = False
+        for item in node:
+            matched |= _evaluate_json_path(item, rest, _QUOTED, inner)
+        out.append("[" + ",".join(inner) + "]")
+        return matched
+    count = sum(_evaluate_json_path(item, rest, _QUOTED if style == _RAW else _FLATTEN, inner) for item in node)
+    if count:
+        out.append(",".join(inner) if count == 1 else "[" + ",".join(inner) + "]")
+    return count > 0

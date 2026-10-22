@@ -16,7 +16,6 @@ import itertools
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
-from sparkleframe.python._errors import not_implemented_yet
 from sparkleframe.python.ast import coercion
 from sparkleframe.python.ast.analyzer import AnalysisException, analyze
 from sparkleframe.python.ast.evaluator import EvalContext, eval_row
@@ -41,11 +40,14 @@ from sparkleframe.python.dataframe_helpers import (
     parse_sql_predicate,
     rows_as_dicts,
     sort_rows,
+    tabular_input,
+    to_arrow_table,
     window_values,
 )
 from sparkleframe.python.types import (
     BooleanType,
     ByteType,
+    DataType,
     DateType,
     DecimalType,
     DoubleType,
@@ -59,6 +61,7 @@ from sparkleframe.python.types import (
     StructField,
     StructType,
     TimestampType,
+    parse_ddl_schema,
 )
 
 _PLAN_IDS = itertools.count(1)
@@ -88,13 +91,18 @@ _JOIN_TYPES = {
 class DataFrame(BaseDataFrame):
     def __init__(self, data: Any, schema: Optional[Any] = None, _plan_sets: Optional[List[frozenset]] = None) -> None:
         super().__init__(df=None)
-        rows = list(data) if data is not None else []
+        rows, schema = tabular_input(
+            data, parse_ddl_schema(schema, pyspark_colons=True) if isinstance(schema, str) else schema
+        )
+        if isinstance(schema, DataType) and not isinstance(schema, StructType):
+            # A single type names one ``value`` column; each input item is that column's value.
+            rows, schema = [(value,) for value in rows], StructType([StructField("value", schema, True)])
         if schema is not None and not isinstance(schema, StructType):
             schema = infer_schema(rows, list(schema))
         elif schema is None and rows:
             schema = infer_schema(rows, None)
-        if isinstance(schema, StructType) and not all(type(r) is tuple for r in rows):
-            rows = normalize_rows(rows, schema)
+        if isinstance(schema, StructType) and _plan_sets is None:
+            rows = normalize_rows(rows, schema)  # user input; derived frames already hold normalized tuples
         self._rows: List[tuple] = rows
         self._schema = schema
         self._plan_id = next(_PLAN_IDS)
@@ -159,17 +167,28 @@ class DataFrame(BaseDataFrame):
         items: List[Expression] = []
         for col in cols:
             if isinstance(col, str):
-                col = Column(Star()) if col == "*" else Column(AttributeReference(col))
+                import sparkleframe.python.functions as F
+
+                col = F.col(col)
             if not isinstance(col, Column):
                 raise TypeError(
                     f"[NOT_LIST_OF_COLUMN_OR_STR] Argument `cols` should be a list of Column or str, got "
                     f"{type(col).__name__}."
                 )
             if isinstance(col._expr, Star):
-                items.extend(self._bound(i) for i in range(len(self._schema.fields)))
+                items.extend(self._bound(i) for i in self._star_indices(col._expr.qualifier))
             else:
                 items.append(col._expr)
         return self._project(items)
+
+    def _star_indices(self, qualifier: Optional[str]) -> List[int]:
+        indices = [i for i, s in enumerate(self._plan_sets) if qualifier is None or qualifier in s]
+        if qualifier is not None and not indices:
+            raise AnalysisException(
+                f"[CANNOT_RESOLVE_STAR_EXPAND] Cannot resolve `{qualifier}`.* given input columns "
+                f"{', '.join(f'`{name}`' for name in self.columns)}."
+            )
+        return indices
 
     def _project(self, items: List[Expression], names: Optional[List[Optional[str]]] = None) -> "DataFrame":
         """Evaluate ``items`` per row into a new frame (``names`` overrides output names)."""
@@ -189,10 +208,16 @@ class DataFrame(BaseDataFrame):
         for position, (item, expr) in enumerate(zip(items, resolved)):
             if position in generator_at:
                 generator = _generator_of(expr)
-                aliases = getattr(expr, "names", None) if isinstance(expr, Alias) else None
-                for offset, field in enumerate(generator.data_type.fields):
-                    name = aliases[offset] if aliases and offset < len(aliases) else field.name
-                    fields.append(StructField(name, field.dataType, field.nullable))
+                generated_fields = generator.data_type.fields
+                alias = names[position] or (expr.name if isinstance(expr, Alias) else None)
+                if alias is not None and len(generated_fields) != 1:
+                    raise AnalysisException(
+                        f"[UDTF_ALIAS_NUMBER_MISMATCH] The number of aliases supplied in the AS clause does not "
+                        f"match the number of columns output by the UDTF. Expected {len(generated_fields)} aliases, "
+                        f"but got {alias}."
+                    )
+                for field in generated_fields:
+                    fields.append(StructField(alias or field.name, field.dataType, field.nullable))
                     plan_sets.append(frozenset())
                 continue
             fields.append(StructField(names[position] or output_name(item), expr.data_type))
@@ -234,6 +259,8 @@ class DataFrame(BaseDataFrame):
         for name, col in replacements.items():
             if not isinstance(col, Column):
                 raise TypeError(f"[NOT_COLUMN] Argument `col` should be a Column, got {type(col).__name__}.")
+        if _uses_lateral_alias(replacements, {f.name.lower() for f in self._schema.fields}):
+            return self._replace_columns_lateral(replacements)
         lowered = {name.lower(): name for name in replacements}
         items: List[Expression] = []
         names: List[Optional[str]] = []
@@ -253,6 +280,29 @@ class DataFrame(BaseDataFrame):
                 items.append(col._expr)
                 names.append(name)
         return self._project(items, names)
+
+    def _replace_columns_lateral(self, replacements: Dict[str, Column]) -> "DataFrame":
+        """Spark's lateral column alias in ``withColumns``: a name absent from the input binds to an earlier entry.
+
+        New columns are appended one stage at a time so each can see the ones before it; names already in the
+        input keep meaning the input column, so replacements are computed last, against the widened frame.
+        """
+        input_width = len(self._schema.fields)
+        existing = {f.name.lower() for f in self._schema.fields}
+        frame = self
+        for name, col in replacements.items():
+            if name.lower() not in existing:
+                width = len(frame._schema.fields)
+                items = [frame._bound(i) for i in range(width)] + [col._expr]
+                frame = frame._project(items, frame.columns + [name])
+        lowered = {name.lower(): name for name in replacements if name.lower() in existing}
+        items = []
+        names = []
+        for index, field in enumerate(frame._schema.fields):
+            name = lowered.get(field.name.lower()) if index < input_width else None
+            items.append(replacements[name]._expr if name else frame._bound(index))
+            names.append(name or field.name)
+        return frame._project(items, names)
 
     def withColumn(self, colName: str, col: Column) -> "DataFrame":
         return self._replace_columns({colName: col})
@@ -331,6 +381,14 @@ class DataFrame(BaseDataFrame):
             positions = list(range(len(self._schema.fields)))
         else:
             positions = [self._resolve(AttributeReference(name)).index for name in subset]
+        for i in positions:
+            if coercion.contains_map(self._schema.fields[i].dataType):
+                field = self._schema.fields[i]
+                raise AnalysisException(
+                    f"[UNSUPPORTED_FEATURE.SET_OPERATION_ON_MAP_TYPE] The feature is not supported: Cannot have MAP "
+                    f"type columns in DataFrame which calls set operations (INTERSECT, EXCEPT, etc.), but the type "
+                    f'of column `{field.name}` is "{field.dataType.simpleString().upper()}".'
+                )
         seen = set()
         kept = []
         for row in self._rows:
@@ -624,7 +682,10 @@ class DataFrame(BaseDataFrame):
         flags = ascending if isinstance(ascending, list) else [ascending] * len(cols)
         orders = []
         for col, flag in zip(cols, flags):
-            expr = self._bound(col) if isinstance(col, int) and not isinstance(col, bool) else _column_ref(col)
+            if isinstance(col, int) and not isinstance(col, bool):
+                expr = self._ordinal(col)
+            else:
+                expr = _column_ref(col)
             if not isinstance(expr, SortOrder):
                 asc = True if flag is None else bool(flag)
                 expr = SortOrder(expr, ascending=asc, nulls_first=asc)
@@ -633,6 +694,15 @@ class DataFrame(BaseDataFrame):
         return self._derive(rows, list(self._schema.fields), list(self._plan_sets))
 
     sort = orderBy
+
+    def _ordinal(self, ordinal: int) -> Expression:
+        """PySpark's ``orderBy(int)``: a 1-based column ordinal; negative sorts that column descending."""
+        if ordinal == 0:
+            raise IndexError("[ZERO_INDEX] Index must be non-zero.")
+        if abs(ordinal) > len(self._schema.fields):
+            raise IndexError(f"[INDEX_OUT_OF_RANGE] Column ordinal {ordinal} is out of range.")
+        bound = self._bound(abs(ordinal) - 1)
+        return bound if ordinal > 0 else SortOrder(bound, ascending=False, nulls_first=False)
 
     # --- actions ------------------------------------------------------------------------------------
     def count(self) -> int:
@@ -698,10 +768,15 @@ class DataFrame(BaseDataFrame):
         return self._project(items, self.columns)
 
     def alias(self, alias: str) -> "DataFrame":
-        not_implemented_yet("DataFrame.alias")
+        """Name the frame so ``alias.column`` and ``alias.*`` reference its columns (an earlier alias is hidden)."""
+        plan_sets = [frozenset(p for p in s if not isinstance(p, str)) | {alias} for s in self._plan_sets]
+        return self._derive(list(self._rows), list(self._schema.fields), plan_sets)
 
-    def to_arrow(self) -> Any:
-        not_implemented_yet("DataFrame.to_arrow")
+    def toArrow(self) -> Any:
+        """The frame as a ``pyarrow.Table`` with PySpark's Arrow types."""
+        return to_arrow_table(self._rows, self._schema)
+
+    to_arrow = toArrow  # the Polars engine's name
 
 
 class _Generated:
@@ -726,6 +801,19 @@ def _generator_of(expr: Expression) -> Optional[FunctionCall]:
     if isinstance(node, FunctionCall) and lookup(node.name).kind == "generator":
         return node
     return None
+
+
+def _uses_lateral_alias(replacements: Dict[str, Column], existing: set) -> bool:
+    """Whether an entry references a column that only an earlier entry of the same ``withColumns`` defines."""
+    defined: set = set()
+    for name, col in replacements.items():
+        refs = find_nodes(col._expr, lambda n: isinstance(n, AttributeReference) and n.plan_id is None)
+        for ref in refs:
+            base = ref.name.split(".", 1)[0].strip("`").lower()
+            if base in defined and base not in existing:
+                return True
+        defined.add(name.lower())
+    return False
 
 
 def _cast_row(row: tuple, source: Sequence[StructField], target: Sequence[StructField]) -> tuple:
@@ -785,7 +873,10 @@ def _pandas_series(values: List[Any], dtype: Any) -> Any:
     import pandas as pd
 
     if isinstance(dtype, TimestampType):
-        return pd.to_datetime(pd.Series(values, dtype=object))
+        return pd.to_datetime(pd.Series(values, dtype=object)).astype("datetime64[ns]")
+    if isinstance(dtype, StringType):
+        # PySpark builds the frame from records, so pandas infers the dtype (``str`` with NaN on pandas 3).
+        return pd.Series(values) if values else pd.Series(values, dtype=object)
     if isinstance(dtype, (FloatType, DoubleType)):
         return pd.Series([float("nan") if v is None else v for v in values], dtype="float64")
     if isinstance(dtype, (ByteType, ShortType, IntegerType, LongType)):

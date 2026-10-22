@@ -722,6 +722,206 @@ def test_cast_int_to_other_parity(engine, spark, spark_dtype):
     assert_matches_spark(actual, expected, engine)
 
 
+_SECONDS_SOURCES = [
+    (SparkIntegerType(), [86400, -1, 0, 2_000_000_000, None]),
+    (SparkLongType(), [1_700_000_000, -86_401, None]),
+    (SparkByteType(), [3, -3, None]),
+    (SparkDoubleType(), [1.5, -1.5, 0.0000015, 1e9 + 0.25, None]),
+    (SparkDecimalType(12, 4), [Decimal("1.2500"), Decimal("-0.0001"), Decimal("12345678.9999"), None]),
+]
+
+
+@pytest.mark.feature("column.cast.numeric_to_timestamp")
+@pytest.mark.parametrize("source, values", _SECONDS_SOURCES, ids=lambda v: getattr(v, "simpleString", lambda: "")())
+def test_cast_numeric_to_timestamp_against_spark(engine, spark, source, values):
+    """A number cast to timestamp is seconds since the epoch; the fraction is kept to the microsecond."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("n", source)])
+    rows = [(v,) for v in values]
+    ts = SparkTimestampType()
+    actual = engine.build_df(rows, schema).select(
+        "n", F.col("n").cast(engine.dtype(ts)).alias("c"), F.col("n").try_cast(engine.dtype(ts)).alias("t")
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        "n", SF.col("n").cast(ts).alias("c"), SF.col("n").try_cast(ts).alias("t")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.cast.numeric_to_timestamp")
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"])
+def test_cast_non_finite_to_timestamp_raises_like_spark(engine, spark, value):
+    """ANSI ``cast`` rejects a non-finite double as a timestamp; ``try_cast`` gives null."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("n", SparkDoubleType())])
+    ts = SparkTimestampType()
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame([(value,)], schema).select(SF.col("n").cast(ts)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([(value,)], schema).select(F.col("n").cast(engine.dtype(ts)).alias("c")))
+
+    actual = engine.build_df([(value,)], schema).select(F.col("n").try_cast(engine.dtype(ts)).alias("t"))
+    expected = spark.createDataFrame([(value,)], schema).select(SF.col("n").try_cast(ts).alias("t"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.cast.timestamp_to_numeric")
+@pytest.mark.parametrize(
+    "target",
+    [SparkLongType(), SparkIntegerType(), SparkDoubleType(), SparkFloatType(), SparkDecimalType(20, 6)],
+    ids=lambda t: t.simpleString(),
+)
+def test_cast_timestamp_to_numeric_against_spark(engine, spark, target):
+    """A timestamp cast to a number is seconds since the epoch: floored for integrals, fractional otherwise."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("ts", SparkTimestampType())])
+    rows = [
+        (datetime(1970, 1, 2, 0, 0, 1, 500000),),
+        (datetime(1969, 12, 31, 23, 59, 58, 250000),),
+        (datetime(2024, 2, 29, 12, 30, 45, 123456),),
+        (datetime(1970, 1, 1),),
+        (None,),
+    ]
+    actual = engine.build_df(rows, schema).select(
+        "ts", F.col("ts").cast(engine.dtype(target)).alias("c"), F.col("ts").try_cast(engine.dtype(target)).alias("t")
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        "ts", SF.col("ts").cast(target).alias("c"), SF.col("ts").try_cast(target).alias("t")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: seconds that overflow a narrow integral raise under cast and are null under try_cast.
+    small = SparkShortType()
+    with pytest.raises(Exception, match="CAST_OVERFLOW"):
+        spark.createDataFrame(rows, schema).select(SF.col("ts").cast(small)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.col("ts").cast(engine.dtype(small)).alias("c")))
+    actual_try = engine.build_df(rows, schema).select(F.col("ts").try_cast(engine.dtype(small)).alias("t"))
+    expected_try = spark.createDataFrame(rows, schema).select(SF.col("ts").try_cast(small).alias("t"))
+    assert_matches_spark(actual_try, expected_try, engine)
+
+
+@pytest.mark.feature("column.cast.ansi_datetime_mismatch_raises")
+@pytest.mark.parametrize(
+    "source, value, target",
+    [
+        (SparkIntegerType(), 1, SparkDateType()),
+        (SparkDoubleType(), 1.5, SparkDateType()),
+        (SparkDecimalType(5, 2), Decimal("1.00"), SparkDateType()),
+        (SparkBooleanType(), True, SparkDateType()),
+        (SparkBooleanType(), True, SparkTimestampType()),
+        (SparkDateType(), date(2024, 1, 1), SparkIntegerType()),
+        (SparkDateType(), date(2024, 1, 1), SparkDoubleType()),
+        (SparkDateType(), date(2024, 1, 1), SparkBooleanType()),
+        (SparkTimestampType(), datetime(2024, 1, 1), SparkBooleanType()),
+        (SparkArrayType(SparkIntegerType()), [1], SparkArrayType(SparkDateType())),
+    ],
+    ids=[
+        "int_date",
+        "double_date",
+        "decimal_date",
+        "boolean_date",
+        "boolean_timestamp",
+        "date_int",
+        "date_double",
+        "date_boolean",
+        "timestamp_boolean",
+        "array_int_array_date",
+    ],
+)
+def test_cast_ansi_datetime_mismatch_raises_like_spark(engine, spark, source, value, target):
+    """Spark 4 ANSI rejects these casts at analysis, so ``try_cast`` raises too instead of returning null."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("v", source)])
+    for method in ("cast", "try_cast"):
+        with pytest.raises(Exception, match="DATATYPE_MISMATCH"):
+            spark.createDataFrame([(value,)], schema).select(getattr(SF.col("v"), method)(target)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(
+                engine.build_df([(value,)], schema).select(
+                    getattr(F.col("v"), method)(engine.dtype(target)).alias("r")
+                )
+            )
+
+    # Valid: the same source casts to string.
+    actual = engine.build_df([(value,)], schema).select(F.col("v").cast(engine.dtype(SparkStringType())).alias("r"))
+    expected = spark.createDataFrame([(value,)], schema).select(SF.col("v").cast(SparkStringType()).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.cast.time_only_string_to_timestamp")
+def test_cast_time_only_string_to_timestamp_against_spark(engine, spark):
+    """A time with no date is that time today, where "today" is the current date in the string's own zone."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", SparkStringType())])
+    values = [
+        "10:30:00",
+        "T10:30:00",
+        "10:30",
+        "T10:30",
+        "10:30:00.123456",
+        "10:30:00.1234567",
+        "10:30:00Z",
+        "10:30:00+02:00",
+        "10:30:00 UTC",
+        " 10:30:00 ",
+        "1:2:3",
+        "T1",
+        "10:30:00.",
+        "10:30:00-01",
+        "T10:30:00America/New_York",
+        "10",
+        "25:00:00",
+        "10:60:00",
+        "T",
+        None,
+    ]
+    rows = [(v,) for v in values]
+    ts = SparkTimestampType()
+    actual = engine.build_df(rows, schema).select("s", F.col("s").try_cast(engine.dtype(ts)).alias("t"))
+    expected = spark.createDataFrame(rows, schema).select("s", SF.col("s").try_cast(ts).alias("t"))
+    assert_matches_spark(actual, expected, engine)
+
+    # The strict forms parse the valid ones the same way: cast, and to_timestamp without a format.
+    valid = [(v,) for v in values[:15]]
+    assert_matches_spark(
+        engine.build_df(valid, schema).select(
+            F.col("s").cast(engine.dtype(ts)).alias("c"), F.to_timestamp("s").alias("p")
+        ),
+        spark.createDataFrame(valid, schema).select(SF.col("s").cast(ts).alias("c"), SF.to_timestamp("s").alias("p")),
+        engine,
+    )
+
+    # Malformed: an out-of-range or partial time raises under the ANSI cast.
+    for bad in ("25:00:00", "10:60:00", "T", "10"):
+        with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+            spark.createDataFrame([(bad,)], schema).select(SF.col("s").cast(ts)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.build_df([(bad,)], schema).select(F.col("s").cast(engine.dtype(ts)).alias("c")))
+
+
+@pytest.mark.feature("column.cast.non_finite_to_decimal_null")
+def test_cast_non_finite_double_to_decimal_is_null_like_spark(engine, spark):
+    """Even ANSI ``cast`` gives null for NaN / ±inf as a decimal (Spark catches the NumberFormatException)."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("n", SparkDoubleType())])
+    rows = [(float("nan"),), (float("inf"),), (float("-inf"),), (1.25,), (None,)]
+    dec = SparkDecimalType(10, 2)
+    actual = engine.build_df(rows, schema).select(
+        "n", F.col("n").cast(engine.dtype(dec)).alias("c"), F.col("n").try_cast(engine.dtype(dec)).alias("t")
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        "n", SF.col("n").cast(dec).alias("c"), SF.col("n").try_cast(dec).alias("t")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a finite value too wide for the decimal still raises under cast.
+    with pytest.raises(Exception, match="NUMERIC_VALUE_OUT_OF_RANGE"):
+        spark.createDataFrame([(1e12,)], schema).select(SF.col("n").cast(dec)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([(1e12,)], schema).select(F.col("n").cast(engine.dtype(dec)).alias("c")))
+
+
 @pytest.mark.feature("column.try_cast.inside_when_then")
 def test_try_cast_inside_when_then_against_spark(engine, spark):
     """Polars evaluates all when/then branches eagerly, so a strict cast fails on
@@ -800,3 +1000,986 @@ def test_startswith_non_string_prefix_raises(engine, spark, prefix):
         spark.createDataFrame([("apple",)], _STARTSWITH_SCHEMA).select(SF.col("text").startswith(prefix))
     with pytest.raises(Exception):
         engine.build_df([("apple",)], _STARTSWITH_SCHEMA).select(F.col("text").startswith(prefix))
+
+
+# ----------------------------------------------------------------------------- #
+# Decimal result types, decimal / timestamp casts
+#
+# The oracle compares decimals as floats, so wherever the decimal *scale* or the
+# resolved result type is the point, these tests also compare the resolved
+# ``dtypes`` with Spark's and the values rendered through a string cast.
+# ----------------------------------------------------------------------------- #
+
+
+def _assert_strict_raises(engine, spark, rows, schema, build, spark_match: Optional[str] = None):
+    """Spark (ANSI) fails ``build`` on ``rows``; the engine must fail too once evaluated."""
+    F = engine.functions
+    with pytest.raises(Exception, match=spark_match):
+        spark.createDataFrame(rows, schema).select(build(SF, SparkStringType())).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(build(F, engine.dtype(SparkStringType()))))
+
+
+def _assert_matches_with_dtypes(engine, spark, rows, schema, build):
+    """Compare values, resolved dtypes, and the string rendering of every output column."""
+    F = engine.functions
+    actual = engine.build_df(rows, schema).select(*build(F, engine.dtype(SparkStringType())))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF, SparkStringType()))
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+    str_type = engine.dtype(SparkStringType())
+    actual_str = actual.select(*[F.col(name).cast(str_type).alias(name) for name in actual.columns])
+    expected_str = expected.select(*[SF.col(name).cast(SparkStringType()).alias(name) for name in expected.columns])
+    assert_matches_spark(actual_str, expected_str, engine)
+
+
+_DECIMAL_OPERANDS_SCHEMA = SparkStructType(
+    [
+        SparkStructField("a", SparkDecimalType(10, 2)),
+        SparkStructField("b", SparkDecimalType(5, 3)),
+        SparkStructField("i", SparkIntegerType()),
+        SparkStructField("l", SparkLongType()),
+    ]
+)
+_DECIMAL_OPERANDS_ROWS = [
+    (Decimal("12345678.91"), Decimal("12.345"), 7, 3),
+    (Decimal("-1.50"), Decimal("0.007"), -3, -9),
+    (Decimal("0.05"), Decimal("99.999"), 0, 1),
+    (None, Decimal("1.000"), None, None),
+]
+
+
+@pytest.mark.feature("column.arithmetic.decimal_result_type")
+def test_arithmetic_decimal_result_type(engine, spark):
+    # decimal(10,2) op decimal(5,3): + / - -> decimal(12,3), * -> decimal(16,5); an int operand is
+    # promoted to decimal(10,0) (+ -> decimal(13,2)) and a bigint to decimal(20,0) (* -> decimal(31,2)).
+    def build(M, _str_type):
+        return [
+            (M.col("a") + M.col("b")).alias("add"),
+            (M.col("a") - M.col("b")).alias("sub"),
+            (M.col("a") * M.col("b")).alias("mul"),
+            (M.col("a") + M.col("i")).alias("add_int"),
+            (M.col("i") - M.col("b")).alias("int_sub"),
+            (M.col("a") * M.col("l")).alias("mul_long"),
+        ]
+
+    _assert_matches_with_dtypes(engine, spark, _DECIMAL_OPERANDS_ROWS, _DECIMAL_OPERANDS_SCHEMA, build)
+
+    # Malformed: decimal(38,0) + decimal(38,0) stays decimal(38,0) and overflows -> ANSI raises.
+    overflow_schema = SparkStructType([SparkStructField("x", SparkDecimalType(38, 0))])
+    overflow_rows = [(Decimal(1),), (Decimal(10**38 - 1),)]
+    _assert_strict_raises(
+        engine,
+        spark,
+        overflow_rows,
+        overflow_schema,
+        lambda M, _t: (M.col("x") + M.col("x")).alias("r"),
+        spark_match="NUMERIC_VALUE_OUT_OF_RANGE",
+    )
+
+
+@pytest.mark.feature("column.cast.decimal_to_string_keeps_scale")
+def test_cast_decimal_to_string_keeps_scale(engine, spark):
+    # Spark renders the full declared scale (``1.50``, ``0.00``, ``100.00``) in plain notation, never
+    # scientific (``0E-10`` -> ``0.0000000000``).
+    schema = SparkStructType(
+        [
+            SparkStructField("d2", SparkDecimalType(10, 2)),
+            SparkStructField("d0", SparkDecimalType(5, 0)),
+            SparkStructField("d10", SparkDecimalType(20, 10)),
+        ]
+    )
+    rows = [
+        (Decimal("1.50"), Decimal("7"), Decimal("0E-10")),
+        (Decimal("0.00"), Decimal("-12345"), Decimal("1E-10")),
+        (Decimal("-3.10"), Decimal("0"), Decimal("12.5")),
+        (Decimal("100"), None, Decimal("-0.0000001")),
+        (None, Decimal("1"), None),
+    ]
+
+    def build(M, str_type):
+        return [M.col(c).cast(str_type).alias(c) for c in ("d2", "d0", "d10")]
+
+    F = engine.functions
+    actual = engine.build_df(rows, schema).select(*build(F, engine.dtype(SparkStringType())))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF, SparkStringType()))
+    assert_matches_spark(actual, expected, engine)
+
+    # Round trip: a valid string cast to decimal(10,2) and back keeps the declared scale.
+    str_schema = SparkStructType([SparkStructField("s", SparkStringType())])
+    str_rows = [("1.5",), (" 2 ",), ("-0.1",), (None,)]
+
+    def round_trip(M, str_type, dec_type):
+        return M.col("s").cast(dec_type).cast(str_type).alias("r")
+
+    actual = engine.build_df(str_rows, str_schema).select(
+        round_trip(F, engine.dtype(SparkStringType()), engine.dtype(SparkDecimalType(10, 2)))
+    )
+    expected = spark.createDataFrame(str_rows, str_schema).select(
+        round_trip(SF, SparkStringType(), SparkDecimalType(10, 2))
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a non-numeric string cannot be cast to decimal under ANSI.
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame([("1.5x",)], str_schema).select(
+            round_trip(SF, SparkStringType(), SparkDecimalType(10, 2))
+        ).collect()
+    with pytest.raises(Exception):
+        engine.to_records(
+            engine.build_df([("1.5x",)], str_schema).select(
+                round_trip(F, engine.dtype(SparkStringType()), engine.dtype(SparkDecimalType(10, 2)))
+            )
+        )
+
+
+@pytest.mark.feature("column.cast.timestamp_to_string")
+def test_cast_timestamp_to_string(engine, spark):
+    # Spark prints ``yyyy-MM-dd HH:mm:ss`` and only the significant fraction digits (``.1``, ``.123456``).
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("ts", SparkTimestampType())])
+    rows = [
+        (datetime(2024, 1, 15, 10, 30, 45),),
+        (datetime(2024, 1, 15, 10, 30, 45, 100000),),
+        (datetime(2024, 1, 15, 10, 30, 45, 123000),),
+        (datetime(2024, 1, 15, 10, 30, 45, 123456),),
+        (datetime(2024, 1, 15, 0, 0, 0, 10),),
+        (datetime(1969, 12, 31, 23, 59, 59, 999999),),
+        (datetime(1, 1, 1, 0, 0),),
+        (None,),
+    ]
+    actual = engine.build_df(rows, schema).select(F.col("ts").cast(engine.dtype(SparkStringType())).alias("s"))
+    expected = spark.createDataFrame(rows, schema).select(SF.col("ts").cast(SparkStringType()).alias("s"))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: the reverse cast of a string that is not a timestamp raises under ANSI.
+    str_schema = SparkStructType([SparkStructField("s", SparkStringType())])
+    for bad in ["2024-13-01 00:00:00", "2024-01-15 10:30:45abc"]:
+        with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+            spark.createDataFrame([(bad,)], str_schema).select(SF.col("s").cast(SparkTimestampType())).collect()
+        with pytest.raises(Exception):
+            engine.to_records(
+                engine.build_df([(bad,)], str_schema).select(
+                    F.col("s").cast(engine.dtype(SparkTimestampType())).alias("r")
+                )
+            )
+
+
+_TO_DECIMAL_5_2_SOURCES = [
+    (SparkDecimalType(10, 2), [Decimal("123.45"), Decimal("-999.99"), None], Decimal("1234.56")),
+    (SparkIntegerType(), [999, -5, None], 1000),
+    (SparkLongType(), [0, 12, None], -100000),
+    (SparkDoubleType(), [999.99, -0.5, None], 1000.0),
+    (SparkStringType(), ["999.99", " -1.5 ", None], "1000"),
+]
+
+
+@pytest.mark.feature("column.cast.to_decimal_overflow_raises")
+@pytest.mark.parametrize(
+    "source_type, valid, overflow",
+    _TO_DECIMAL_5_2_SOURCES,
+    ids=["decimal", "int", "long", "double", "string"],
+)
+def test_cast_to_decimal_overflow_raises(engine, spark, source_type, valid, overflow):
+    # decimal(5,2) holds at most 999.99: a value that needs more integral digits raises under ANSI.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("x", source_type)])
+    target = SparkDecimalType(5, 2)
+    str_type = SparkStringType()
+
+    rows = [(v,) for v in valid]
+    actual = engine.build_df(rows, schema).select(
+        F.col("x").cast(engine.dtype(target)).cast(engine.dtype(str_type)).alias("r")
+    )
+    expected = spark.createDataFrame(rows, schema).select(SF.col("x").cast(target).cast(str_type).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+    bad_rows = rows + [(overflow,)]
+    with pytest.raises(Exception, match="NUMERIC_VALUE_OUT_OF_RANGE"):
+        spark.createDataFrame(bad_rows, schema).select(SF.col("x").cast(target)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(bad_rows, schema).select(F.col("x").cast(engine.dtype(target)).alias("r")))
+
+
+@pytest.mark.feature("column.cast.to_decimal_rounds_half_up")
+def test_cast_to_decimal_rounds_half_up(engine, spark):
+    # Spark rounds HALF_UP (away from zero on a tie) when the target scale is smaller -- not banker's rounding.
+    F = engine.functions
+    schema = SparkStructType(
+        [SparkStructField("s", SparkStringType()), SparkStructField("d", SparkDecimalType(10, 3))]
+    )
+    rows = [
+        ("1.005", Decimal("1.005")),
+        ("1.015", Decimal("-2.675")),
+        ("-1.005", Decimal("0.125")),
+        ("2.5", Decimal("2.500")),
+        ("-2.5", Decimal("-0.005")),
+        ("0.125", Decimal("1.004")),
+        ("1.0049", Decimal("3.500")),
+        (None, None),
+    ]
+
+    def build(M, str_type, dec2, dec0):
+        return [
+            M.col("s").cast(dec2).cast(str_type).alias("s_2"),
+            M.col("s").cast(dec0).cast(str_type).alias("s_0"),
+            M.col("d").cast(dec2).cast(str_type).alias("d_2"),
+            M.col("d").cast(dec0).cast(str_type).alias("d_0"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(
+        *build(
+            F,
+            engine.dtype(SparkStringType()),
+            engine.dtype(SparkDecimalType(10, 2)),
+            engine.dtype(SparkDecimalType(10, 0)),
+        )
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        *build(SF, SparkStringType(), SparkDecimalType(10, 2), SparkDecimalType(10, 0))
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: an unparseable string raises, and rounding up past the precision overflows.
+    str_schema = SparkStructType([SparkStructField("s", SparkStringType())])
+    for bad, target, error in [
+        ("1.0.5", SparkDecimalType(10, 2), "CAST_INVALID_INPUT"),
+        ("999.995", SparkDecimalType(5, 2), "NUMERIC_VALUE_OUT_OF_RANGE"),
+    ]:
+        with pytest.raises(Exception, match=error):
+            spark.createDataFrame([(bad,)], str_schema).select(SF.col("s").cast(target)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(
+                engine.build_df([(bad,)], str_schema).select(F.col("s").cast(engine.dtype(target)).alias("r"))
+            )
+
+
+# ----------------------------------------------------------------------------- #
+# Division
+# ----------------------------------------------------------------------------- #
+
+
+@pytest.mark.feature("column.divide.by_zero_raises")
+@pytest.mark.parametrize(
+    "spark_type, a, b",
+    [
+        (SparkIntegerType(), 5, 0),
+        (SparkLongType(), -5, 0),
+        (SparkDoubleType(), 1.0, 0.0),
+        (SparkDoubleType(), -2.5, -0.0),
+        (SparkDecimalType(10, 2), Decimal("1.50"), Decimal("0.00")),
+    ],
+    ids=["int", "long", "double", "double_neg_zero", "decimal"],
+)
+def test_divide_by_zero_raises(engine, spark, spark_type, a, b):
+    # ANSI: x / 0 raises DIVIDE_BY_ZERO for every numeric type (doubles too). A null dividend or
+    # divisor short-circuits to null, even when the divisor is zero.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("a", spark_type), SparkStructField("b", spark_type)])
+    one = type(a)(1)
+    valid_rows = [(a, a), (a, None), (None, b), (None, None), (b, one)]
+    actual = engine.build_df(valid_rows, schema).select((F.col("a") / F.col("b")).alias("r"))
+    expected = spark.createDataFrame(valid_rows, schema).select((SF.col("a") / SF.col("b")).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+    bad_rows = valid_rows + [(a, b)]
+    with pytest.raises(Exception, match="DIVIDE_BY_ZERO"):
+        spark.createDataFrame(bad_rows, schema).select(SF.col("a") / SF.col("b")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(bad_rows, schema).select((F.col("a") / F.col("b")).alias("r")))
+    with pytest.raises(Exception, match="DIVIDE_BY_ZERO"):
+        spark.createDataFrame(valid_rows, schema).select(SF.col("a") / SF.lit(0)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(valid_rows, schema).select((F.col("a") / F.lit(0)).alias("r")))
+
+
+@pytest.mark.feature("column.divide.decimal_result_type")
+def test_divide_decimal_result_type(engine, spark):
+    # decimal(p1,s1) / decimal(p2,s2): scale = max(6, s1 + p2 + 1), precision = p1 - s1 + s2 + scale.
+    # So decimal(10,2) / decimal(5,3) -> decimal(19,8); an int divisor is decimal(10,0) -> decimal(21,13).
+    def build(M, _str_type):
+        return [
+            (M.col("a") / M.col("b")).alias("dec_dec"),
+            (M.col("a") / M.col("l")).alias("dec_long"),
+            (M.col("i") / M.col("b")).alias("int_dec"),
+            (M.col("b") / M.col("b")).alias("self"),
+        ]
+
+    rows = [row for row in _DECIMAL_OPERANDS_ROWS if row[2] != 0]
+    _assert_matches_with_dtypes(engine, spark, rows, _DECIMAL_OPERANDS_SCHEMA, build)
+
+    # Malformed: a zero decimal divisor raises under ANSI.
+    bad_rows = rows + [(Decimal("1.00"), Decimal("0.000"), 1, 1)]
+    _assert_strict_raises(
+        engine,
+        spark,
+        bad_rows,
+        _DECIMAL_OPERANDS_SCHEMA,
+        lambda M, _t: (M.col("a") / M.col("b")).alias("r"),
+        spark_match="DIVIDE_BY_ZERO",
+    )
+
+
+@pytest.mark.feature("column.divide.integral_returns_double")
+def test_divide_integral_returns_double(engine, spark):
+    # ``/`` is true division: integral operands of any width yield a double, never a truncated integer.
+    schema = SparkStructType(
+        [
+            SparkStructField("i", SparkIntegerType()),
+            SparkStructField("j", SparkIntegerType()),
+            SparkStructField("l", SparkLongType()),
+            SparkStructField("s", SparkShortType()),
+            SparkStructField("b", SparkByteType()),
+        ]
+    )
+    rows = [(7, 2, 3, 9, 4), (1, 3, -2, -7, 2), (-7, 2, 9223372036854775807, 1, -1), (None, 1, 1, None, 3)]
+
+    def build(M, _str_type):
+        return [
+            (M.col("i") / M.col("j")).alias("int_int"),
+            (M.col("l") / M.col("i")).alias("long_int"),
+            (M.col("s") / M.col("b")).alias("short_byte"),
+            (M.col("i") / 2).alias("int_lit"),
+            (10 / M.col("b")).alias("lit_byte"),
+        ]
+
+    F = engine.functions
+    actual = engine.build_df(rows, schema).select(*build(F, None))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF, None))
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: an integral zero divisor raises (no silent null / inf).
+    _assert_strict_raises(
+        engine,
+        spark,
+        rows + [(1, 0, 1, 1, 1)],
+        schema,
+        lambda M, _t: (M.col("i") / M.col("j")).alias("r"),
+        spark_match="DIVIDE_BY_ZERO",
+    )
+
+
+# ----------------------------------------------------------------------------- #
+# Null-safe equality
+# ----------------------------------------------------------------------------- #
+
+
+@pytest.mark.feature("column.eq_null_safe.nulls")
+@pytest.mark.parametrize(
+    "spark_type, x, y",
+    [(SparkIntegerType(), 1, 2), (SparkStringType(), "a", "b"), (SparkDoubleType(), float("nan"), 1.0)],
+    ids=["int", "string", "double_nan"],
+)
+def test_eq_null_safe_nulls(engine, spark, spark_type, x, y):
+    # ``<=>`` never returns null: null <=> null is true, null <=> value is false.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("a", spark_type), SparkStructField("b", spark_type)])
+    rows = [(x, x), (x, y), (x, None), (None, x), (None, None)]
+
+    def build(M):
+        return [
+            M.col("a").eqNullSafe(M.col("b")).alias("col_col"),
+            M.col("a").eqNullSafe(None).alias("vs_none"),
+            M.col("a").eqNullSafe(M.lit(None)).alias("vs_null_lit"),
+            M.col("a").eqNullSafe(x).alias("vs_value"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: incomparable operand types are an analysis error.
+    arr_schema = SparkStructType([SparkStructField("arr", SparkArrayType(SparkIntegerType()))])
+    with pytest.raises(Exception, match="DATATYPE_MISMATCH"):
+        spark.createDataFrame([([1],)], arr_schema).select(SF.col("arr").eqNullSafe(1)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([([1],)], arr_schema).select(F.col("arr").eqNullSafe(1).alias("r")))
+
+
+@pytest.mark.feature("column.eq_null_safe.mixed_types")
+def test_eq_null_safe_mixed_types(engine, spark):
+    # Operands are coerced like ``==`` (int vs string -> bigint, string vs date -> date, decimal vs
+    # double -> double) and nulls still compare null-safely.
+    F = engine.functions
+    schema = SparkStructType(
+        [
+            SparkStructField("i", SparkIntegerType()),
+            SparkStructField("l", SparkLongType()),
+            SparkStructField("d", SparkDoubleType()),
+            SparkStructField("s", SparkStringType()),
+            SparkStructField("dt", SparkDateType()),
+            SparkStructField("sd", SparkStringType()),
+            SparkStructField("dec", SparkDecimalType(10, 2)),
+        ]
+    )
+    rows = [
+        (1, 1, 1.0, "1", date(2024, 1, 1), "2024-01-01", Decimal("1.00")),
+        (2, None, 2.5, " 2 ", None, None, Decimal("2.50")),
+        (None, None, None, None, None, None, None),
+        (3, 4, None, "+3", date(2024, 1, 2), "2024-01-03", None),
+        (None, 5, 5.0, None, date(2024, 1, 5), "2024-1-5", Decimal("5.00")),
+    ]
+
+    def build(M):
+        return [
+            M.col("i").eqNullSafe(M.col("l")).alias("int_long"),
+            M.col("i").eqNullSafe(M.col("d")).alias("int_double"),
+            M.col("i").eqNullSafe(M.col("s")).alias("int_string"),
+            M.col("d").eqNullSafe(M.col("dec")).alias("double_decimal"),
+            M.col("i").eqNullSafe(M.col("dec")).alias("int_decimal"),
+            M.col("dt").eqNullSafe(M.col("sd")).alias("date_string"),
+            M.col("l").eqNullSafe(2.5).alias("long_float_lit"),
+            M.col("s").eqNullSafe(1).alias("string_int_lit"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: the implicit string -> bigint cast is ANSI-strict.
+    bad_rows = rows + [(1, 1, 1.0, "abc", None, None, None)]
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame(bad_rows, schema).select(SF.col("i").eqNullSafe(SF.col("s"))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(bad_rows, schema).select(F.col("i").eqNullSafe(F.col("s")).alias("r")))
+
+
+# ----------------------------------------------------------------------------- #
+# Struct / array / map extraction
+# ----------------------------------------------------------------------------- #
+
+_NESTED_STRUCT_TYPE = SparkStructType(
+    [
+        SparkStructField("x", SparkIntegerType()),
+        SparkStructField("y", SparkStringType()),
+        SparkStructField("inner", SparkStructType([SparkStructField("z", SparkDoubleType())])),
+    ]
+)
+
+
+@pytest.mark.feature("column.get_field.struct")
+def test_get_field_struct(engine, spark):
+    # A null struct (or a null nested struct) yields null fields, never an error.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", _NESTED_STRUCT_TYPE), SparkStructField("i", SparkIntegerType())])
+    rows = [((1, "a", (1.5,)), 1), ((None, "b", None), 2), (None, 3), ((4, None, (None,)), 4)]
+
+    def build(M):
+        return [
+            M.col("s").getField("x").alias("x"),
+            M.col("s").getField("y").alias("y"),
+            M.col("s").getField("inner").getField("z").alias("z"),
+            M.col("s")["x"].alias("x_bracket"),
+            M.col("s.inner.z").alias("z_dotted"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: an unknown field, or extracting from a non-struct column, fails analysis.
+    for build_bad, error in [
+        (lambda M: M.col("s").getField("missing"), "FIELD_NOT_FOUND"),
+        (lambda M: M.col("i").getField("x"), "INVALID_EXTRACT_BASE_FIELD_TYPE"),
+    ]:
+        with pytest.raises(Exception, match=error):
+            spark.createDataFrame(rows, schema).select(build_bad(SF)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.build_df(rows, schema).select(build_bad(F).alias("r")))
+
+
+@pytest.mark.feature("column.getitem.array_out_of_range_null")
+def test_getitem_array_out_of_range(engine, spark):
+    # Spark 4 (ANSI): ``arr[i]`` on a null array or a null element is null, but an index outside the
+    # array -- past the end or negative -- raises INVALID_ARRAY_INDEX (only ``get()`` / ``try_element_at``
+    # tolerate it with null).
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("a", SparkArrayType(SparkIntegerType()))])
+    rows = [([1, 2, 3],), ([None, 5, 6],), (None,)]
+
+    def build(M):
+        return [M.col("a").getItem(0).alias("first"), M.col("a")[2].alias("last"), M.col("a").getItem(1).alias("mid")]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    for bad_rows, index in [(rows, 3), (rows, -1), (rows + [([],)], 0)]:
+        with pytest.raises(Exception, match="INVALID_ARRAY_INDEX"):
+            spark.createDataFrame(bad_rows, schema).select(SF.col("a").getItem(index)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.build_df(bad_rows, schema).select(F.col("a").getItem(index).alias("r")))
+
+
+@pytest.mark.feature("column.getitem.map_missing_key_null")
+def test_getitem_map_missing_key_null(engine, spark):
+    # A missing key, an empty map or a null map all yield null (``[]`` on maps is lenient even under ANSI).
+    F = engine.functions
+    schema = SparkStructType(
+        [
+            SparkStructField("m", SparkMapType(SparkStringType(), SparkIntegerType())),
+            SparkStructField("mi", SparkMapType(SparkIntegerType(), SparkStringType())),
+        ]
+    )
+    rows = [({"a": 1, "b": None}, {1: "one", 2: "two"}), ({}, {}), (None, None), ({"z": 26}, {3: None})]
+
+    def build(M):
+        return [
+            M.col("m").getItem("a").alias("present"),
+            M.col("m").getItem("b").alias("null_value"),
+            M.col("m").getItem("missing").alias("missing"),
+            M.col("m")["z"].alias("bracket"),
+            M.col("mi").getItem(2).alias("int_key"),
+            M.col("mi").getItem(99).alias("int_missing"),
+            M.col("mi").getItem("1").alias("str_key_coerced"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a key that cannot be cast to the map's key type raises (ANSI implicit cast).
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame(rows, schema).select(SF.col("mi").getItem("x")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.col("mi").getItem("x").alias("r")))
+
+
+# ----------------------------------------------------------------------------- #
+# isin / contains / rlike
+# ----------------------------------------------------------------------------- #
+
+
+@pytest.mark.feature("column.isin.null_semantics")
+def test_isin_null_semantics(engine, spark):
+    # SQL IN: a match is true; no match is false, or null if the list holds a null; a null probe is null;
+    # an empty list is always false.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("i", SparkIntegerType()), SparkStructField("s", SparkStringType())])
+    rows = [(1, "a"), (2, "b"), (None, None), (3, "")]
+
+    def build(M):
+        return [
+            M.col("i").isin(1, 3).alias("plain"),
+            M.col("i").isin(1, None).alias("with_null"),
+            M.col("i").isin([None]).alias("only_null"),
+            M.col("i").isin().alias("empty"),
+            M.col("s").isin(["a", ""]).alias("str_list"),
+            M.col("s").isin("z", None).alias("str_with_null"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: incomparable candidate types fail analysis.
+    arr_schema = SparkStructType([SparkStructField("arr", SparkArrayType(SparkIntegerType()))])
+    with pytest.raises(Exception, match="DATATYPE_MISMATCH"):
+        spark.createDataFrame([([1],)], arr_schema).select(SF.col("arr").isin(1)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([([1],)], arr_schema).select(F.col("arr").isin(1).alias("r")))
+
+
+@pytest.mark.feature("column.isin.coerces_candidates")
+def test_isin_coerces_candidates(engine, spark):
+    # Probe and candidates widen to one common type: string candidates against an int probe (and int
+    # candidates against a string probe) compare as bigint; a float candidate widens the comparison to double.
+    F = engine.functions
+    schema = SparkStructType(
+        [
+            SparkStructField("i", SparkIntegerType()),
+            SparkStructField("s", SparkStringType()),
+            SparkStructField("d", SparkDoubleType()),
+            SparkStructField("dec", SparkDecimalType(10, 2)),
+        ]
+    )
+    rows = [
+        (1, "1", 1.0, Decimal("1.00")),
+        (2, " 2 ", 2.5, Decimal("2.50")),
+        (None, "07", None, None),
+        (3, "+3", 3.0, Decimal("3.10")),
+    ]
+
+    def build(M):
+        return [
+            M.col("i").isin("1", "3").alias("int_vs_str"),
+            M.col("i").isin("1", 2.0).alias("int_vs_mixed"),
+            M.col("i").isin(2.5).alias("int_vs_float"),
+            M.col("s").isin(1, 7).alias("str_vs_int"),
+            M.col("d").isin(1, "2.5").alias("double_vs_mixed"),
+            M.col("dec").isin(1, 2.5).alias("decimal_vs_num"),
+            M.col("i").isin(M.col("d"), 99).alias("int_vs_column"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a candidate (or probe) string that can't be cast to the common numeric type raises.
+    for build_bad, bad_rows in [
+        (lambda M: M.col("i").isin("abc"), rows),
+        (lambda M: M.col("s").isin(1, 2), rows + [(4, "abc", 4.0, None)]),
+    ]:
+        with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+            spark.createDataFrame(bad_rows, schema).select(build_bad(SF)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.build_df(bad_rows, schema).select(build_bad(F).alias("r")))
+
+
+@pytest.mark.feature("column.contains.literal_and_null")
+def test_contains_literal_and_null(engine, spark):
+    # Substring match is literal (``.`` is not a regex); an empty needle matches every non-null value;
+    # a null on either side gives null.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("t", SparkStringType()), SparkStructField("sub", SparkStringType())])
+    rows = [("banana", "an"), ("banana", "xy"), ("", ""), (None, "a"), ("abc", None), ("a.c", "."), ("ABC", "b")]
+
+    def build(M):
+        return [
+            M.col("t").contains("an").alias("lit"),
+            M.col("t").contains("").alias("empty"),
+            M.col("t").contains(".").alias("dot"),
+            M.col("t").contains(None).alias("null_lit"),
+            M.col("t").contains(M.col("sub")).alias("col"),
+        ]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a non-string (array) haystack fails analysis.
+    arr_schema = SparkStructType([SparkStructField("arr", SparkArrayType(SparkIntegerType()))])
+    with pytest.raises(Exception, match="DATATYPE_MISMATCH"):
+        spark.createDataFrame([([1],)], arr_schema).select(SF.col("arr").contains("a")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([([1],)], arr_schema).select(F.col("arr").contains("a").alias("r")))
+
+
+@pytest.mark.feature("column.like")
+def test_like_against_spark(engine, spark):
+    """``_`` is one character and ``%`` any run (newlines included); ``\\`` escapes them; the whole string must match."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("t", SparkStringType()), SparkStructField("n", SparkIntegerType())])
+    rows = [("abc", 123), ("a_c", 10), ("a%c", None), ("ab\nc", 1), ("", 0), ("ABC", 12), (None, 5)]
+    patterns = ["a%", "a_c", "%c", "a\\_c", "a\\%c", "a%c", "%", "", "abc", "a.c", "[a]%", "a\\\\%"]
+
+    def build(M):
+        cols = [M.col("t").like(p).alias(f"p{i}") for i, p in enumerate(patterns)]
+        return cols + [M.col("n").like("1%").alias("int_input")]
+
+    actual = engine.build_df(rows, schema).select("t", *build(F))
+    expected = spark.createDataFrame(rows, schema).select("t", *build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("column.like")
+@pytest.mark.parametrize("pattern", ["a\\", "a\\bc"], ids=["escape_at_end", "escape_before_other"])
+def test_like_invalid_escape_raises_like_spark(engine, spark, pattern):
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("t", SparkStringType())])
+    rows = [("abc",)]
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.col("t").like(pattern)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.col("t").like(pattern).alias("r")))
+
+    # Malformed input type: an array is not implicitly cast to string.
+    arr_schema = SparkStructType([SparkStructField("arr", SparkArrayType(SparkIntegerType()))])
+    with pytest.raises(Exception):
+        spark.createDataFrame([([1],)], arr_schema).select(SF.col("arr").like("a")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([([1],)], arr_schema).select(F.col("arr").like("a").alias("r")))
+
+
+@pytest.mark.feature("column.rlike.invalid_regex_raises")
+@pytest.mark.parametrize(
+    "pattern", ["[", "a(b", "*a", "a{2,1}"], ids=["open_class", "open_group", "dangling", "range"]
+)
+def test_rlike_invalid_regex_raises(engine, spark, pattern):
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("t", SparkStringType())])
+    rows = [("abc",), ("",), (None,)]
+
+    # Valid: a well-formed pattern is a partial (find) match.
+    actual = engine.build_df(rows, schema).select(F.col("t").rlike("b").alias("r"))
+    expected = spark.createDataFrame(rows, schema).select(SF.col("t").rlike("b").alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: Java's regex compiler rejects the pattern, failing the query.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.col("t").rlike(pattern)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.col("t").rlike(pattern).alias("r")))
+
+
+# The rlike patterns the datahub nba pipeline (model/nba and the std/rpt tables it reads) applies.
+_NBA_RLIKE_PATTERNS = [
+    "check|(^|-)ck($|-)",
+    "money-market",
+    "checking|money market",
+    "cert|(^|-)cd($|-)",
+    "sav|check|hysa|high-yield",
+    "^[0-9]+$",
+    "^[0-9A-HJKMNP-TV-Z]{26}$",
+    r"^\d\.\d{4,}$",
+    r"^\d{4}-\d{2}-\d{2}$",
+    r"^\d{2}/\d{4}$",
+    r"^\d{2}/\d{2}$",
+    r"^\d{2}/\d{2}/\d{4}$",
+    r"^\d{4}$",
+    r"^-?\d+\.?\d*$",
+    r"^\d+Y$",
+    r"^\d+M$",
+    r"(?i)iPad|Tablet|Silk|Kindle|PlayBook",
+    r"(?i)Mobi|iPhone|iPod|Android.*Mobile|Windows Phone|BlackBerry",
+    r"(?i)axios|node-fetch|python-requests|curl|Go-http-client",
+    r"(\bautos?\b|vehicle|\bcar\b|\brv\b|motorcycle|boat)",
+    r"(checking|savings|certificate|money market|\bcds?\b|dao|deposit|account opening)",
+]
+
+_NBA_RLIKE_INPUTS = [
+    "checking",
+    "share-ck",
+    "ck-plus",
+    "deck",
+    "money-market",
+    "Money Market Checking",
+    "cd",
+    "jumbo-cd-12",
+    "cds",
+    "hysa",
+    "00012345",
+    "12a45",
+    "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "01ARZ3NDEKTSV4RRFFQ69G5FAU",
+    "0.12345",
+    "0.123",
+    "2024-01-15",
+    "2024-1-15",
+    "01/2024",
+    "01/24",
+    "01/24/2024",
+    "2024",
+    "-12.",
+    "12.5.1",
+    "-",
+    "10Y",
+    "36M",
+    "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)",
+    "Mozilla/5.0 (Linux; Android 14) Mobile Safari",
+    "axios/1.6.0",
+    "CURL/8.0",
+    "New Auto Loan",
+    "carpet deals",
+    "RV refinance",
+    "١٢٣",  # Arabic-Indic digits: Java's \d and [0-9] are ASCII-only
+    "123\n",
+    "",
+    None,
+]
+
+
+@pytest.mark.feature("column.rlike.nba_patterns")
+def test_rlike_nba_patterns(engine, spark):
+    # Java regex semantics: partial (find) match, inline (?i), \b word boundaries, ASCII-only \d.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("t", SparkStringType())])
+    rows = [(v,) for v in _NBA_RLIKE_INPUTS]
+
+    def build(M):
+        return [M.col("t").rlike(p).alias(f"p{i}") for i, p in enumerate(_NBA_RLIKE_PATTERNS)]
+
+    actual = engine.build_df(rows, schema).select(F.col("t"), *build(F))
+    expected = spark.createDataFrame(rows, schema).select(SF.col("t"), *build(SF))
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a broken variant of an nba pattern fails the query.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.col("t").rlike(r"^\d{4-\d{2}$")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.col("t").rlike(r"^\d{4-\d{2}$").alias("r")))
+
+
+# ----------------------------------------------------------------------------- #
+# Sort ordering
+# ----------------------------------------------------------------------------- #
+
+
+@pytest.mark.feature("column.sort.nulls_ordering")
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda M: [M.col("v").asc(), M.col("k")],
+        lambda M: [M.col("v").desc(), M.col("k")],
+        lambda M: [M.col("v").asc_nulls_first(), M.col("k")],
+        lambda M: [M.col("v").asc_nulls_last(), M.col("k")],
+        lambda M: [M.col("v").desc_nulls_first(), M.col("k")],
+        lambda M: [M.col("v").desc_nulls_last(), M.col("k")],
+        lambda M: [M.col("s").desc_nulls_first(), M.col("v").asc_nulls_last(), M.col("k")],
+    ],
+    ids=["asc", "desc", "asc_nulls_first", "asc_nulls_last", "desc_nulls_first", "desc_nulls_last", "multi"],
+)
+def test_sort_nulls_ordering(engine, spark, build):
+    # Spark: ascending puts nulls first and descending puts them last by default; NaN sorts above
+    # every number (and +inf), and the explicit *_nulls_* variants override the null placement.
+    F = engine.functions
+    schema = SparkStructType(
+        [
+            SparkStructField("k", SparkIntegerType()),
+            SparkStructField("v", SparkDoubleType()),
+            SparkStructField("s", SparkStringType()),
+        ]
+    )
+    rows = [
+        (1, 2.0, "b"),
+        (2, None, "a"),
+        (3, float("nan"), None),
+        (4, -1.0, "b"),
+        (5, None, None),
+        (6, float("inf"), "a"),
+        (7, 2.0, "c"),
+    ]
+    actual = engine.build_df(rows, schema).orderBy(*build(F))
+    expected = spark.createDataFrame(rows, schema).orderBy(*build(SF))
+    assert_matches_spark(actual, expected, engine, check_row_order=True)
+
+    # Malformed: maps are not orderable.
+    map_schema = SparkStructType([SparkStructField("m", SparkMapType(SparkStringType(), SparkIntegerType()))])
+    map_rows = [({"a": 1},), (None,)]
+    with pytest.raises(Exception, match="INVALID_ORDERING_TYPE"):
+        spark.createDataFrame(map_rows, map_schema).orderBy(SF.col("m").asc()).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(map_rows, map_schema).orderBy(F.col("m").asc()))
+
+
+# ----------------------------------------------------------------------------- #
+# try_cast: DDL targets, malformed matrix, decimal overflow
+# ----------------------------------------------------------------------------- #
+
+
+@pytest.mark.feature("column.try_cast.ddl_string_target")
+@pytest.mark.parametrize(
+    "ddl, spark_type",
+    [
+        ("decimal(5,2)", SparkDecimalType(5, 2)),
+        ("DECIMAL(10, 0)", SparkDecimalType(10, 0)),
+        ("bigint", SparkLongType()),
+        ("smallint", SparkShortType()),
+        ("tinyint", SparkByteType()),
+        ("integer", SparkIntegerType()),
+        ("float", SparkFloatType()),
+        ("date", SparkDateType()),
+        ("timestamp", SparkTimestampType()),
+        ("boolean", SparkBooleanType()),
+    ],
+)
+def test_try_cast_ddl_string_target(engine, spark, ddl, spark_type):
+    # A DDL type string names the same target as the DataType; malformed values become null.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", SparkStringType())])
+    rows = [("1",), ("12.345",), ("-300",), ("2024-01-15",), ("true",), ("abc",), ("",), (None,)]
+    actual = engine.build_df(rows, schema).select(F.col("s").try_cast(ddl).alias("v"))
+    expected = spark.createDataFrame(rows, schema).select(SF.col("s").try_cast(ddl).alias("v"))
+    assert expected.schema["v"].dataType == spark_type
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+    str_type = engine.dtype(SparkStringType())
+    assert_matches_spark(
+        actual.select(F.col("v").cast(str_type).alias("v")),
+        expected.select(SF.col("v").cast(SparkStringType()).alias("v")),
+        engine,
+    )
+
+    # Malformed DDL: an unparseable or unknown type string ("bool" is not a Spark type name) fails even
+    # the lenient cast.
+    for bad_ddl in ["decimal(5", "notatype", "bool"]:
+        with pytest.raises(Exception):
+            spark.createDataFrame(rows, schema).select(SF.col("s").try_cast(bad_ddl)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.build_df(rows, schema).select(F.col("s").try_cast(bad_ddl).alias("v")))
+
+
+_TRY_CAST_MALFORMED_STRINGS = [
+    " 12 ",
+    "+7",
+    "-0",
+    "1.5",
+    "1e3",
+    "1_000",
+    "0x10",
+    "9999999999",
+    "99999999999999999999",
+    "NaN",
+    "-Infinity",
+    "abc",
+    "",
+    " ",
+    "t",
+    "yes",
+    "2024-01-15",
+    "2024-02-30",
+    "2024-01-15 25:00:00",
+    "2024-01-15T10:30:45",
+    "15/01/2024",
+    None,
+]
+
+
+@pytest.mark.feature("column.try_cast.malformed_string_matrix")
+@pytest.mark.parametrize(
+    "ddl, spark_type",
+    [
+        ("int", SparkIntegerType()),
+        ("bigint", SparkLongType()),
+        ("smallint", SparkShortType()),
+        ("double", SparkDoubleType()),
+        ("float", SparkFloatType()),
+        ("decimal(10,2)", SparkDecimalType(10, 2)),
+        ("boolean", SparkBooleanType()),
+        ("date", SparkDateType()),
+        ("timestamp", SparkTimestampType()),
+    ],
+)
+def test_try_cast_malformed_string_matrix(engine, spark, ddl, spark_type):
+    # Every string Spark's strict cast would reject becomes null under try_cast; the rest parse exactly
+    # like ``cast`` (whitespace trimmed, sign, special doubles, ISO 'T' separator...).
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", SparkStringType())])
+    rows = [(v,) for v in _TRY_CAST_MALFORMED_STRINGS]
+    actual = engine.build_df(rows, schema).select(F.col("s"), F.col("s").try_cast(ddl).alias("v"))
+    expected = spark.createDataFrame(rows, schema).select(SF.col("s"), SF.col("s").try_cast(spark_type).alias("v"))
+    assert_matches_spark(actual, expected, engine)
+
+    # The strict cast of the same matrix raises (every target has at least one malformed string).
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.col("s").cast(spark_type)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.col("s").cast(engine.dtype(spark_type)).alias("v")))
+
+
+@pytest.mark.feature("column.try_cast.to_decimal_overflow_null")
+@pytest.mark.parametrize(
+    "source_type, valid, overflow",
+    _TO_DECIMAL_5_2_SOURCES,
+    ids=["decimal", "int", "long", "double", "string"],
+)
+def test_try_cast_to_decimal_overflow_null(engine, spark, source_type, valid, overflow):
+    # The lenient sibling of ``column.cast.to_decimal_overflow_raises``: overflow becomes null.
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("x", source_type)])
+    target = SparkDecimalType(5, 2)
+    rows = [(v,) for v in valid] + [(overflow,)]
+    actual = engine.build_df(rows, schema).select(
+        F.col("x").try_cast("decimal(5,2)").cast(engine.dtype(SparkStringType())).alias("r")
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.col("x").try_cast(target).cast(SparkStringType()).alias("r")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # The strict cast of the same rows raises.
+    with pytest.raises(Exception, match="NUMERIC_VALUE_OUT_OF_RANGE"):
+        spark.createDataFrame(rows, schema).select(SF.col("x").cast(target)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.col("x").cast(engine.dtype(target)).alias("r")))

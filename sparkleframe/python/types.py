@@ -81,6 +81,27 @@ class TimestampNTZType(DataType):
         return "timestamp_ntz"
 
 
+class DayTimeIntervalType(DataType):
+    """``interval day [to second]``; values are ``datetime.timedelta``, as PySpark collects them."""
+
+    DAY, HOUR, MINUTE, SECOND = 0, 1, 2, 3
+    _FIELD_NAMES = {DAY: "day", HOUR: "hour", MINUTE: "minute", SECOND: "second"}
+
+    def __init__(self, startField: int = DAY, endField: int = SECOND) -> None:
+        self.startField = startField
+        self.endField = endField
+
+    def simpleString(self) -> str:
+        start, end = self._FIELD_NAMES[self.startField], self._FIELD_NAMES[self.endField]
+        return f"interval {start}" if start == end else f"interval {start} to {end}"
+
+    def jsonValue(self) -> str:
+        return self.simpleString()
+
+    def __repr__(self) -> str:
+        return "DayTimeIntervalType(%d, %d)" % (self.startField, self.endField)
+
+
 class ByteType(DataType):
     def simpleString(self) -> str:
         return "tinyint"
@@ -353,6 +374,30 @@ def parse_ddl_type(ddl: str) -> DataType:
     dtype = parser.data_type()
     parser.expect_end()
     return dtype
+
+
+def parse_ddl_schema(ddl: str, pyspark_colons: bool = False) -> DataType:
+    """A schema string the way Spark's ``DataType.fromDDL`` reads it (``from_json``, ``createDataFrame``).
+
+    A field list (``"a int, b string"``) is a struct; otherwise the string is a single type
+    (``"int"``, ``"struct<a:int>"``, ``"array<string>"``). Only PySpark's ``_parse_datatype_string``
+    (``pyspark_colons``) also takes ``name: type`` in the top-level field list.
+    """
+    try:
+        if not pyspark_colons and _has_top_level_colon(ddl):
+            raise ValueError("[PARSE_SYNTAX_ERROR] Syntax error at or near ':'.")
+        return parse_ddl_type(f"struct<{ddl}>")
+    except ValueError:
+        return parse_ddl_type(ddl)
+
+
+def _has_top_level_colon(ddl: str) -> bool:
+    depth = 0
+    for char in ddl:
+        depth += {"<": 1, ">": -1}.get(char, 0)
+        if char == ":" and depth == 0:
+            return True
+    return False
 
 
 class _DdlParser:
