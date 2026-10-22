@@ -26,7 +26,7 @@ inputs) in `sparkleframe/tests/parity/`.
 | 7 | `DataFrame.toArrow` (PySpark 4) and its `to_arrow` alias, with Spark's Arrow types | done |
 | 8 | Datetime pattern letters (`Q`, `K`, `k`, `z`, `VV`, `O`, `F`, `G`, `D` parsing) and Spark's pattern errors | done |
 | 9 | `get_json_object` `[*]` wildcard paths (and Jackson's number rendering) | done |
-| 10 | Time-only string → timestamp cast | pending |
+| 10 | Time-only string → timestamp cast (today's date in the string's zone) | done |
 | 11 | `Window.rangeBetween` / `rowsBetween` bound validation | pending |
 | 12 | `fillna(subset=[...])` with a column that doesn't exist | pending |
 

@@ -101,6 +101,7 @@ POLARS_NOT_SUPPORTED = {
     "column.cast.ansi_datetime_mismatch_raises",
     "column.cast.non_finite_to_decimal_null",
     "column.cast.numeric_to_timestamp",
+    "column.cast.time_only_string_to_timestamp",
     "column.cast.timestamp_to_numeric",
     "column.like",
     "dataframe.alias.qualified_references",

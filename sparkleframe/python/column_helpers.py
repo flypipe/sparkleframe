@@ -386,7 +386,12 @@ _TIMESTAMP_RE = re.compile(
     r"(?P<zone>.*)",
     re.S,
 )
-_TIME_ONLY_RE = re.compile(r"T?[0-9]{1,2}:[0-9]{1,2}.*", re.S)
+# A time with no date: ``[T]h[h][:m[m][:s[s][.f*]]]`` then an optional zone; without the ``T`` a ``:`` is required.
+_TIME_ONLY_RE = re.compile(
+    r"(?=T|[0-9]{1,2}:)T?(?P<H>[0-9]{1,2})(?::(?P<M>[0-9]{1,2})(?::(?P<S>[0-9]{1,2})(?:\.(?P<f>[0-9]*))?)?)?"
+    r"(?P<zone>.*)",
+    re.S,
+)
 _OFFSET_ZONE_RE = re.compile(
     r"Z|(?:UTC|GMT|UT)?(?P<sign>[+-])(?P<h>[0-9]{1,2})(?::?(?P<m>[0-9]{2})(?::?(?P<s>[0-9]{2}))?)?"
 )
@@ -411,19 +416,20 @@ def _parse_timestamp(value: str) -> datetime:
 
     Timestamps are held as naive datetimes in the session time zone, which (as Spark's default, the
     JVM zone) is the process-local zone. A zone suffix (``Z``, ``+02:00``, ``UTC``, a region id) is
-    converted into it. A time-only string (which takes the current date) is not modelled yet.
+    converted into it. A time-only string (``10:30``, ``T10:30:00Z``) is on the current date in its zone.
     """
     text = _trim(value)
-    if _TIME_ONLY_RE.fullmatch(text):
-        not_implemented_yet("casting a time-only string to timestamp")
-    match = _TIMESTAMP_RE.fullmatch(text)
+    match = _TIME_ONLY_RE.fullmatch(text) or _TIMESTAMP_RE.fullmatch(text)
     if match is None:
         raise _Malformed
     zone_text = match["zone"].strip()
     zone = _zone(zone_text) if zone_text else None
     if zone_text and zone is None:
         raise _Malformed
-    day = _build_date(match["y"], match["m"], match["d"])
+    if "y" in match.re.groupindex:
+        day = _build_date(match["y"], match["m"], match["d"])
+    else:  # Spark's ``justTime``: today's date where the time is read
+        day = datetime.now(zone).date() if zone is not None else date.today()
     hour, minute, second = int(match["H"] or 0), int(match["M"] or 0), int(match["S"] or 0)
     if hour > 23 or minute > 59 or second > 59:
         raise _Malformed

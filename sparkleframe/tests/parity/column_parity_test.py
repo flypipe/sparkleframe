@@ -849,6 +849,57 @@ def test_cast_ansi_datetime_mismatch_raises_like_spark(engine, spark, source, va
     assert_matches_spark(actual, expected, engine)
 
 
+@pytest.mark.feature("column.cast.time_only_string_to_timestamp")
+def test_cast_time_only_string_to_timestamp_against_spark(engine, spark):
+    """A time with no date is that time today, where "today" is the current date in the string's own zone."""
+    F = engine.functions
+    schema = SparkStructType([SparkStructField("s", SparkStringType())])
+    values = [
+        "10:30:00",
+        "T10:30:00",
+        "10:30",
+        "T10:30",
+        "10:30:00.123456",
+        "10:30:00.1234567",
+        "10:30:00Z",
+        "10:30:00+02:00",
+        "10:30:00 UTC",
+        " 10:30:00 ",
+        "1:2:3",
+        "T1",
+        "10:30:00.",
+        "10:30:00-01",
+        "T10:30:00America/New_York",
+        "10",
+        "25:00:00",
+        "10:60:00",
+        "T",
+        None,
+    ]
+    rows = [(v,) for v in values]
+    ts = SparkTimestampType()
+    actual = engine.build_df(rows, schema).select("s", F.col("s").try_cast(engine.dtype(ts)).alias("t"))
+    expected = spark.createDataFrame(rows, schema).select("s", SF.col("s").try_cast(ts).alias("t"))
+    assert_matches_spark(actual, expected, engine)
+
+    # The strict forms parse the valid ones the same way: cast, and to_timestamp without a format.
+    valid = [(v,) for v in values[:15]]
+    assert_matches_spark(
+        engine.build_df(valid, schema).select(
+            F.col("s").cast(engine.dtype(ts)).alias("c"), F.to_timestamp("s").alias("p")
+        ),
+        spark.createDataFrame(valid, schema).select(SF.col("s").cast(ts).alias("c"), SF.to_timestamp("s").alias("p")),
+        engine,
+    )
+
+    # Malformed: an out-of-range or partial time raises under the ANSI cast.
+    for bad in ("25:00:00", "10:60:00", "T", "10"):
+        with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+            spark.createDataFrame([(bad,)], schema).select(SF.col("s").cast(ts)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.build_df([(bad,)], schema).select(F.col("s").cast(engine.dtype(ts)).alias("c")))
+
+
 @pytest.mark.feature("column.cast.non_finite_to_decimal_null")
 def test_cast_non_finite_double_to_decimal_is_null_like_spark(engine, spark):
     """Even ANSI ``cast`` gives null for NaN / ±inf as a decimal (Spark catches the NumberFormatException)."""

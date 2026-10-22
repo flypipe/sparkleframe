@@ -69,10 +69,10 @@ def test_timestamp_with_malformed_zone_is_invalid_input(value):
 
 
 @pytest.mark.parametrize("value", ["10:30:45", "T10:30:45"])
-def test_time_only_timestamp_not_implemented(value):
+def test_time_only_timestamp_takes_todays_date(value):
     # Spark fills in the current date in the session time zone.
-    with pytest.raises(NotImplementedError):
-        cast_value(value, TimestampType(), strict=True)
+    result = cast_value(value, TimestampType(), strict=True)
+    assert result.date() == date.today() and (result.hour, result.minute, result.second) == (10, 30, 45)
 
 
 def test_date_to_string_is_iso():

@@ -441,6 +441,8 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
 - Casts that Spark 4 ANSI rejects at analysis succeed: number/boolean → date, boolean → timestamp,
   date → number/boolean and timestamp → boolean (`column.cast.ansi_datetime_mismatch_raises`).
 - NaN / ±inf cast to decimal raises; Spark gives null even under ANSI (`column.cast.non_finite_to_decimal_null`).
+- A time-only string (`"10:30:00"`, `"T10:30Z"`) cast to timestamp is null or raises; Spark puts it on the current
+  date in the string's zone (`column.cast.time_only_string_to_timestamp`).
 
 **filter / where SQL strings**
 
