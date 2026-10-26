@@ -56,6 +56,7 @@ from sparkleframe.python.column_helpers import (
 from sparkleframe.python.functions_helpers import (
     JsonNumber,
     compile_java_regex,
+    compile_like,
     format_datetime,
     get_json_object,
     java_replacement,
@@ -86,7 +87,7 @@ from sparkleframe.python.types import (
     StructField,
     StructType,
     TimestampType,
-    parse_ddl_type,
+    parse_ddl_schema,
 )
 
 _INTEGRAL = (ByteType, ShortType, IntegerType, LongType)
@@ -378,6 +379,18 @@ def _resolve_rlike(node: FunctionCall, rctx: Any) -> Any:
 register(
     "rlike",
     FunctionSpec(_resolve_rlike, lambda v, n, c: compile_java_regex(n.options["pattern"]).search(v[0]) is not None),
+)
+
+
+def _resolve_like(node: FunctionCall, rctx: Any) -> Any:
+    _require_string(node, 0)
+    compile_like(node.options["pattern"])
+    return BooleanType()
+
+
+register(
+    "like",
+    FunctionSpec(_resolve_like, lambda v, n, c: compile_like(n.options["pattern"]).fullmatch(v[0]) is not None),
 )
 
 
@@ -718,7 +731,7 @@ register(
 
 def _resolve_array(node: FunctionCall, rctx: Any) -> Any:
     if not node.children:
-        return ArrayType(StringType(), False)
+        return ArrayType(NullType(), False)  # Spark 4: array() is array<void>
     element = _coerce_all_to_wider(node, "array")
     return ArrayType(element, True)
 
@@ -1141,7 +1154,7 @@ register(
 
 def _json_schema(node: FunctionCall) -> Any:
     schema = node.options["schema"]
-    return parse_ddl_type(schema) if isinstance(schema, str) else schema
+    return parse_ddl_schema(schema) if isinstance(schema, str) else schema  # Spark's ``DataType.fromDDL``
 
 
 def _resolve_from_json(node: FunctionCall, rctx: Any) -> Any:

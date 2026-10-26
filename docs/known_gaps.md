@@ -411,3 +411,84 @@ The items are grouped by area; the parity ids in parentheses are gated in `POLAR
 - `union` does not reject a boolean column unioned with a bigint one (`dataframe.union.positional`).
 - `toPandas` gives `datetime64[us]` timestamps (Spark: `[ns]`), and an empty string column is `str`
   (Spark: `object`) (`dataframe.to_pandas.dtypes`).
+
+## Polars deviations found by the Python engine gap work
+
+Parity tests written while closing the Python engine's gaps against Polars (`PYTHON_ENGINE_GAPS.md`) found
+these Polars deviations from Spark 4. The pure-Python engine matches Spark on all of them; the parity ids in
+parentheses are gated in `POLARS_NOT_SUPPORTED`.
+
+**DataFrame.alias**
+
+- `alias` stores the name but nothing resolves it: `F.col("e.id")`, `select("e.*")` and `filter("e.id > 1")` fail
+  with `ColumnNotFoundError`, so a self-join cannot tell its sides apart (`dataframe.alias.qualified_references`).
+
+**createDataFrame**
+
+- A pandas frame goes through Arrow instead of PySpark's `to_records` path, so a mixed `object` column
+  (`[1, "x"]`) raises `ArrowInvalid` instead of becoming `string` (`dataframe.create.from_pandas`).
+- `dtypes` prints nested types without their element types (`array`, not `array<bigint>`), and an Arrow map
+  column reports `array` (`dataframe.create.from_arrow`, `dataframe.create.from_arrow_stream`).
+- A single-`DataType` schema treats a list item as a row, so `createDataFrame([[1, 2]], ArrayType(...))`
+  raises instead of giving one `value` (`dataframe.create.single_datatype_schema`).
+- A string field stores Python's `str` without PySpark's bool lowercasing (`"True"`) and renders dicts as
+  JSON (`dataframe.create.string_field_python_str`).
+- Empty data with only column names builds an empty frame; Spark raises `CANNOT_INFER_EMPTY_SCHEMA`
+  (`dataframe.create.empty_inference_raises`).
+- A DDL string schema (`"a int, b string"`) fails to build rows that a `StructType` builds
+  (`dataframe.create.ddl_schema`).
+
+**toArrow**
+
+- There is no `toArrow` (PySpark 4's name). `to_arrow` returns Polars' own Arrow export, whose types differ from
+  Spark's (`large_string`, `large_list`) (`dataframe.to_arrow`).
+
+**Column**
+
+- `Column.like` is not implemented (`column.like`).
+- A number cast to timestamp is read as microseconds, not seconds, since the epoch
+  (`column.cast.numeric_to_timestamp`), and a timestamp does not cast to a number
+  (`column.cast.timestamp_to_numeric`).
+- Casts that Spark 4 ANSI rejects at analysis succeed: number/boolean → date, boolean → timestamp,
+  date → number/boolean and timestamp → boolean (`column.cast.ansi_datetime_mismatch_raises`).
+- NaN / ±inf cast to decimal raises; Spark gives null even under ANSI (`column.cast.non_finite_to_decimal_null`).
+- A time-only string (`"10:30:00"`, `"T10:30Z"`) cast to timestamp is null or raises; Spark puts it on the current
+  date in the string's zone (`column.cast.time_only_string_to_timestamp`).
+
+**filter / where SQL strings**
+
+- Predicate strings go to `pl.sql_expr`, whose SQL dialect is not Spark's
+  (`dataframe.filter.sql_string_expressions`):
+  - typed number literals (`1e0`, `2S`, `1Y`), double-quoted strings and `\'` escapes are not understood;
+  - string escapes (`\u0031`, `\061`, `\d`) are not unescaped, and adjacent literals (`'a' '1'`) don't concatenate;
+  - `LIKE` escapes, `IS [NOT] TRUE/FALSE/UNKNOWN`, `NOT IN` with a null candidate and `round` give different rows;
+  - several Spark functions (`date_format`, `datediff`) and `IN` lists with expressions don't resolve;
+  - `LIKE 'a\\'` (escape at the end) and an out-of-range `128Y` don't raise.
+
+**Datetime patterns**
+
+- `date_format` copies pattern letters it does not know into the output (`Q` gives `"Q"`, `K` gives `"K"`) instead
+  of formatting them, and does not raise for the letters and widths Spark rejects (week-based `w`/`u`/`e`,
+  `V`, `B`, `QQQQQ`, ...) (`functions.date_format.pattern_letters`).
+- `to_timestamp` / `try_to_timestamp` do not parse day-of-year (`D`), `K`/`k` hours, zone names (`z`), region
+  ids (`VV`) or `GMT+2` offsets (`O`), and do not raise for format-only letters (`Q`, `E`, `F`)
+  (`functions.to_timestamp.pattern_letters`).
+
+**get_json_object**
+
+- `[*]` wildcards return only some of the matches, and do not follow Spark's rules: a single match unwrapped,
+  `[*][*]` flattened, JSON-null fields dropped (`functions.get_json_object.wildcard`).
+- Non-integer numbers are copied from the source text; Spark rewrites them as Java doubles (`1.50` is `1.5`,
+  `1e2` is `100.0`, an overflow is `"Infinity"`) (`functions.get_json_object.number_rendering`).
+
+**lit**
+
+- `lit([1, 2.5])` fails instead of widening the elements to `double`, and `lit(dict)` / `lit(tuple)` build
+  struct/list literals where Spark raises `UNSUPPORTED_FEATURE.LITERAL_TYPE` (`functions.lit.list`).
+
+**from_json**
+
+- A DDL schema string must be one of a few simple forms: `struct<...>` and field lists with nested types raise
+  `Unsupported Spark type name`, a top-level `name: type` list is accepted (Spark's `fromDDL` rejects it), and a
+  non-container type (`"int"`) is accepted instead of raising `INVALID_JSON_SCHEMA`. An unparseable record
+  gives null instead of a struct of nulls (`functions.from_json.ddl_schema`).

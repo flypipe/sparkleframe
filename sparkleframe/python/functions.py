@@ -50,8 +50,8 @@ def _literal_value(value: Any) -> Any:
 
 # --- Column builders ---------------------------------------------------------
 def col(name: str) -> Column:
-    if name == "*":
-        return Column(Star())
+    if name == "*" or name.endswith(".*"):
+        return Column(Star(name[:-2] or None))
     return Column(AttributeReference(name))
 
 
@@ -59,8 +59,18 @@ column = col
 
 
 def lit(value: Any) -> Column:
+    """A literal; a list is ``array`` of its items' literals, as in PySpark. Dicts and tuples have no literal."""
     if isinstance(value, Column):
         return value
+    if isinstance(value, list):
+        if any(isinstance(item, Column) for item in value):
+            raise ValueError("[COLUMN_IN_LIST] `lit` does not allow a Column in a list.")
+        return array(*[lit(item) for item in value])
+    if isinstance(value, (dict, tuple)):
+        raise ValueError(
+            f"[UNSUPPORTED_FEATURE.LITERAL_TYPE] The feature is not supported: Literal for {value!r} of "
+            f"{type(value).__name__}."
+        )
     return Column(Literal(value))
 
 
@@ -170,7 +180,7 @@ def regexp_replace(col_name: ColumnOrName, pattern: Any, replacement: Any) -> Co
 
 
 def regexp_extract(col_name: ColumnOrName, pattern: str, idx: int) -> Column:
-    return _fn("regexp_extract", col_name, pattern=pattern, idx=idx)
+    return _fn("regexp_extract", col_name, pattern=_literal_value(pattern), idx=_literal_value(idx))
 
 
 # --- Dates and time ----------------------------------------------------------------
@@ -203,15 +213,15 @@ def datediff(end: ColumnOrName, start: ColumnOrName) -> Column:
 
 
 def months_between(date1: ColumnOrName, date2: ColumnOrName, roundOff: bool = True) -> Column:
-    return _fn("months_between", date1, date2, roundOff=roundOff)
+    return _fn("months_between", date1, date2, roundOff=_literal_value(roundOff))
 
 
 def date_format(date: ColumnOrName, format: str) -> Column:
-    return _fn("date_format", date, format=format)
+    return _fn("date_format", date, format=_literal_value(format))
 
 
 def trunc(date: ColumnOrName, format: str) -> Column:
-    return _fn("trunc", date, format=format)
+    return _fn("trunc", date, format=_literal_value(format))
 
 
 def to_date(col_name: ColumnOrName, format: Optional[Any] = None) -> Column:
@@ -278,7 +288,7 @@ def size(col_name: ColumnOrName) -> Column:
 
 
 def sort_array(col_name: ColumnOrName, asc: bool = True) -> Column:
-    return _fn("sort_array", col_name, asc=asc)
+    return _fn("sort_array", col_name, asc=_literal_value(asc))
 
 
 def array_max(col_name: ColumnOrName) -> Column:
@@ -299,7 +309,7 @@ def filter(col_name: ColumnOrName, f: Callable[..., Any]) -> Column:
 
 # --- JSON ----------------------------------------------------------------------------
 def get_json_object(col: ColumnOrName, path: str) -> Column:
-    return _fn("get_json_object", col, path=path)
+    return _fn("get_json_object", col, path=_literal_value(path))
 
 
 def from_json(col_name: ColumnOrName, schema: Any, options: Optional[dict] = None) -> Column:
@@ -337,7 +347,7 @@ def max(col_name: ColumnOrName) -> Column:
 
 
 def first(col_name: ColumnOrName, ignorenulls: bool = False) -> Column:
-    return _fn("first", col_name, ignorenulls=ignorenulls)
+    return _fn("first", col_name, ignorenulls=_literal_value(ignorenulls))
 
 
 def collect_list(col_name: ColumnOrName) -> Column:

@@ -96,6 +96,30 @@ POLARS_NOT_SUPPORTED = {
     "window.dense_rank.ties",
     "window.order_by.desc_nulls_last",
     "window.row_number.without_order_raises",
+    # Found by the Python engine gap work — see docs/known_gaps.md "Polars deviations found by the Python
+    # engine gap work".
+    "column.cast.ansi_datetime_mismatch_raises",
+    "column.cast.non_finite_to_decimal_null",
+    "column.cast.numeric_to_timestamp",
+    "column.cast.time_only_string_to_timestamp",
+    "column.cast.timestamp_to_numeric",
+    "column.like",
+    "dataframe.alias.qualified_references",
+    "dataframe.create.ddl_schema",
+    "dataframe.create.empty_inference_raises",
+    "dataframe.create.from_arrow",
+    "dataframe.create.from_arrow_stream",
+    "dataframe.create.from_pandas",
+    "dataframe.create.single_datatype_schema",
+    "dataframe.create.string_field_python_str",
+    "dataframe.filter.sql_string_expressions",
+    "dataframe.to_arrow",
+    "functions.date_format.pattern_letters",
+    "functions.from_json.ddl_schema",
+    "functions.get_json_object.number_rendering",
+    "functions.get_json_object.wildcard",
+    "functions.lit.list",
+    "functions.to_timestamp.pattern_letters",
 }
 
 # Python engine — gated behaviors awaiting the build → analyze → evaluate engine

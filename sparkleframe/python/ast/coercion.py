@@ -479,3 +479,23 @@ def coerce_logical(op: str, left_dt: Any, right_dt: Any) -> Tuple[Any, Optional[
 def coerce_not(dtype: Any) -> Tuple[Any, Optional[Any]]:
     """Resolve ``not child`` to ``(BooleanType(), child_cast)``."""
     return BooleanType(), _boolean_operand_cast(dtype, "not")
+
+
+def ansi_cast_error(source: Any, target: Any) -> Optional[str]:
+    """The ``DATATYPE_MISMATCH`` subclass Spark 4's ANSI ``Cast`` rejects ``source -> target`` with, else ``None``.
+
+    Covers the numeric / boolean / datetime pairs: numbers and booleans have no date, booleans no
+    timestamp, and dates convert to neither numbers nor booleans (timestamps convert to numbers only).
+    Arrays are checked element-wise. ``try_cast`` is rejected the same way: these are analysis errors.
+    """
+    if isinstance(source, ArrayType) and isinstance(target, ArrayType):
+        return ansi_cast_error(source.elementType, target.elementType)
+    if isinstance(target, DateType) and is_numeric(source):
+        return "CAST_WITH_FUNC_SUGGESTION"
+    if isinstance(target, (DateType, TimestampType)) and isinstance(source, BooleanType):
+        return "CAST_WITHOUT_SUGGESTION"
+    if isinstance(source, DateType) and is_numeric(target):
+        return "CAST_WITH_FUNC_SUGGESTION"
+    if isinstance(source, (DateType, TimestampType)) and isinstance(target, BooleanType):
+        return "CAST_WITHOUT_SUGGESTION"
+    return None

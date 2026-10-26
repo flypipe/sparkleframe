@@ -16,7 +16,6 @@ import itertools
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from sparkleframe.base.dataframe import DataFrame as BaseDataFrame
-from sparkleframe.python._errors import not_implemented_yet
 from sparkleframe.python.ast import coercion
 from sparkleframe.python.ast.analyzer import AnalysisException, analyze
 from sparkleframe.python.ast.evaluator import EvalContext, eval_row
@@ -41,11 +40,14 @@ from sparkleframe.python.dataframe_helpers import (
     parse_sql_predicate,
     rows_as_dicts,
     sort_rows,
+    tabular_input,
+    to_arrow_table,
     window_values,
 )
 from sparkleframe.python.types import (
     BooleanType,
     ByteType,
+    DataType,
     DateType,
     DecimalType,
     DoubleType,
@@ -59,6 +61,7 @@ from sparkleframe.python.types import (
     StructField,
     StructType,
     TimestampType,
+    parse_ddl_schema,
 )
 
 _PLAN_IDS = itertools.count(1)
@@ -88,7 +91,12 @@ _JOIN_TYPES = {
 class DataFrame(BaseDataFrame):
     def __init__(self, data: Any, schema: Optional[Any] = None, _plan_sets: Optional[List[frozenset]] = None) -> None:
         super().__init__(df=None)
-        rows = list(data) if data is not None else []
+        rows, schema = tabular_input(
+            data, parse_ddl_schema(schema, pyspark_colons=True) if isinstance(schema, str) else schema
+        )
+        if isinstance(schema, DataType) and not isinstance(schema, StructType):
+            # A single type names one ``value`` column; each input item is that column's value.
+            rows, schema = [(value,) for value in rows], StructType([StructField("value", schema, True)])
         if schema is not None and not isinstance(schema, StructType):
             schema = infer_schema(rows, list(schema))
         elif schema is None and rows:
@@ -159,17 +167,28 @@ class DataFrame(BaseDataFrame):
         items: List[Expression] = []
         for col in cols:
             if isinstance(col, str):
-                col = Column(Star()) if col == "*" else Column(AttributeReference(col))
+                import sparkleframe.python.functions as F
+
+                col = F.col(col)
             if not isinstance(col, Column):
                 raise TypeError(
                     f"[NOT_LIST_OF_COLUMN_OR_STR] Argument `cols` should be a list of Column or str, got "
                     f"{type(col).__name__}."
                 )
             if isinstance(col._expr, Star):
-                items.extend(self._bound(i) for i in range(len(self._schema.fields)))
+                items.extend(self._bound(i) for i in self._star_indices(col._expr.qualifier))
             else:
                 items.append(col._expr)
         return self._project(items)
+
+    def _star_indices(self, qualifier: Optional[str]) -> List[int]:
+        indices = [i for i, s in enumerate(self._plan_sets) if qualifier is None or qualifier in s]
+        if qualifier is not None and not indices:
+            raise AnalysisException(
+                f"[CANNOT_RESOLVE_STAR_EXPAND] Cannot resolve `{qualifier}`.* given input columns "
+                f"{', '.join(f'`{name}`' for name in self.columns)}."
+            )
+        return indices
 
     def _project(self, items: List[Expression], names: Optional[List[Optional[str]]] = None) -> "DataFrame":
         """Evaluate ``items`` per row into a new frame (``names`` overrides output names)."""
@@ -749,10 +768,15 @@ class DataFrame(BaseDataFrame):
         return self._project(items, self.columns)
 
     def alias(self, alias: str) -> "DataFrame":
-        not_implemented_yet("DataFrame.alias")
+        """Name the frame so ``alias.column`` and ``alias.*`` reference its columns (an earlier alias is hidden)."""
+        plan_sets = [frozenset(p for p in s if not isinstance(p, str)) | {alias} for s in self._plan_sets]
+        return self._derive(list(self._rows), list(self._schema.fields), plan_sets)
 
-    def to_arrow(self) -> Any:
-        not_implemented_yet("DataFrame.to_arrow")
+    def toArrow(self) -> Any:
+        """The frame as a ``pyarrow.Table`` with PySpark's Arrow types."""
+        return to_arrow_table(self._rows, self._schema)
+
+    to_arrow = toArrow  # the Polars engine's name
 
 
 class _Generated:

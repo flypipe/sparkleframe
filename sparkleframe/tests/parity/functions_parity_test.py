@@ -1081,6 +1081,59 @@ def test_from_json_struct_against_spark(engine, spark):
     assert_matches_spark(actual, expected, engine)
 
 
+@pytest.mark.feature("functions.from_json.ddl_schema")
+@pytest.mark.parametrize(
+    "ddl",
+    ["a int, b string", "a INT, b STRING, c array<bigint>", "struct<a:int,b:string>", "a struct<x int>"],
+)
+def test_from_json_ddl_schema_against_spark(engine, spark, ddl):
+    """A DDL schema string is a field list (a struct) or a single struct/array/map type, as ``DataType.fromDDL``."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [
+        ('{"a": 1, "b": "x", "c": [1, 2]}',),
+        ('{"a": "not-an-int", "b": "y"}',),
+        ('{"b": "z"}',),
+        ("not json",),
+        (None,),
+    ]
+    actual = engine.build_df(rows, schema).select("j", F.from_json("j", ddl).alias("p"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.from_json("j", ddl).alias("p"))
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.from_json.ddl_schema")
+def test_from_json_ddl_array_schema_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [('["a", "b"]',), ("[]",), ('{"not": "an array"}',), (None,)]
+    actual = engine.build_df(rows, schema).select("j", F.from_json("j", "array<string>").alias("p"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.from_json("j", "array<string>").alias("p"))
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.from_json.ddl_schema")
+@pytest.mark.parametrize(
+    "ddl",
+    ["a intx", "a int,", "a: int, b: string", "int", "string"],
+    ids=["unknown_type", "trailing_comma", "top_level_colon", "int", "string"],
+)
+def test_from_json_malformed_ddl_schema_raises_like_spark(engine, spark, ddl):
+    """An unparseable DDL, or one naming a type that is not a struct/array/map, is rejected.
+
+    Unlike ``createDataFrame``'s PySpark-side parser, ``fromDDL`` takes no ``name: type`` field list.
+    """
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [('{"a": 1}',)]
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.from_json("j", ddl)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.from_json("j", ddl)))
+
+
 @pytest.mark.feature("functions.first_agg")
 def test_first_agg_against_spark(engine, spark):
     F = engine.functions
@@ -1246,9 +1299,206 @@ def test_array_against_spark(engine, spark):
     assert_matches_spark(actual, expected, engine)
 
 
+@pytest.mark.feature("functions.lit.list")
+def test_lit_list_against_spark(engine, spark):
+    """``lit(list)`` is ``array`` of the items' literals: element types widen, nested lists nest, ``[]`` is void."""
+    F = engine.functions
+    schema = _schema(("id", _LONG))
+    rows = [(1,), (2,)]
+    values = [[1, 2, 3], [1, None], [1, 2.5], ["a", None], [[1], [2, 3]], [], [None], [True, False]]
+
+    def build(M):
+        return [M.col("id"), M.array().alias("empty")] + [M.lit(v).alias(f"v{i}") for i, v in enumerate(values)]
+
+    actual = engine.build_df(rows, schema).select(*build(F))
+    expected = spark.createDataFrame(rows, schema).select(*build(SF))
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    # Usable in expressions like any array column.
+    actual_contains = engine.build_df(rows, schema).select(F.array_contains(F.lit([1, 3]), F.col("id")).alias("c"))
+    expected_contains = spark.createDataFrame(rows, schema).select(
+        SF.array_contains(SF.lit([1, 3]), SF.col("id")).alias("c")
+    )
+    assert_matches_spark(actual_contains, expected_contains, engine)
+
+
+@pytest.mark.feature("functions.lit.list")
+@pytest.mark.parametrize(
+    "value", [[1, "a"], {"a": 1}, (1, 2), [{"a": 1}]], ids=["uncastable_mix", "dict", "tuple", "list_of_dict"]
+)
+def test_lit_unsupported_collections_raise_like_spark(engine, spark, value):
+    """A mix that does not cast to the widened element type, and dicts or tuples (no literal type), raise."""
+    F = engine.functions
+    schema = _schema(("id", _LONG))
+    with pytest.raises(Exception):
+        spark.createDataFrame([(1,)], schema).select(SF.lit(value)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([(1,)], schema).select(F.lit(value)))
+
+
+@pytest.mark.feature("functions.lit.list")
+def test_lit_column_in_list_raises_like_spark(engine, spark):
+    F = engine.functions
+    with pytest.raises(Exception, match="COLUMN_IN_LIST"):
+        SF.lit([SF.col("id")])
+    with pytest.raises(Exception):
+        F.lit([F.col("id")])
+
+
 # ============================================================================ #
 # TestDateFormat / TestFloor / TestPow / TestIsnan / TestTryDivide / TestNullif
 # ============================================================================ #
+
+_PATTERN_TIMESTAMPS = [
+    (datetime(2024, 2, 29, 0, 5, 6, 789000),),
+    (datetime(2024, 11, 3, 13, 45, 0),),
+    (datetime(2023, 7, 15, 12, 0, 0),),
+    (datetime(2023, 12, 31, 23, 59, 59, 1),),
+    (None,),
+]
+
+
+@pytest.mark.feature("functions.date_format.pattern_letters")
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "Q QQ QQQ QQQQ",
+        "q qq",
+        "K KK k kk h hh H HH a",
+        "D DD DDD",
+        "F",
+        "G",
+        "z zzz zzzz",
+        "O OOOO",
+        "X XX XXX XXXX XXXXX",
+        "x xx xxx xxxx xxxxx",
+        "Z ZZ ZZZ ZZZZ ZZZZZ",
+        "E EEE EEEE",
+        "yyyy-'Q'Q 'day' DDD",
+    ],
+)
+def test_date_format_pattern_letters_against_spark(engine, spark, pattern):
+    """Quarter, hour variants, day-of-year, aligned weekday, era and the zone / offset letters."""
+    F = engine.functions
+    schema = _schema(("t", SparkTimestampType()))
+    actual = engine.build_df(_PATTERN_TIMESTAMPS, schema).select("t", F.date_format("t", pattern).alias("f"))
+    expected = spark.createDataFrame(_PATTERN_TIMESTAMPS, schema).select("t", SF.date_format("t", pattern).alias("f"))
+    assert_matches_spark(actual, expected, engine)
+
+
+_PATTERN_ERROR = "DATETIME_(WEEK_BASED_)?PATTERN"
+_UNSUPPORTED_FORMAT_PATTERNS = [
+    "w",
+    "W",
+    "u",
+    "e",
+    "c",
+    "Y",
+    "V",
+    "VVV",
+    "OO",
+    "B",
+    "n",
+    "N",
+    "A",
+    "QQQQQ",
+    "KKK",
+    "FF",
+]
+
+
+@pytest.mark.feature("functions.date_format.pattern_letters")
+@pytest.mark.parametrize("pattern", _UNSUPPORTED_FORMAT_PATTERNS)
+def test_date_format_unsupported_pattern_raises_like_spark(engine, spark, pattern):
+    """Week-based fields, illegal letters and unsupported widths are pattern errors."""
+    F = engine.functions
+    schema = _schema(("t", SparkTimestampType()))
+    with pytest.raises(Exception, match=_PATTERN_ERROR):
+        spark.createDataFrame(_PATTERN_TIMESTAMPS, schema).select(SF.date_format("t", pattern)).collect()
+    with pytest.raises(Exception, match=_PATTERN_ERROR):
+        engine.to_records(engine.build_df(_PATTERN_TIMESTAMPS, schema).select(F.date_format("t", pattern).alias("f")))
+
+
+@pytest.mark.feature("functions.to_timestamp.pattern_letters")
+@pytest.mark.parametrize(
+    "pattern, values",
+    [
+        ("yyyy-DDD", ["2024-060", "2024-366", "2023-001", "2023-366", "2024-000", "2024-60"]),
+        ("yyyy-D", ["2024-60", "2024-1", "2024-366"]),
+        ("yyyy-MM-DDD", ["2024-02-060", "2024-03-060"]),
+        (
+            "yyyy-MM-dd KK:mm a",
+            ["2024-01-05 01:30 PM", "2024-01-05 00:15 AM", "2024-01-05 11:59 PM", "2024-01-05 12:30 PM"],
+        ),
+        ("yyyy-MM-dd kk:mm", ["2024-01-05 24:30", "2024-01-05 01:00", "2024-01-05 00:30", "2024-01-05 25:00"]),
+        (
+            "yyyy-MM-dd HH:mm z",
+            ["2024-01-05 10:30 UTC", "2024-01-05 10:30 EST", "2024-07-05 10:30 PST", "2024-01-05 10:30 XYZ"],
+        ),
+        (
+            "yyyy-MM-dd HH:mm VV",
+            ["2024-01-05 10:30 America/New_York", "2024-07-05 10:30 Europe/Paris", "2024-01-05 10:30 Nowhere/City"],
+        ),
+        (
+            "yyyy-MM-dd HH:mm O",
+            ["2024-01-05 10:30 GMT+2", "2024-01-05 10:30 GMT-5:30", "2024-01-05 10:30 GMT", "2024-01-05 10:30 +02"],
+        ),
+        ("yyyy G", ["2024 AD", "2024 XX"]),
+    ],
+    ids=[
+        "day_of_year",
+        "day_of_year_short",
+        "day_of_year_and_month",
+        "hour_of_ampm",
+        "clock_hour",
+        "zone_name",
+        "zone_id",
+        "gmt_offset",
+        "era",
+    ],
+)
+def test_to_timestamp_pattern_letters_against_spark(engine, spark, pattern, values):
+    """``try_to_timestamp`` with day-of-year, ``K``/``k`` hours and zone letters; values that do not fit are null."""
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [(v,) for v in values] + [(None,)]
+    actual = engine.build_df(rows, schema).select("s", F.try_to_timestamp("s", F.lit(pattern)).alias("t"))
+    expected = spark.createDataFrame(rows, schema).select("s", SF.try_to_timestamp("s", SF.lit(pattern)).alias("t"))
+    assert_matches_spark(actual, expected, engine)
+
+    # Strict counterpart: the first value parses; the ones try_ nulls out make to_timestamp raise.
+    valid = [(values[0],)]
+    assert_matches_spark(
+        engine.build_df(valid, schema).select(F.to_timestamp("s", pattern).alias("t")),
+        spark.createDataFrame(valid, schema).select(SF.to_timestamp("s", pattern).alias("t")),
+        engine,
+    )
+    nulls = [r["t"] for r in expected.collect()]
+    bad = [(v,) for v, t in zip(values, nulls) if t is None]
+    for row in bad:
+        with pytest.raises(Exception):
+            spark.createDataFrame([row], schema).select(SF.to_timestamp("s", pattern)).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.build_df([row], schema).select(F.to_timestamp("s", pattern).alias("t")))
+
+
+@pytest.mark.feature("functions.to_timestamp.pattern_letters")
+@pytest.mark.parametrize("pattern", ["yyyy Q", "yyyy q", "yyyy w", "yyyy E", "yyyy-MM-dd EEEE", "yyyy F", "yyyy u"])
+def test_to_timestamp_format_only_pattern_raises_like_spark(engine, spark, pattern):
+    """Quarters, day-of-week text and week-based fields cannot parse; even ``try_to_timestamp`` raises."""
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [("2024 1",)]
+    builds = [  # PySpark's to_timestamp takes the format as a str, try_to_timestamp as a Column
+        (lambda M: M.to_timestamp("s", pattern)),
+        (lambda M: M.try_to_timestamp("s", M.lit(pattern))),
+    ]
+    for build in builds:
+        with pytest.raises(Exception, match=_PATTERN_ERROR):
+            spark.createDataFrame(rows, schema).select(build(SF)).collect()
+        with pytest.raises(Exception, match=_PATTERN_ERROR):
+            engine.to_records(engine.build_df(rows, schema).select(build(F).alias("t")))
 
 
 @pytest.mark.feature("functions.date_format.basic")
@@ -2072,6 +2322,77 @@ def test_get_json_object_invalid_path_returns_null(engine, spark, path):
     F = engine.functions
     schema = _schema(("j", _STR))
     rows = [('{"a": [1, 2]}',), (None,)]
+    actual = engine.build_df(rows, schema).select("j", F.get_json_object("j", path).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.get_json_object("j", path).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+_WILDCARD_DOCS = [
+    '{"a":[1,2,3]}',
+    '{"a":[1]}',
+    '{"a":[]}',
+    '{"a":["x","y"]}',
+    '{"a":["x"]}',
+    '{"a":[{"b":1},{"b":2},{"c":3}]}',
+    '{"a":[{"b":1}]}',
+    '{"a":[{"b":"s"},{"b":"t"}]}',
+    '{"a":[[1,2],[3]]}',
+    '{"a":[{"b":[1,2]},{"b":[3]}]}',
+    "[1,2]",
+    '[{"b":1},{"b":2}]',
+    '{"a":{"b":1}}',
+    '{"a":[null,1]}',
+    '{"a":[{"b":null},{"b":2}]}',
+    '{"a":[true,{"x":1.50}]}',
+    '{"a": [1, ',
+    "not json",
+    None,
+]
+
+
+@pytest.mark.feature("functions.get_json_object.wildcard")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "$.a[*]",
+        "$.a[*].b",
+        "$[*]",
+        "$[*].b",
+        "$.a[*][0]",
+        "$.a[0][*]",
+        "$.a[*][*]",
+        "$.a[*].b[0]",
+        "$.a[*].b[*]",
+        "$.a.b[*]",
+        "$.a[*].c",
+    ],
+)
+def test_get_json_object_wildcard_against_spark(engine, spark, path):
+    """``[*]`` collects every match: one match is unwrapped, strings are quoted, ``[*][*]`` flattens, JSON null drops."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [(d,) for d in _WILDCARD_DOCS]
+    actual = engine.build_df(rows, schema).select("j", F.get_json_object("j", path).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("j", SF.get_json_object("j", path).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.get_json_object.number_rendering")
+@pytest.mark.parametrize("path", ["$.a", "$.a.x", "$.a[0]", "$.a[*]"])
+def test_get_json_object_number_rendering_against_spark(engine, spark, path):
+    """Non-integer numbers come back as Java doubles (``1.50`` is ``1.5``, ``1e2`` is ``100.0``); integers verbatim."""
+    F = engine.functions
+    schema = _schema(("j", _STR))
+    rows = [
+        ('{"a":{"x":1.50}}',),
+        ('{"a":1.50}',),
+        ('{"a":[1.50,2]}',),
+        ('{"a":{"x":1e2,"y":-0.0,"z":1.0E+2,"w":12345678901234567890,"v":0.1,"u":1.23456789012345678}}',),
+        ('{"a":[{"x":1e2}]}',),
+        ('{"a":[1e400, 1e-400, 12.5e-3]}',),
+        ('{"a":[1.5',),
+        (None,),
+    ]
     actual = engine.build_df(rows, schema).select("j", F.get_json_object("j", path).alias("r"))
     expected = spark.createDataFrame(rows, schema).select("j", SF.get_json_object("j", path).alias("r"))
     assert_matches_spark(actual, expected, engine)

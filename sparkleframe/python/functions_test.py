@@ -46,6 +46,13 @@ class TestBuildWiredFunctions:
         assert isinstance(result._expr, Literal)
         assert result._expr.value == value
 
+    def test_lit_list_builds_an_array_of_literals(self):
+        result = F.lit([1, [2]])
+        assert result._expr.name == "array"
+        first, second = result._expr.args
+        assert isinstance(first, Literal) and first.value == 1
+        assert second.name == "array" and second.args[0].value == 2
+
     @pytest.mark.parametrize("fn, name", [(F.abs, "abs"), (F.lower, "lower"), (F.count, "count")])
     def test_single_arg_functions_build_function_call(self, fn, name):
         result = fn("x")

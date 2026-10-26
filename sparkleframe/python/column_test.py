@@ -141,9 +141,10 @@ class TestColumnTransformsBuildNodes:
             assert [c.value for c in col._expr.children[1:]] == [1, 2]
 
     def test_pattern_functions_keep_the_pattern_as_an_option(self):
-        node = _col().rlike("^x$")._expr
-        assert node.name == "rlike" and node.options == {"pattern": "^x$"}
-        assert node.children[0].name == "a"
+        for method, name in ((_col().rlike, "rlike"), (_col().like, "like")):
+            node = method("^x%")._expr
+            assert node.name == name and node.options == {"pattern": "^x%"}
+            assert node.children[0].name == "a"
 
     def test_get_item_and_getitem_build_the_same_node(self):
         for col in (_col().getItem("k"), _col()["k"]):

@@ -19,7 +19,7 @@ there (plus its evaluate routine) is what lets its id be deleted from ``PYTHON_N
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Union
 
 from sparkleframe.python._errors import not_implemented_yet
 from sparkleframe.python.ast import coercion
@@ -93,6 +93,10 @@ class _Analyzer:
         if index is not None:
             return self._bound(expr.name, expr.plan_id, index)
         parts = _split_name(expr.name)
+        if len(parts) > 1 and self._has_qualifier(parts[0]):
+            index = self._column_index(parts[1], parts[0])
+            if index is not None:
+                return self._nested(self._bound(parts[1], expr.plan_id, index), parts[2:])
         if len(parts) > 1:
             base_index = self._column_index(parts[0], expr.plan_id)
             if base_index is not None:
@@ -109,13 +113,19 @@ class _Analyzer:
         resolved.data_type = self.schema.fields[index].dataType
         return resolved
 
-    def _column_index(self, name: str, plan_id: Optional[int]) -> Optional[int]:
+    def _has_qualifier(self, name: str) -> bool:
+        """Whether ``name`` is a ``DataFrame.alias`` some column can be referenced through."""
+        return self.plan_sets is not None and any(name in s for s in self.plan_sets)
+
+    def _column_index(self, name: str, plan_id: Optional[Union[int, str]]) -> Optional[int]:
         fields = self.schema.fields
         unquoted = name[1:-1] if len(name) > 1 and name.startswith("`") and name.endswith("`") else name
         candidates = [i for i, f in enumerate(fields) if f.name == unquoted]
         if not candidates:
             candidates = [i for i, f in enumerate(fields) if f.name.lower() == unquoted.lower()]
-        if plan_id is not None and self.plan_sets is not None:
+        if isinstance(plan_id, str):  # an alias qualifier: only that frame's columns
+            candidates = [i for i in candidates if plan_id in self.plan_sets[i]]
+        elif plan_id is not None and self.plan_sets is not None:
             narrowed = [i for i in candidates if plan_id in self.plan_sets[i]]
             candidates = narrowed or candidates
         if len(candidates) > 1:
@@ -147,6 +157,13 @@ class _Analyzer:
     def _cast(self, expr: Cast) -> Expression:
         child = self.resolve(expr.child)
         target = parse_ddl_type(expr.target_type) if isinstance(expr.target_type, str) else expr.target_type
+        mismatch = coercion.ansi_cast_error(child.data_type, target)
+        if mismatch is not None:
+            source_name, target_name = child.data_type.simpleString().upper(), target.simpleString().upper()
+            raise AnalysisException(
+                f'[DATATYPE_MISMATCH.{mismatch}] Cannot resolve "CAST({expr.child!r} AS {target_name})" due to data '
+                f'type mismatch: cannot cast "{source_name}" to "{target_name}" with ANSI mode on.'
+            )
         resolved = Cast(child, target, strict=expr.strict)
         resolved.data_type = target
         return resolved

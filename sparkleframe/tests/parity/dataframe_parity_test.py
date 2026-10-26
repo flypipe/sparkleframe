@@ -15,14 +15,17 @@ from datetime import date, datetime
 from decimal import Decimal
 
 import pandas as pd
+import pyarrow as pa
 import pyspark.sql.functions as SF
 import pytest
 from pyspark.sql.functions import col as spark_col
+from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import BooleanType as SparkBooleanType
 from pyspark.sql.types import DateType as SparkDateType
 from pyspark.sql.types import DecimalType as SparkDecimalType
 from pyspark.sql.types import DoubleType as SparkDoubleType
 from pyspark.sql.types import FloatType as SparkFloatType
+from pyspark.sql.types import IntegerType as SparkIntegerType
 from pyspark.sql.types import LongType as SparkLongType
 from pyspark.sql.types import StringType as SparkStringType
 from pyspark.sql.types import StructField as SparkStructField
@@ -516,6 +519,80 @@ _JOIN_RIGHT_SCHEMA = _schema(("id", _LONG), ("right_val", _STR))
 _JOIN_LEFT_ROWS = [(1, "a"), (2, "b"), (3, "c")]
 _JOIN_RIGHT_ROWS = [(2, "x"), (3, "y"), (4, "z")]
 
+_EMPLOYEE_SCHEMA = _schema(("id", _LONG), ("mgr", _LONG), ("name", _STR))
+_EMPLOYEE_ROWS = [(1, None, "ceo"), (2, 1, "vp"), (3, 2, "eng"), (4, 2, "ops"), (5, 9, "orphan")]
+
+
+@pytest.mark.feature("dataframe.alias.qualified_references")
+def test_alias_self_join_against_spark(engine, spark):
+    """``df.alias("e")`` makes ``e.col`` and ``e.*`` resolve to that side of a self-join."""
+    F = engine.functions
+
+    def run(M, df):
+        e, m = df.alias("e"), df.alias("m")
+        joined = e.join(m, M.col("e.mgr") == M.col("m.id"), "left")
+        return [
+            joined.select(M.col("e.name").alias("emp"), M.col("m.name").alias("boss")),
+            joined.select("e.*"),
+            joined.select("m.*", M.col("e.id").alias("emp_id")),
+            joined.filter(M.col("m.name") == "vp").select("e.id", "e.name"),
+            joined.filter("m.id IS NULL").select("e.name"),
+            joined.groupBy("m.name").agg(M.count(M.col("e.id")).alias("reports")),
+        ]
+
+    actual = run(F, engine.build_df(_EMPLOYEE_ROWS, _EMPLOYEE_SCHEMA))
+    expected = run(SF, spark.createDataFrame(_EMPLOYEE_ROWS, _EMPLOYEE_SCHEMA))
+    for a, e in zip(actual, expected):
+        assert a.columns == e.columns
+        assert_matches_spark(a, e, engine)
+
+
+@pytest.mark.feature("dataframe.alias.qualified_references")
+def test_alias_survives_projection_and_name_keys_against_spark(engine, spark):
+    """A pass-through column keeps its alias qualifier; a join on a key name keeps both sides' qualifiers."""
+    F = engine.functions
+
+    def run(M, left, right):
+        a, b = left.alias("a"), right.alias("b")
+        projected = a.select("id", "left_val").filter(M.col("a.id") > 1).select("a.left_val")
+        keyed = a.join(b, ["id"]).select("a.id", "b.right_val", "a.left_val")
+        return [projected, keyed]
+
+    actual = run(
+        F, engine.build_df(_JOIN_LEFT_ROWS, _JOIN_LEFT_SCHEMA), engine.build_df(_JOIN_RIGHT_ROWS, _JOIN_RIGHT_SCHEMA)
+    )
+    expected = run(
+        SF,
+        spark.createDataFrame(_JOIN_LEFT_ROWS, _JOIN_LEFT_SCHEMA),
+        spark.createDataFrame(_JOIN_RIGHT_ROWS, _JOIN_RIGHT_SCHEMA),
+    )
+    for a, e in zip(actual, expected):
+        assert a.columns == e.columns
+        assert_matches_spark(a, e, engine)
+
+
+@pytest.mark.feature("dataframe.alias.qualified_references")
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda M, e, m, j: j.select("id"),
+        lambda M, e, m, j: j.select("x.*"),
+        lambda M, e, m, j: j.select(M.col("e.nope")),
+        lambda M, e, m, j: e.alias("z").select("e.id"),
+        lambda M, e, m, j: j.select(M.col("x.id")),
+    ],
+    ids=["unqualified_ambiguous", "unknown_alias_star", "unknown_column", "replaced_alias_hidden", "unknown_alias"],
+)
+def test_alias_unresolvable_references_raise_like_spark(engine, spark, build):
+    def run(M, df):
+        e, m = df.alias("e"), df.alias("m")
+        return build(M, e, m, e.join(m, M.col("e.mgr") == M.col("m.id")))
+
+    with pytest.raises(Exception):
+        run(SF, spark.createDataFrame(_EMPLOYEE_ROWS, _EMPLOYEE_SCHEMA)).collect()
+    with pytest.raises(Exception):
+        engine.to_records(run(engine.functions, engine.build_df(_EMPLOYEE_ROWS, _EMPLOYEE_SCHEMA)))
+
 
 @pytest.mark.feature("dataframe.join.polars_joins")
 @pytest.mark.parametrize(
@@ -991,6 +1068,225 @@ def test_create_value_type_mismatch_raises(engine, spark, dtype, good, bad):
     assert_matches_spark(engine.build_df(bad_rows, str_schema), spark.createDataFrame(bad_rows, str_schema), engine)
 
 
+@pytest.mark.feature("dataframe.create.string_field_python_str")
+def test_create_string_field_stringifies_like_python_against_spark(engine, spark):
+    """A non-string value in a string field is Python's ``str`` of it (bools lowercased), not a SQL cast."""
+    values = [
+        float("nan"),
+        float("inf"),
+        1e20,
+        1.5e-7,
+        -0.0,
+        True,
+        10**20,
+        Decimal("1.50"),
+        date(2024, 1, 2),
+        datetime(2024, 1, 2, 3, 4, 5, 600),
+        b"ab",
+        [1, 2],
+        {"k": 1},
+    ]
+    schema = _schema(("i", _LONG), ("s", _STR))
+    rows = [(i, v) for i, v in enumerate(values)]
+    assert_matches_spark(engine.build_df(rows, schema), spark.createDataFrame(rows, schema), engine)
+
+    # Malformed: the lenient string field does not extend to other types.
+    with pytest.raises(Exception, match="FIELD_DATA_TYPE_UNACCEPTABLE"):
+        spark.createDataFrame([(1, "x")], _schema(("i", _LONG), ("s", _LONG))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df([(1, "x")], _schema(("i", _LONG), ("s", _LONG))))
+
+
+@pytest.mark.feature("dataframe.create.empty_inference_raises")
+def test_create_empty_without_types_raises_like_spark(engine, spark):
+    """With no rows and only column names there is nothing to infer types from."""
+    with pytest.raises(Exception, match="CANNOT_INFER_EMPTY_SCHEMA"):
+        spark.createDataFrame([], ["a", "b"])
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df([], ["a", "b"]))
+
+    # Valid: the same empty input with a typed schema builds an empty frame.
+    schema = _schema(("a", _LONG), ("b", _STR))
+    assert_matches_spark(engine.create_df([], schema), spark.createDataFrame([], schema), engine)
+
+
+def _pandas_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "i": [1, 2, 3],
+            "f": [1.5, float("nan"), None],
+            "s": ["a", None, "c"],
+            "b": [True, False, True],
+            "t": pd.to_datetime(["2024-01-01 10:00:00", "2024-01-02 00:00:00", None]),
+            "n": pd.array([1, None, 3], dtype="Int64"),
+            "o": [1, "x", None],
+            "d": [date(2024, 1, 1), None, date(2024, 3, 1)],
+            "dec": [Decimal("1.50"), None, Decimal("-2")],
+            "l": [[1, 2], None, []],
+        }
+    )
+
+
+@pytest.mark.feature("dataframe.create.from_pandas")
+def test_create_from_pandas_against_spark(engine, spark):
+    """A pandas frame goes through PySpark's ``to_records`` path: names become the schema, types are inferred.
+
+    pandas' own representation leaks through, as in Spark: a missing value in a ``str`` column is the string
+    ``"nan"``, nullable ``Int64`` becomes ``double`` and a mixed ``object`` column becomes ``string``.
+    """
+    frame = _pandas_frame()
+    actual = engine.create_df(frame, None)
+    expected = spark.createDataFrame(frame)
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    subset = frame[["i", "s"]]
+    renamed = engine.create_df(subset, ["x", "y"])
+    expected_renamed = spark.createDataFrame(subset, ["x", "y"])
+    assert renamed.dtypes == expected_renamed.dtypes
+    assert_matches_spark(renamed, expected_renamed, engine)
+
+    schema = _schema(("i", _LONG), ("s", _STR))
+    assert_matches_spark(engine.create_df(subset, schema), spark.createDataFrame(subset, schema), engine)
+    typed = engine.create_df(subset, "i bigint, s string")
+    assert typed.dtypes == spark.createDataFrame(subset, "i bigint, s string").dtypes
+
+    zoned = pd.DataFrame({"t": pd.to_datetime(["2024-01-01 12:00:00+02:00", None])})
+    assert_matches_spark(engine.create_df(zoned, None), spark.createDataFrame(zoned), engine)
+
+    # Malformed: an all-null column, an empty frame and a value that does not fit its field are rejected.
+    all_null = pd.DataFrame({"a": [None, None]})
+    with pytest.raises(Exception, match="CANNOT_DETERMINE_TYPE"):
+        spark.createDataFrame(all_null)
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(all_null, None))
+
+    empty = pd.DataFrame({"a": pd.Series([], dtype="int64")})
+    with pytest.raises(Exception, match="CANNOT_INFER_EMPTY_SCHEMA"):
+        spark.createDataFrame(empty)
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(empty, None))
+
+    mismatched = pd.DataFrame({"i": ["one"]})
+    with pytest.raises(Exception, match="FIELD_DATA_TYPE_UNACCEPTABLE"):
+        spark.createDataFrame(mismatched, _schema(("i", _LONG))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(mismatched, _schema(("i", _LONG))))
+
+
+def _arrow_table() -> pa.Table:
+    return pa.table(
+        {
+            "i": pa.array([1, None], pa.int32()),
+            "l": pa.array([10, 20], pa.int64()),
+            "f": pa.array([1.5, None], pa.float32()),
+            "s": ["a", None],
+            "b": [True, None],
+            "dec": pa.array([Decimal("1.25"), None], pa.decimal128(5, 2)),
+            "t": pa.array([datetime(2024, 1, 1, 10), None], pa.timestamp("us")),
+            "tz": pa.array([datetime(2024, 1, 1, 12), None], pa.timestamp("us", tz="+02:00")),
+            "d": pa.array([date(2024, 1, 1), None]),
+            "arr": pa.array([[1, 2], None]),
+            "m": pa.array([[("k", 1)], None], pa.map_(pa.string(), pa.int64())),
+            "st": pa.array([{"x": 1, "y": "a"}, None]),
+        }
+    )
+
+
+@pytest.mark.feature("dataframe.create.from_arrow")
+def test_create_from_arrow_against_spark(engine, spark):
+    """An Arrow table keeps its Arrow types (``int32`` is ``int``); names or a schema may be given instead."""
+    table = _arrow_table()
+    actual = engine.create_df(table, None)
+    expected = spark.createDataFrame(table)
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    subset = table.select(["i", "s"])
+    renamed = engine.create_df(subset, ["x", "y"])
+    expected_renamed = spark.createDataFrame(subset, ["x", "y"])
+    assert renamed.dtypes == expected_renamed.dtypes
+    assert_matches_spark(renamed, expected_renamed, engine)
+
+    schema = _schema(("i", _LONG), ("s", _STR))
+    widened = engine.create_df(subset, schema)
+    expected_widened = spark.createDataFrame(subset, schema)
+    assert widened.dtypes == expected_widened.dtypes
+    assert_matches_spark(widened, expected_widened, engine)
+
+    # Malformed: a string that is not a number does not fit a bigint field.
+    bad = pa.table({"i": ["not-a-number"]})
+    with pytest.raises(Exception):
+        spark.createDataFrame(bad, _schema(("i", _LONG))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(bad, _schema(("i", _LONG))))
+
+
+@pytest.mark.feature("dataframe.create.from_arrow_stream")
+def test_create_from_arrow_stream_frame_against_spark(engine, spark):
+    """Any frame exporting the Arrow C stream (here polars) builds like the Arrow table it exports."""
+    import polars as pl
+
+    rows = [(1, "a", [1]), (2, None, None), (None, "c", [])]
+    frame = pl.DataFrame(rows, schema=["x", "y", "z"], orient="row")
+    actual = engine.create_df(frame, None)
+    # Spark cannot ingest polars' ``string_view`` export, so its side gets the same rows and Arrow-derived types.
+    expected = spark.createDataFrame(rows, "x bigint, y string, z array<bigint>")
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a value that does not fit the requested field type is rejected.
+    bad = pl.DataFrame({"x": ["not-a-number"]})
+    with pytest.raises(Exception):
+        spark.createDataFrame([("not-a-number",)], _schema(("x", _LONG))).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(bad, _schema(("x", _LONG))))
+
+
+@pytest.mark.feature("dataframe.create.ddl_schema")
+@pytest.mark.parametrize("ddl", ["a int, b string", "a: int, b: string", "a:int,b:string", "struct<a:int,b:string>"])
+def test_create_ddl_schema_against_spark(engine, spark, ddl):
+    """PySpark's ``_parse_datatype_string`` takes a field list with or without ``name: type`` colons."""
+    rows = [(1, "x"), (None, None)]
+    actual = engine.create_df(rows, ddl)
+    expected = spark.createDataFrame(rows, ddl)
+    assert actual.dtypes == expected.dtypes
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: an unparseable DDL is rejected.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, "a int,")
+    with pytest.raises(Exception):
+        engine.to_records(engine.create_df(rows, "a int,"))
+
+
+@pytest.mark.feature("dataframe.create.single_datatype_schema")
+def test_create_single_datatype_schema_against_spark(engine, spark):
+    """A single ``DataType`` (or a type DDL) schema makes one ``value`` column holding each item."""
+    cases = [
+        ([1, 2, None], SparkIntegerType()),
+        (["a", None], _STR),
+        ([[1, 2], None], SparkArrayType(SparkIntegerType())),
+    ]
+    for data, dtype in cases:
+        actual = engine.create_df(data, engine.dtype(dtype))
+        expected = spark.createDataFrame(data, dtype)
+        assert actual.dtypes == expected.dtypes
+        assert_matches_spark(actual, expected, engine)
+
+    actual_ddl = engine.create_df([1, 2], "int")
+    expected_ddl = spark.createDataFrame([1, 2], "int")
+    assert actual_ddl.dtypes == expected_ddl.dtypes
+    assert_matches_spark(actual_ddl, expected_ddl, engine)
+
+    # Malformed: a value of another type, or a tuple row, does not fit the single field.
+    for bad in (["a"], [(1,)]):
+        with pytest.raises(Exception, match="FIELD_DATA_TYPE_UNACCEPTABLE"):
+            spark.createDataFrame(bad, SparkIntegerType()).collect()
+        with pytest.raises(Exception):
+            engine.to_records(engine.create_df(bad, engine.dtype(SparkIntegerType())))
+
+
 # ----------------------------------------------------------------------------- #
 # distinct / dropDuplicates
 # ----------------------------------------------------------------------------- #
@@ -1123,6 +1419,151 @@ def test_filter_sql_string_malformed_raises(engine, spark, predicate, spark_erro
         spark.createDataFrame(_SQL_FILTER_ROWS, _SQL_FILTER_SCHEMA).filter(predicate).collect()
     with pytest.raises(Exception):
         engine.to_records(engine.build_df(_SQL_FILTER_ROWS, _SQL_FILTER_SCHEMA).filter(predicate))
+
+
+_SQL_EXPR_SCHEMA = _schema(
+    ("id", _LONG), ("s", _STR), ("d", SparkDateType()), ("x", SparkDoubleType()), ("b", SparkBooleanType())
+)
+_SQL_EXPR_ROWS = [
+    (1, "a1", date(2024, 1, 1), 1.5, True),
+    (2, "B_2", date(2024, 6, 1), None, False),
+    (-3, None, None, -2.0, None),
+    (4, "it's", date(2025, 1, 1), 0.0, True),
+    (5, "a%b", date(2024, 3, 1), 2.5, False),
+    (None, "nil", None, None, None),
+]
+
+
+@pytest.mark.feature("dataframe.filter.sql_string_expressions")
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        # arithmetic, unary sign and typed number literals
+        "id > -1",
+        "-id < 0",
+        "+id = 1",
+        "id + 1 = 3",
+        "id - 1 >= 1 AND id * 2 <= 8",
+        "id / 2 > 1",
+        "x * 2 > id",
+        "1.5 = x",
+        "x = 1.50",
+        "1e0 = id",
+        "10L > id",
+        "2S = id",
+        "1Y = id",
+        "x = 2.5D",
+        "id = 1BD",
+        "id < 9223372036854775807",
+        # IN / BETWEEN
+        "id IN (1, 4)",
+        "id NOT IN (1, 4)",
+        "id IN (1, NULL)",
+        "id NOT IN (1, NULL)",
+        "s IN ('a1', 'nil')",
+        "id IN (1 + 1, -3)",
+        "id BETWEEN 1 AND 2",
+        "id NOT BETWEEN 1 AND 2 AND s IS NOT NULL",
+        "x BETWEEN -2 AND 1.5",
+        "d BETWEEN DATE '2024-02-01' AND DATE '2024-12-31'",
+        # LIKE / RLIKE
+        "s LIKE 'a%'",
+        "s NOT LIKE 'a%'",
+        "s LIKE '%\\\\_%'",
+        "s LIKE 'a\\\\%b'",
+        "s LIKE '_1'",
+        "s RLIKE '^[A-Z]'",
+        "s REGEXP '\\\\d$'",
+        "s RLIKE '\\d$'",
+        "s NOT RLIKE 'a'",
+        # IS
+        "b IS TRUE",
+        "b IS NOT TRUE",
+        "b IS FALSE",
+        "b IS NOT FALSE",
+        "b IS UNKNOWN",
+        "b IS NOT UNKNOWN",
+        "id IS DISTINCT FROM 1",
+        "id IS NOT DISTINCT FROM NULL",
+        # strings: escapes, double quotes, adjacent literals, concatenation
+        "s = 'it\\'s'",
+        "s = 'it''s'",
+        's = "it\'s"',
+        's = "a1"',
+        "s = 'a' '1'",
+        "s || 'x' = 'a1x'",
+        "s = 'a\\u0031'",
+        "s = 'a\\061'",
+        # function calls and casts
+        "upper(s) = 'A1'",
+        "lower(s) = 'b_2'",
+        "coalesce(x, 0) > 0",
+        "coalesce(id, 0) = 0",
+        "length(s) = 3",
+        "trim(s) = 'a1'",
+        "round(x, 0) = 2",
+        "abs(id) = 3",
+        "date_format(d, 'yyyy') = '2025'",
+        "datediff(d, DATE '2024-01-01') > 100",
+        "CAST(s AS string) = 'a1'",
+        "cast(id as double) > 1.5",
+        "CAST(id AS decimal(10, 2)) = 4.00",
+        "CAST(x AS int) = 1",
+        "d > DATE '2024-03-01'",
+        "TIMESTAMP '2024-03-01 00:00:00' < CAST(d AS timestamp)",
+        # precedence
+        "NOT id = 1",
+        "NOT id IN (1, 2) AND s IS NOT NULL",
+        "(id = 1 OR id = 2) AND s IS NOT NULL",
+        "id = 1 OR id = 2 AND s IS NULL",
+        "id + 2 * 3 = 7",
+        "(id + 2) * 3 = 9",
+        "-id * 2 = 6",
+    ],
+)
+def test_filter_sql_string_expressions_against_spark(engine, spark, predicate):
+    """SQL predicate strings beyond plain comparisons, with Spark's literal typing, string escapes and precedence."""
+    actual = engine.build_df(_SQL_EXPR_ROWS, _SQL_EXPR_SCHEMA).filter(predicate)
+    expected = spark.createDataFrame(_SQL_EXPR_ROWS, _SQL_EXPR_SCHEMA).filter(predicate)
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("dataframe.filter.sql_string_expressions")
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        "CAST(s AS int) > 0",
+        "id IN (1, 2",
+        "id BETWEEN 1",
+        "s LIKE 'a\\\\'",
+        "s RLIKE '['",
+        "nosuchfn(id) = 1",
+        "CAST(id AS nosuchtype) = 1",
+        "d > DATE 'not-a-date'",
+        "id = 99999999999999999999L",
+        "id = 128Y",
+        "id NOT = 1",
+    ],
+    ids=[
+        "ansi_cast",
+        "unclosed_in",
+        "between_without_and",
+        "like_escape_at_end",
+        "bad_regex",
+        "unknown_function",
+        "unknown_type",
+        "bad_date_literal",
+        "bigint_literal_overflow",
+        "tinyint_literal_overflow",
+        "not_without_predicate",
+    ],
+)
+def test_filter_sql_string_expressions_malformed_raises(engine, spark, predicate):
+    """Malformed predicate strings, invalid literals and ANSI cast failures raise."""
+    with pytest.raises(Exception):
+        spark.createDataFrame(_SQL_EXPR_ROWS, _SQL_EXPR_SCHEMA).filter(predicate).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(_SQL_EXPR_ROWS, _SQL_EXPR_SCHEMA).filter(predicate))
 
 
 # ----------------------------------------------------------------------------- #
@@ -1387,6 +1828,57 @@ def test_to_pandas_empty_and_malformed_against_spark(engine, spark):
         spark.createDataFrame(bad, schema).select(SF.col("s").cast("bigint")).toPandas()
     with pytest.raises(Exception):
         engine.build_df(bad, schema).select(F.col("s").cast(engine.dtype(_LONG))).toPandas()
+
+
+_ARROW_DDL = (
+    "b boolean, y tinyint, s smallint, i int, l bigint, f float, d double, dec decimal(5,2), str string, "
+    "bin binary, dt date, ts timestamp, arr array<int>, m map<string,bigint>, st struct<x:int,y:string>"
+)
+_ARROW_ROWS = [
+    (
+        True,
+        1,
+        2,
+        3,
+        4,
+        1.5,
+        2.5,
+        Decimal("1.25"),
+        "a",
+        b"ab",
+        date(2024, 1, 1),
+        datetime(2024, 1, 1, 10, 30, 0, 250),
+        [1, None],
+        {"k": 1},
+        (1, "z"),
+    ),
+    (None,) * 15,
+]
+
+
+@pytest.mark.feature("dataframe.to_arrow")
+def test_to_arrow_against_spark(engine, spark):
+    """``toArrow`` gives a ``pyarrow.Table`` with Spark's Arrow types (``int32`` int, ``list<element>``, maps)."""
+    actual = engine.create_df(_ARROW_ROWS, _ARROW_DDL).toArrow()
+    expected = spark.createDataFrame(_ARROW_ROWS, _ARROW_DDL).toArrow()
+    assert actual.schema.equals(expected.schema), f"\n{actual.schema}\nvs\n{expected.schema}"
+    assert actual.to_pylist() == expected.to_pylist()
+
+    # An empty frame keeps the schema; a derived frame converts its own result.
+    empty = engine.create_df([], _ARROW_DDL).toArrow()
+    assert empty.num_rows == 0 and empty.schema.equals(spark.createDataFrame([], _ARROW_DDL).toArrow().schema)
+
+    F = engine.functions
+    derived = engine.create_df(_ARROW_ROWS, _ARROW_DDL).select((F.col("i") + 1).alias("n")).toArrow()
+    expected_derived = spark.createDataFrame(_ARROW_ROWS, _ARROW_DDL).select((SF.col("i") + 1).alias("n")).toArrow()
+    assert derived.schema.equals(expected_derived.schema)
+    assert derived.to_pylist() == expected_derived.to_pylist()
+
+    # Malformed: toArrow evaluates the plan, so an ANSI failure raises.
+    with pytest.raises(Exception, match="CAST_INVALID_INPUT"):
+        spark.createDataFrame([("abc",)], "s string").select(SF.col("s").cast("bigint")).toArrow()
+    with pytest.raises(Exception):
+        engine.create_df([("abc",)], "s string").select(F.col("s").cast(engine.dtype(_LONG))).toArrow()
 
 
 # ----------------------------------------------------------------------------- #

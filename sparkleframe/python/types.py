@@ -376,6 +376,30 @@ def parse_ddl_type(ddl: str) -> DataType:
     return dtype
 
 
+def parse_ddl_schema(ddl: str, pyspark_colons: bool = False) -> DataType:
+    """A schema string the way Spark's ``DataType.fromDDL`` reads it (``from_json``, ``createDataFrame``).
+
+    A field list (``"a int, b string"``) is a struct; otherwise the string is a single type
+    (``"int"``, ``"struct<a:int>"``, ``"array<string>"``). Only PySpark's ``_parse_datatype_string``
+    (``pyspark_colons``) also takes ``name: type`` in the top-level field list.
+    """
+    try:
+        if not pyspark_colons and _has_top_level_colon(ddl):
+            raise ValueError("[PARSE_SYNTAX_ERROR] Syntax error at or near ':'.")
+        return parse_ddl_type(f"struct<{ddl}>")
+    except ValueError:
+        return parse_ddl_type(ddl)
+
+
+def _has_top_level_colon(ddl: str) -> bool:
+    depth = 0
+    for char in ddl:
+        depth += {"<": 1, ">": -1}.get(char, 0)
+        if char == ":" and depth == 0:
+            return True
+    return False
+
+
 class _DdlParser:
     def __init__(self, tokens: List[str]) -> None:
         self.tokens = tokens
