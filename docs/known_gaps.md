@@ -316,6 +316,17 @@ as `yyyy-MM-dd HH:mm:ss`, and it rejects every option other than `ignoreNullFiel
 **Workaround:** none that reproduces Spark's output exactly. Cast decimals to `double` if the consumer
 accepts numbers without a fixed scale. The pure-Python engine matches Spark.
 
+## Decimal arithmetic precision
+
+**Affected operations:** `+`, `-`, `*` with a `DecimalType` operand, e.g. `col("apr") * 100` on a
+`decimal(5,4)` column.
+
+Values and scale match Spark, but the precision does not: sparkleframe widens the result to 38
+(`decimal(38,4)`) where Spark applies its `DecimalPrecision` rules (`decimal(9,4)`, an integer
+literal counting as `decimal(3,0)`). Downstream functions that derive their type from the input,
+such as `round`, inherit the wider precision (`round(col("apr") * 100, 2)` is `decimal(37,2)`, not
+`decimal(8,2)`), though the scale and the rendered values are the same.
+
 ## Polars deviations found by the nba parity sweep
 
 The parity tests written for the Python engine (`Engine.PYTHON`), which datahub's nba function
@@ -351,6 +362,8 @@ The items are grouped by area; the parity ids in parentheses are gated in `POLAR
 - Regex: Rust's `$` does not match before a trailing `\n`, and its `\d` matches non-ASCII digits
   (`column.rlike.nba_patterns`).
 - A string compared with an int skips the ANSI cast, so `"abc"` does not raise (`dataframe.is_empty`).
+- `regexp_extract` with a group index the pattern does not have returns a value instead of raising
+  `INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX` (`functions.regexp_extract.group_index_out_of_range_raises`).
 
 **Nested values**
 
@@ -360,6 +373,7 @@ The items are grouped by area; the parity ids in parentheses are gated in `POLAR
 - An empty `create_map()` cannot fill more than one row, and a null map key does not raise `NULL_MAP_KEY`
   (`functions.create_map.empty`, `functions.create_map.null_key_raises`).
 - `map_entries` returns the map unchanged (`functions.map_entries`).
+- `array_max` skips NaN; Spark treats NaN as the largest double (`functions.array_max.nan_is_largest`).
 
 **Ordering and windows**
 
@@ -384,6 +398,8 @@ The items are grouped by area; the parity ids in parentheses are gated in `POLAR
   accepts `2024-1-5` for `yyyy-MM-dd` and `2/9/2024` for `MM/dd/yyyy`, and it reads `02/29/24` under
   `MM/dd/yyyy` as year 24 (`functions.try_to_date.nba_patterns`). **The nba function uses all of these
   patterns.**
+- `add_months` on an unparseable date string returns null instead of raising the ANSI cast error
+  (`functions.add_months.malformed_date_string_raises`).
 
 **DataFrame**
 

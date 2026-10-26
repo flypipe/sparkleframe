@@ -2783,3 +2783,161 @@ def test_try_to_date_nba_patterns_against_spark(engine, spark, fmt, values):
     actual = engine.build_df(rows, schema).select("d", F.try_to_date("d", fmt).alias("r"))
     expected = spark.createDataFrame(rows, schema).select("d", SF.try_to_date("d", fmt).alias("r"))
     assert_matches_spark(actual, expected, engine)
+
+
+# ============================================================================ #
+# Functions added for datahub's nba purchase actions (std/credit_report, std/salesforce_partner, ...)
+# ============================================================================ #
+
+
+@pytest.mark.feature("functions.upper")
+def test_upper_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [("experian",), ("TransUnion",), ("ß straße",), ("ç123",), ("",), (None,)]
+    actual = engine.build_df(rows, schema).select("s", F.upper("s").alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("s", SF.upper("s").alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.array_max")
+@pytest.mark.parametrize(
+    "element_type, values",
+    [
+        (_LONG, [[3, 1, 2], [None, 5, None], [], [None], None]),
+        (_STR, [["b", "a", "c"], ["", None], [], None]),
+        (SparkDateType(), [[date(2020, 1, 2), date(2021, 3, 4), None], [], None]),
+        (_DOUBLE, [[1.5, -2.0, None], [-0.0, 0.0], None]),
+    ],
+)
+def test_array_max_against_spark(engine, spark, element_type, values):
+    """Nulls are skipped; empty or all-null arrays and null arrays give null."""
+    F = engine.functions
+    schema = _schema(("a", SparkArrayType(element_type, True)))
+    rows = [(v,) for v in values]
+    actual = engine.build_df(rows, schema).select(F.array_max("a").alias("r"))
+    expected = spark.createDataFrame(rows, schema).select(SF.array_max("a").alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.array_max.nan_is_largest")
+def test_array_max_nan_is_largest_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("a", SparkArrayType(_DOUBLE, True)))
+    rows = [([1.5, float("nan"), 2.0],), ([float("nan"), None],)]
+    actual = engine.build_df(rows, schema).select(F.array_max("a").alias("r"))
+    expected = spark.createDataFrame(rows, schema).select(SF.array_max("a").alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.regexp_extract")
+@pytest.mark.parametrize(
+    "pattern, idx",
+    [
+        (r"^(\d+)", 1),
+        (r"(\w+)\(", 1),
+        (r"[^/]+$", 0),
+        (r"^[A-Za-z]{3} ([A-Za-z]{3} \d{2} \d{4})", 1),
+        (r"(a)|(b)", 2),
+    ],
+)
+def test_regexp_extract_against_spark(engine, spark, pattern, idx):
+    """No match gives the empty string, an unmatched optional group too, and a null input gives null."""
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [
+        ("123ABC",),
+        ("call(x)",),
+        ("a/b/c.txt",),
+        ("Tue Jan 02 1990 00:00",),
+        ("b",),
+        ("",),
+        ("no match",),
+        (None,),
+    ]
+    actual = engine.build_df(rows, schema).select("s", F.regexp_extract("s", pattern, idx).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select("s", SF.regexp_extract("s", pattern, idx).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.regexp_extract.group_index_out_of_range_raises")
+@pytest.mark.parametrize("pattern, idx", [(r"(\d+)", 2), (r"\d+", 1), (r"(\d+)", -1)])
+def test_regexp_extract_group_index_out_of_range_raises(engine, spark, pattern, idx):
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [("123",)]
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.regexp_extract("s", pattern, idx).alias("r")))
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.regexp_extract("s", pattern, idx).alias("r")).collect()
+
+
+@pytest.mark.feature("functions.add_months")
+@pytest.mark.parametrize("months", [-2, 1, 12, 0])
+def test_add_months_against_spark(engine, spark, months):
+    """Month ends clamp to the target month's last day; timestamps and date strings become dates."""
+    F = engine.functions
+    schema = _schema(("d", SparkDateType()), ("ts", SparkTimestampType()), ("s", _STR))
+    rows = [
+        (date(2024, 1, 31), datetime(2024, 1, 31, 23, 59, 59), "2024-01-31"),
+        (date(2024, 2, 29), datetime(2023, 3, 31, 0, 0), "2023-12-15"),
+        (date(1999, 12, 1), None, None),
+        (None, datetime(2024, 5, 31, 12, 0), "2024-05-31 08:00:00"),
+    ]
+    cols = [F.add_months(c, months).alias(f"{c}_r") for c in ("d", "ts", "s")]
+    spark_cols = [SF.add_months(c, months).alias(f"{c}_r") for c in ("d", "ts", "s")]
+    actual = engine.build_df(rows, schema).select(*cols)
+    expected = spark.createDataFrame(rows, schema).select(*spark_cols)
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.add_months.column_offset")
+def test_add_months_column_offset_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("d", SparkDateType()), ("n", _INT))
+    rows = [(date(2024, 1, 31), 1), (date(2024, 3, 31), -1), (date(2024, 1, 15), None), (None, 3)]
+    actual = engine.build_df(rows, schema).select(F.add_months("d", F.col("n")).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select(SF.add_months("d", SF.col("n")).alias("r"))
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.add_months.malformed_date_string_raises")
+def test_add_months_malformed_date_string_raises(engine, spark):
+    """Spark 4 casts the start string to date under ANSI, so an unparseable string raises."""
+    F = engine.functions
+    schema = _schema(("s", _STR))
+    rows = [("not-a-date",)]
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.add_months("s", 1).alias("r")))
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.add_months("s", 1).alias("r")).collect()
+
+
+@pytest.mark.feature("functions.trunc")
+@pytest.mark.parametrize("fmt", ["year", "yyyy", "yy", "quarter", "month", "mon", "mm", "week", "YEAR", "Month"])
+def test_trunc_against_spark(engine, spark, fmt):
+    F = engine.functions
+    schema = _schema(("d", SparkDateType()), ("ts", SparkTimestampType()))
+    rows = [
+        (date(2024, 2, 29), datetime(2024, 11, 17, 13, 45)),
+        (date(2024, 1, 1), datetime(2023, 12, 31, 23, 59, 59)),
+        (date(2024, 6, 30), None),
+        (None, datetime(2024, 4, 1)),
+    ]
+    actual = engine.build_df(rows, schema).select(F.trunc("d", fmt).alias("d_r"), F.trunc("ts", fmt).alias("ts_r"))
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.trunc("d", fmt).alias("d_r"), SF.trunc("ts", fmt).alias("ts_r")
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.trunc.unsupported_format_null")
+@pytest.mark.parametrize("fmt", ["day", "dd", "hour", "decade", ""])
+def test_trunc_unsupported_format_null_against_spark(engine, spark, fmt):
+    """trunc only truncates to year, quarter, month or week; any other format gives null."""
+    F = engine.functions
+    schema = _schema(("d", SparkDateType()))
+    rows = [(date(2024, 2, 29),), (None,)]
+    actual = engine.build_df(rows, schema).select(F.trunc("d", fmt).alias("r"))
+    expected = spark.createDataFrame(rows, schema).select(SF.trunc("d", fmt).alias("r"))
+    assert_matches_spark(actual, expected, engine)

@@ -305,6 +305,28 @@ def _coerce_json_value(value: Any, schema: Union[DataType, pl.DataType]) -> Any:
     return value
 
 
+def _round_batch(series: pl.Series, scale: int) -> pl.Series:
+    """
+    Round ``series`` to ``scale`` decimal places, typed the way Spark's ``round`` is.
+
+    A ``decimal(p, s)`` input rounds half up (``ROUND_HALF_UP``, i.e. half away from zero) into
+    ``decimal(min(p - s + 1 + min(s, scale), 38), min(s, scale))``: Spark narrows the scale and adds
+    one integral digit for a carry such as ``9.99`` -> ``10.0``. The input is widened by that digit
+    before rounding so the carry cannot overflow it. Other numeric inputs keep Polars' ``round``.
+    Used as the ``map_batches`` callback of :func:`round`, since the input dtype is only known at
+    evaluation; Polars infers the output dtype from it, so a decimal result stays typed downstream.
+    """
+    dtype = series.dtype
+    if not isinstance(dtype, pl.Decimal) or scale < 0:
+        return series.round(scale)
+    precision = dtype.precision if dtype.precision is not None else 38
+    new_scale = min(dtype.scale, scale)
+    integral_digits = precision - dtype.scale + 1
+    widened = series.cast(pl.Decimal(min(integral_digits + dtype.scale, 38), dtype.scale))
+    rounded = widened.round(new_scale, mode="half_away_from_zero")
+    return rounded.cast(pl.Decimal(min(integral_digits + new_scale, 38), new_scale))
+
+
 def _json_decimal(value: Any, schema: DecimalType) -> Optional[Decimal]:
     """
     A JSON number (or numeric string) as a Decimal of ``schema``, as Spark's JSON reader does:

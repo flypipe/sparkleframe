@@ -986,7 +986,12 @@ def test_startswith_null_prefix_returns_null(engine, spark):
     """A ``None`` prefix is a null literal in Spark: every row is null, nothing raises."""
     F = engine.functions
     rows = [("apple",), ("",), (None,)]
-    expected = spark.createDataFrame(rows, _STARTSWITH_SCHEMA).select(SF.col("text").startswith(None).alias("v"))
+    # PySpark forwards a raw ``None`` to the JVM as ``null``, which matches both the ``startsWith(Column)`` and
+    # ``startsWith(String)`` overloads; py4j's pick depends on JVM method order and NPEs on some hosts. ``lit(None)``
+    # is the same null literal routed through an unambiguous overload.
+    expected = spark.createDataFrame(rows, _STARTSWITH_SCHEMA).select(
+        SF.col("text").startswith(SF.lit(None)).alias("v")
+    )
     actual = engine.build_df(rows, _STARTSWITH_SCHEMA).select(F.col("text").startswith(None).alias("v"))
     assert_matches_spark(actual, expected, engine)
 
