@@ -17,6 +17,11 @@ from __future__ import annotations
 # expression-build time without a schema, so these cross-type cases raise instead
 # of coercing the way Spark does.
 POLARS_NOT_SUPPORTED = {
+    # Found by the parity tests for the nba purchase-action functions — see docs/known_gaps.md
+    # "Polars deviations found by the nba parity sweep".
+    "functions.array_max.nan_is_largest",
+    "functions.regexp_extract.group_index_out_of_range_raises",
+    "functions.add_months.malformed_date_string_raises",
     "arithmetic.numeric_plus_string",
     "arithmetic.int_plus_date",
     # functions.pow does not cast its operands to double (Column ``**`` does) — see
