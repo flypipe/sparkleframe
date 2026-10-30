@@ -1216,6 +1216,7 @@ def explode(col_name: Union[str, Column]) -> Column:
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     column = Column(expr.explode())
     setattr(column, "_is_explode", True)
+    setattr(column, "_explode_source_expr", expr)
     if isinstance(col_name, str):
         setattr(column, "_explode_source_name", col_name)
     return column

@@ -290,10 +290,18 @@ class DataFrame(BaseDataFrame):
         cols = list(cols)
         cols = cols[0] if cols and isinstance(cols[0], list) else cols
         pl_expressions: List[Any] = []
+        explode_names: List[str] = []
 
         with _polars_schema_for(self.df.schema):
             for c in cols:
                 if isinstance(c, Column):
+                    if getattr(c, "_is_explode", False):
+                        source = c._explode_source_expr
+                        if c._output_alias is not None:
+                            source = source.alias(c._output_alias)
+                        pl_expressions.append(source)
+                        explode_names.append(source.meta.output_name())
+                        continue
                     pl_expressions.append(c.to_native())
                     continue
 
@@ -314,7 +322,8 @@ class DataFrame(BaseDataFrame):
                 # fallback: assume it's already a polars expr or valid selector
                 pl_expressions.append(c)
 
-        return DataFrame(self.df.select(*pl_expressions))
+        selected = self.df.select(*pl_expressions)
+        return DataFrame(selected.explode(explode_names) if explode_names else selected)
 
     def withColumn(self, name: str, col: Any) -> DataFrame:
         """
