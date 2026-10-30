@@ -946,6 +946,16 @@ def test_explode_against_spark(engine, spark):
     assert_matches_spark(actual, expected, engine)
 
 
+@pytest.mark.feature("functions.explode.select_with_other_columns")
+def test_explode_select_with_other_columns_against_spark(engine, spark):
+    F = engine.functions
+    schema = _schema(("id", _STR), ("arr", SparkArrayType(_LONG)))
+    rows = [("a", [1, 2, 3]), ("b", [4]), ("c", None), ("d", [])]
+    actual = engine.build_df(rows, schema).select("id", F.explode("arr").alias("e"))
+    expected = spark.createDataFrame(rows, schema).select("id", SF.explode_outer("arr").alias("e"))
+    assert_matches_spark(actual, expected, engine)
+
+
 @pytest.mark.feature("functions.date_sub_and_datediff")
 def test_date_sub_and_datediff_against_spark(engine, spark):
     F = engine.functions

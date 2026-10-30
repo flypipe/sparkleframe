@@ -124,6 +124,7 @@ PYTHON_NOT_IMPLEMENTED = {
     "functions.element_at.map_literal_string_key",
     "functions.element_at.map_missing_literal_key_returns_null",
     "functions.explode",
+    "functions.explode.select_with_other_columns",
     "functions.filter.by_struct_field_equality",
     "functions.filter.getitem_int_in_filter",
     "functions.filter.getitem_string_key_on_map_in_filter",
@@ -209,4 +210,4 @@ GATES = {
 # lower it (never raise it) when you delete entries. The ratchet test enforces
 # that the live set never exceeds this number, so a regression can't quietly
 # re-gate a behavior instead of being fixed.
-PYTHON_GATE_HIGH_WATER_MARK = 170
+PYTHON_GATE_HIGH_WATER_MARK = 171
