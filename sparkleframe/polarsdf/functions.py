@@ -1345,10 +1345,12 @@ def to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
 
     Converts a string column to a date using the given Spark format pattern.
     Malformed values raise under Spark 4 ANSI defaults (see :func:`try_to_date`).
+    A date column is returned as is and a timestamp column is truncated to its date;
+    the format applies to strings only.
 
     Args:
-        col_name (str or Column): Column with string values to convert to dates.
-        fmt (str, optional): The date format. Defaults to ``yyyy-MM-dd``.
+        col_name (str or Column): Column with string, date or timestamp values to convert to dates.
+        fmt (str, optional): The date format for string values. Defaults to ``yyyy-MM-dd``.
 
     Returns:
         Column: A Column with values converted to Polars Date type.
@@ -1362,10 +1364,12 @@ def try_to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Colu
     Mimics pyspark.sql.functions.try_to_date (Spark 4+).
 
     Converts a string column to a date, returning null for unparseable values.
+    A date column is returned as is and a timestamp column is truncated to its date;
+    the format applies to strings only.
 
     Args:
-        col_name (str or Column): Column with string values to convert to dates.
-        fmt (str, optional): The date format. Defaults to 'yyyy-MM-dd'.
+        col_name (str or Column): Column with string, date or timestamp values to convert to dates.
+        fmt (str, optional): The date format for string values. Defaults to 'yyyy-MM-dd'.
 
     Returns:
         Column: A Column with values converted to Polars Date type (null for failures).

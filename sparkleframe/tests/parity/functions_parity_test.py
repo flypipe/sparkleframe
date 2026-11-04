@@ -23,11 +23,13 @@ Tests that don't fit this shape stay co-located in the source file:
 """
 
 import json
+from datetime import date, datetime
 
 import pyspark.sql.functions as SF
 import pytest
 from pyspark.sql.types import ArrayType as SparkArrayType
 from pyspark.sql.types import BinaryType as SparkBinaryType
+from pyspark.sql.types import DateType as SparkDateType
 from pyspark.sql.types import DoubleType as SparkDoubleType
 from pyspark.sql.types import IntegerType as SparkIntegerType
 from pyspark.sql.types import LongType as SparkLongType
@@ -35,6 +37,7 @@ from pyspark.sql.types import MapType as SparkMapType
 from pyspark.sql.types import StringType as SparkStringType
 from pyspark.sql.types import StructField as SparkStructField
 from pyspark.sql.types import StructType as SparkStructType
+from pyspark.sql.types import TimestampType as SparkTimestampType
 
 from sparkleframe.tests.parity.oracle import assert_matches_spark
 
@@ -43,6 +46,8 @@ _LONG = SparkLongType()
 _INT = SparkIntegerType()
 _DOUBLE = SparkDoubleType()
 _BIN = SparkBinaryType()
+_DATE = SparkDateType()
+_TS = SparkTimestampType()
 
 
 def _schema(*fields):
@@ -551,6 +556,48 @@ def test_to_date_against_spark(engine, spark, date_strs, fmt):
     rows = [(v,) for v in date_strs]
     actual = engine.build_df(rows, schema).select(F.to_date("d", fmt).alias("result"))
     expected = spark.createDataFrame(rows, schema).select(SF.to_date("d", fmt).alias("result"))
+    assert_matches_spark(actual, expected, engine)
+
+
+_DATETIME_ROWS = [
+    (datetime(2026, 7, 15, 0, 0, 0), date(2026, 7, 15)),
+    (datetime(2026, 1, 15, 18, 30, 45, 123456), date(2026, 1, 15)),
+    (None, None),
+]
+_DATETIME_SCHEMA = _schema(("ts", _TS), ("d", _DATE))
+
+
+@pytest.mark.feature("functions.to_date.timestamp_and_date_input")
+def test_to_date_timestamp_and_date_input_against_spark(engine, spark):
+    F = engine.functions
+    actual = engine.build_df(_DATETIME_ROWS, _DATETIME_SCHEMA).select(
+        F.to_date("ts", "yyyy-MM-dd").alias("ts_iso"),
+        F.to_date("ts", "dd-MM-yyyy").alias("ts_other_format"),
+        F.to_date("ts").alias("ts_default"),
+        F.to_date("d", "yyyy-MM-dd").alias("d_iso"),
+    )
+    expected = spark.createDataFrame(_DATETIME_ROWS, _DATETIME_SCHEMA).select(
+        SF.to_date("ts", "yyyy-MM-dd").alias("ts_iso"),
+        SF.to_date("ts", "dd-MM-yyyy").alias("ts_other_format"),
+        SF.to_date("ts").alias("ts_default"),
+        SF.to_date("d", "yyyy-MM-dd").alias("d_iso"),
+    )
+    assert_matches_spark(actual, expected, engine)
+
+
+@pytest.mark.feature("functions.try_to_date.timestamp_and_date_input")
+def test_try_to_date_timestamp_and_date_input_against_spark(engine, spark):
+    F = engine.functions
+    actual = engine.build_df(_DATETIME_ROWS, _DATETIME_SCHEMA).select(
+        F.try_to_date("ts", "yyyy-MM-dd").alias("ts_iso"),
+        F.try_to_date("ts", "dd-MM-yyyy").alias("ts_other_format"),
+        F.try_to_date("d", "yyyy-MM-dd").alias("d_iso"),
+    )
+    expected = spark.createDataFrame(_DATETIME_ROWS, _DATETIME_SCHEMA).select(
+        SF.try_to_date("ts", "yyyy-MM-dd").alias("ts_iso"),
+        SF.try_to_date("ts", "dd-MM-yyyy").alias("ts_other_format"),
+        SF.try_to_date("d", "yyyy-MM-dd").alias("d_iso"),
+    )
     assert_matches_spark(actual, expected, engine)
 
 
