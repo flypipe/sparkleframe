@@ -61,23 +61,32 @@ def _assert_no_unparsed_dates(s: pl.Series) -> pl.Series:
     return res
 
 
+def _series_to_date(s: pl.Series, strftime_fmt: str, strict: bool) -> pl.Series:
+    """Convert one batch to :class:`Date`: date and timestamp inputs ignore the format, as in Spark."""
+    if s.dtype == pl.Date:
+        return s
+    if isinstance(s.dtype, pl.Datetime):
+        return s.dt.date()
+    string_series = s.cast(pl.String, strict=False)
+    parsed = string_series.str.strptime(pl.Date, strftime_fmt, strict=strict)
+    if strict:
+        parsed = _assert_no_unparsed_dates(
+            pl.DataFrame({"_input": string_series, "_result": parsed}).to_struct("_parsed")
+        )
+    return parsed
+
+
 def _to_date_column(col_name: Union[str, Column], fmt: str, *, strict: bool = True) -> Column:
     """
-    Parse strings to :class:`Date` using a Spark format string (``yyyy-MM-dd`` style).
+    Convert to :class:`Date`, parsing strings with a Spark format string (``yyyy-MM-dd`` style).
 
     ``to_date`` passes ``strict=True``; ``try_to_date`` passes ``strict=False``. When
-    strict, non-null inputs that do not match the pattern raise (Spark 4 ANSI default).
+    strict, non-null string inputs that do not match the pattern raise (Spark 4 ANSI default).
+    Date inputs are returned as is and timestamp inputs are truncated to their date.
     """
     strftime_fmt = _convert_spark_date_format(fmt)
     input_expr = pl.col(col_name) if isinstance(col_name, str) else _to_expr(col_name)
-    string_expr = input_expr.cast(pl.String, strict=False)
-    parsed = string_expr.str.strptime(pl.Date, strftime_fmt, strict=strict)
-    if strict:
-        parsed = pl.struct(
-            string_expr.alias("_input"),
-            parsed.alias("_result"),
-        ).map_batches(_assert_no_unparsed_dates, return_dtype=pl.Date)
-    return Column(parsed)
+    return Column(input_expr.map_batches(lambda s: _series_to_date(s, strftime_fmt, strict), return_dtype=pl.Date))
 
 
 _SPARK_TS_FORMAT_MAP = [
