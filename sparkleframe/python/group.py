@@ -1,18 +1,20 @@
 """``GroupedData`` for the pure-Python engine — produced by ``DataFrame.groupBy``.
 
-The constructor stores the grouping columns; the aggregations are slots that raise until the
-analyze/evaluate phases land.
+The grouping keys and aggregate expressions are handed to the DataFrame layer, which groups the
+rows and evaluates each aggregate per group (see ``DataFrame._aggregate``).
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Any, Dict, Union
 
-from sparkleframe.python._errors import not_implemented_yet
+import sparkleframe.python.functions as F
 from sparkleframe.python.column import Column
 
 if TYPE_CHECKING:  # avoid a runtime import cycle with dataframe.py
     from sparkleframe.python.dataframe import DataFrame
+
+_DICT_AGGREGATES = {"count": F.count, "sum": F.sum, "avg": F.avg, "mean": F.avg, "max": F.max, "min": F.min}
 
 
 class GroupedData:
@@ -20,20 +22,35 @@ class GroupedData:
         self.df = df
         self.group_cols = group_cols
 
-    def agg(self, *exprs: Union[str, Column]) -> "DataFrame":
-        not_implemented_yet("GroupedData.agg")
+    def agg(self, *exprs: Union[Column, Dict[str, str]]) -> "DataFrame":
+        if len(exprs) == 1 and isinstance(exprs[0], dict):
+            exprs = tuple(
+                _DICT_AGGREGATES[func](column).alias(f"{func}({column})") for column, func in exprs[0].items()
+            )
+        return self.df._aggregate(self.group_cols, list(exprs))
 
     def count(self) -> "DataFrame":
-        not_implemented_yet("GroupedData.count")
+        return self.agg(F.count("*").alias("count"))
 
-    def sum(self) -> "DataFrame":
-        not_implemented_yet("GroupedData.sum")
+    def _numeric(self, func: Any, name: str, cols: tuple) -> "DataFrame":
+        from sparkleframe.python.ast.coercion import is_numeric
+        from sparkleframe.python.types import DecimalType
 
-    def mean(self) -> "DataFrame":
-        not_implemented_yet("GroupedData.mean")
+        columns = list(cols) or [
+            f.name for f in self.df.schema.fields if is_numeric(f.dataType) or isinstance(f.dataType, DecimalType)
+        ]
+        return self.agg(*(func(c).alias(f"{name}({c})") for c in columns))
 
-    def max(self) -> "DataFrame":
-        not_implemented_yet("GroupedData.max")
+    def sum(self, *cols: str) -> "DataFrame":
+        return self._numeric(F.sum, "sum", cols)
 
-    def min(self) -> "DataFrame":
-        not_implemented_yet("GroupedData.min")
+    def avg(self, *cols: str) -> "DataFrame":
+        return self._numeric(F.avg, "avg", cols)
+
+    mean = avg
+
+    def max(self, *cols: str) -> "DataFrame":
+        return self._numeric(F.max, "max", cols)
+
+    def min(self, *cols: str) -> "DataFrame":
+        return self._numeric(F.min, "min", cols)

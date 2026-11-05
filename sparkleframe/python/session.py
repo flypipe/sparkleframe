@@ -18,6 +18,8 @@ class SparkSession:
         self.master_str = ""
 
     def createDataFrame(self, data: Any, schema: Optional[Any] = None) -> DataFrame:
+        """Rows (tuples, lists, dicts or ``Row``s) or a pandas / Arrow frame, with a ``StructType``, a single
+        ``DataType``, a DDL string, column names, or nothing."""
         return DataFrame(data, schema=schema)
 
     class Builder:

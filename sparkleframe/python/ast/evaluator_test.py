@@ -1,7 +1,7 @@
 """Unit tests for the evaluate phase: run resolved trees over sample rows."""
 
 import pytest
-from pyspark.sql.types import DoubleType, IntegerType, LongType, StringType, StructField, StructType
+from sparkleframe.python.types import DoubleType, IntegerType, LongType, StringType, StructField, StructType
 
 from sparkleframe.python.ast.analyzer import analyze
 from sparkleframe.python.ast.evaluator import evaluate
@@ -11,7 +11,7 @@ from sparkleframe.python.ast.expressions import (
     BinaryExpression,
     Cast,
     Literal,
-    UnaryExpression,
+    Star,
 )
 
 
@@ -66,4 +66,4 @@ class TestEvaluate:
 
     def test_unsupported_node_raises(self):
         with pytest.raises(NotImplementedError):
-            evaluate(UnaryExpression("neg", AttributeReference("a")), [{"a": 1}])
+            evaluate(Star(), [{"a": 1}])

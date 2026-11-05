@@ -1,15 +1,36 @@
-"""Unit tests for the ``functions`` surface: build-wired functions and unimplemented slots.
+"""Unit tests for the ``functions`` surface: the AST node each factory builds.
 
-As functions are implemented they must move from ``_UNIMPLEMENTED`` (slot-raises) into a
-positive build-shape test that asserts the AST node produced. Removing from one list without
-adding the other leaves the surface untested.
+Values are owned by the Spark parity suite; these tests own structure — which node a factory
+builds and that every function name it emits is registered for analyze/evaluate — plus the shape of
+the non-deterministic functions (``rand``, ``uuid``, ``current_*``), whose values parity can't pin.
 """
+
+import re
+from datetime import date, datetime
 
 import pytest
 
 import sparkleframe.python.functions as F
-from sparkleframe.python.ast.expressions import AttributeReference, CaseWhen, FunctionCall, Literal
+from sparkleframe.python.ast.expressions import (
+    AttributeReference,
+    BinaryExpression,
+    CaseWhen,
+    FunctionCall,
+    Literal,
+    SortOrder,
+)
+from sparkleframe.python.ast.function_registry import lookup
 from sparkleframe.python.column import Column
+from sparkleframe.python.dataframe import DataFrame
+from sparkleframe.python.types import (
+    DateType,
+    DoubleType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
 
 
 class TestBuildWiredFunctions:
@@ -24,6 +45,13 @@ class TestBuildWiredFunctions:
         result = F.lit(value)
         assert isinstance(result._expr, Literal)
         assert result._expr.value == value
+
+    def test_lit_list_builds_an_array_of_literals(self):
+        result = F.lit([1, [2]])
+        assert result._expr.name == "array"
+        first, second = result._expr.args
+        assert isinstance(first, Literal) and first.value == 1
+        assert second.name == "array" and second.args[0].value == 2
 
     @pytest.mark.parametrize("fn, name", [(F.abs, "abs"), (F.lower, "lower"), (F.count, "count")])
     def test_single_arg_functions_build_function_call(self, fn, name):
@@ -54,10 +82,18 @@ class TestBuildWiredFunctions:
         assert isinstance(result._expr.otherwise, Literal)
         assert result._expr.otherwise.value == "no"
 
+    def test_pow_builds_power_node_with_base_on_left(self):
+        # Same node as ``Column.__pow__``; a str names a column, a scalar becomes a literal.
+        result = F.pow("b", 2)
+        assert isinstance(result._expr, BinaryExpression)
+        assert result._expr.op == "**"
+        assert isinstance(result._expr.left, AttributeReference) and result._expr.left.name == "b"
+        assert isinstance(result._expr.right, Literal) and result._expr.right.value == 2
 
-# Every remaining function is a declared slot that raises until implemented. Calling each one
-# (with dummy arguments) both documents the surface and guards that the slot stays wired.
-_UNIMPLEMENTED = [
+
+# Every function builds an unresolved node whose function name the registry can analyze and
+# evaluate — this guards that each public factory stays wired to a registered implementation.
+_FACTORIES = [
     lambda: F.get_json_object("c", "$.a"),
     lambda: F.from_json("c", "int"),
     lambda: F.to_json("c"),
@@ -90,7 +126,6 @@ _UNIMPLEMENTED = [
     lambda: F.dense_rank(),
     lambda: F.row_number(),
     lambda: F.floor("a"),
-    lambda: F.pow("a", "b"),
     lambda: F.isnan("a"),
     lambda: F.try_divide("a", "b"),
     lambda: F.initcap("a"),
@@ -107,7 +142,6 @@ _UNIMPLEMENTED = [
     lambda: F.datediff("a", "b"),
     lambda: F.months_between("a", "b"),
     lambda: F.rand(),
-    lambda: F.broadcast(object()),
     lambda: F.sort_array("a"),
     lambda: F.array_contains("a", 1),
     lambda: F.size("a"),
@@ -124,7 +158,60 @@ _UNIMPLEMENTED = [
 ]
 
 
-@pytest.mark.parametrize("call", _UNIMPLEMENTED)
-def test_unimplemented_functions_raise(call):
-    with pytest.raises(NotImplementedError):
-        call()
+@pytest.mark.parametrize("call", _FACTORIES)
+def test_factories_build_registered_function_nodes(call):
+    expr = call()._expr
+    if isinstance(expr, SortOrder):  # asc/desc wrap the column itself
+        assert isinstance(expr.child, AttributeReference)
+        return
+    assert isinstance(expr, FunctionCall)
+    assert lookup(expr.name) is not None
+
+
+def test_broadcast_returns_frame_unchanged():
+    frame = object()
+    assert F.broadcast(frame) is frame
+
+
+def _frame(rows: int) -> DataFrame:
+    return DataFrame([(i,) for i in range(rows)], StructType([StructField("i", LongType())]))
+
+
+class TestNonDeterministicShape:
+    def test_rand_is_a_double_in_unit_interval(self):
+        df = _frame(200).select(F.rand().alias("r"))
+        values = [row.r for row in df.collect()]
+        assert df.schema["r"].dataType == DoubleType()
+        assert all(0.0 <= v < 1.0 for v in values)
+        assert len(set(values)) > 1
+
+    def test_rand_seed_is_reproducible(self):
+        first = [row.r for row in _frame(20).select(F.rand(42).alias("r")).collect()]
+        second = [row.r for row in _frame(20).select(F.rand(42).alias("r")).collect()]
+        other = [row.r for row in _frame(20).select(F.rand(7).alias("r")).collect()]
+        assert first == second
+        assert first != other
+
+    def test_uuid_is_a_v4_string_unique_per_row(self):
+        df = _frame(100).select(F.uuid().alias("u"))
+        values = [row.u for row in df.collect()]
+        assert df.schema["u"].dataType == StringType()
+        v4 = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+        assert all(v4.fullmatch(v) for v in values)
+        assert len(set(values)) == len(values)
+
+    @pytest.mark.parametrize("factory", [F.current_timestamp, F.now])
+    def test_current_timestamp_is_wall_clock_and_constant_per_query(self, factory):
+        before = datetime.now()
+        df = _frame(50).select(factory().alias("t"))
+        after = datetime.now()
+        values = {row.t for row in df.collect()}
+        assert df.schema["t"].dataType == TimestampType()
+        assert len(values) == 1
+        assert before <= values.pop() <= after
+
+    def test_current_date_is_today_and_constant_per_query(self):
+        df = _frame(50).select(F.current_date().alias("d"))
+        values = {row.d for row in df.collect()}
+        assert df.schema["d"].dataType == DateType()
+        assert values == {date.today()}

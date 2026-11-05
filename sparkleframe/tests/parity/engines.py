@@ -34,10 +34,15 @@ class EngineAdapter:
     build_df: Callable[[list, SparkStructType], Any]  # (row tuples, spark schema) -> engine DataFrame
     to_records: Callable[[Any], list]  # engine DataFrame -> list[dict] (pre-normalization)
     dtype: Callable[[SparkDataType], Any]  # canonical PySpark DataType -> engine DataType (for ``cast`` targets)
+    Window: Any  # the engine's ``Window`` (partitionBy / orderBy builders)
+    # ``SparkSession.createDataFrame(data, schema)``: schema a PySpark StructType, a list of names, or None
+    create_df: Callable[[Any, Any], Any]
 
 
 def _polars_engine() -> EngineAdapter:
     import sparkleframe.polarsdf.functions as functions
+    from sparkleframe.polarsdf import Window
+    from sparkleframe.polarsdf.session import SparkSession
     from sparkleframe.polarsdf.dataframe import DataFrame
     from sparkleframe.polarsdf.types import ArrayType, MapType, StructField, StructType, spark_name_to_datatype
 
@@ -70,7 +75,12 @@ def _polars_engine() -> EngineAdapter:
         # ``cast`` targets), reusing the recursive translation build_df relies on.
         return _to_sparkle_dtype(spark_type)
 
-    return EngineAdapter("polars", functions, build_df, to_records, dtype)
+    def create_df(data: Any, schema: Any):
+        if isinstance(schema, SparkStructType):
+            schema = _to_sparkle_struct(schema)
+        return SparkSession().createDataFrame(data, schema)
+
+    return EngineAdapter("polars", functions, build_df, to_records, dtype, Window, create_df)
 
 
 def _python_engine() -> Optional[EngineAdapter]:
@@ -80,24 +90,46 @@ def _python_engine() -> Optional[EngineAdapter]:
         return None
 
     import sparkleframe.python.functions as functions  # type: ignore[import-not-found]
+    from sparkleframe.python import Window  # type: ignore[import-not-found]
+    from sparkleframe.python.session import SparkSession  # type: ignore[import-not-found]
     from sparkleframe.python.dataframe import DataFrame  # type: ignore[import-not-found]
+    from sparkleframe.python.types import ArrayType, MapType, StructField, StructType, parse_ddl_type
+
+    def _to_engine_dtype(spark_dtype: SparkDataType):
+        # Recursively translate a PySpark DataType into the python engine's own DataType. Scalars
+        # route through the engine's DDL-name parser via ``simpleString()``; complex types are rebuilt
+        # so field names and nullability survive.
+        if isinstance(spark_dtype, SparkStructType):
+            return StructType(
+                [StructField(f.name, _to_engine_dtype(f.dataType), f.nullable) for f in spark_dtype.fields]
+            )
+        if isinstance(spark_dtype, SparkArrayType):
+            return ArrayType(_to_engine_dtype(spark_dtype.elementType), spark_dtype.containsNull)
+        if isinstance(spark_dtype, SparkMapType):
+            return MapType(
+                _to_engine_dtype(spark_dtype.keyType),
+                _to_engine_dtype(spark_dtype.valueType),
+                spark_dtype.valueContainsNull,
+            )
+        return parse_ddl_type(spark_dtype.simpleString())
 
     def build_df(rows: list, schema: SparkStructType):
-        # The python engine will translate the PySpark schema via its OWN spark-name -> type
-        # registry (the equivalent of polarsdf's spark_name_to_datatype), keeping engines split.
-        return DataFrame(rows, schema=schema)
+        return DataFrame(rows, schema=_to_engine_dtype(schema))
 
     def to_records(df):
         # Contract for the Python engine: expose normalized-ready records.
         return df.to_records()
 
     def dtype(spark_type: SparkDataType):
-        # The python engine consumes PySpark types directly (see build_df, which
-        # passes the PySpark schema straight through), so the cast target is the
-        # PySpark DataType as-is. Revisit if the engine grows its own type system.
-        return spark_type
+        # Map the canonical PySpark DataType to the python engine's own DataType (for ``cast`` targets).
+        return _to_engine_dtype(spark_type)
 
-    return EngineAdapter("python", functions, build_df, to_records, dtype)
+    def create_df(data: Any, schema: Any):
+        if isinstance(schema, SparkStructType):
+            schema = _to_engine_dtype(schema)
+        return SparkSession().createDataFrame(data, schema)
+
+    return EngineAdapter("python", functions, build_df, to_records, dtype, Window, create_df)
 
 
 # Single source of truth: the engine adapters, built eagerly at import time and

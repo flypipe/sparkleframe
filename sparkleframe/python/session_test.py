@@ -1,6 +1,6 @@
 """Unit tests for ``SparkSession`` — the builder and ``createDataFrame`` entry point are wired."""
 
-from pyspark.sql.types import IntegerType, StructField, StructType
+from sparkleframe.python.types import IntegerType, StructField, StructType
 
 from sparkleframe.python.dataframe import DataFrame
 from sparkleframe.python.session import SparkSession
