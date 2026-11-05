@@ -481,3 +481,14 @@ parentheses are gated in `POLARS_NOT_SUPPORTED`.
   `Unsupported Spark type name`, a top-level `name: type` list is accepted (Spark's `fromDDL` rejects it), and a
   non-container type (`"int"`) is accepted instead of raising `INVALID_JSON_SCHEMA`. An unparseable record
   gives null instead of a struct of nulls (`functions.from_json.ddl_schema`).
+
+## Decimal arithmetic precision
+
+**Affected operations:** `+`, `-`, `*` with a `DecimalType` operand, e.g. `col("apr") * 100` on a
+`decimal(5,4)` column.
+
+Values and scale match Spark, but the precision does not: sparkleframe widens the result to 38
+(`decimal(38,4)`) where Spark applies its `DecimalPrecision` rules (`decimal(9,4)`, an integer
+literal counting as `decimal(3,0)`). Downstream functions that derive their type from the input,
+such as `round`, inherit the wider precision (`round(col("apr") * 100, 2)` is `decimal(37,2)`, not
+`decimal(8,2)`), though the scale and the rendered values are the same.
