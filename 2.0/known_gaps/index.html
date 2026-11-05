@@ -1,0 +1,1154 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../images/favicon.ico">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Known Parity Gaps - SparkleFrame</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#known-parity-gaps" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're not viewing the latest version.
+  <a href="../..">
+    <strong>Click here to go to latest.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL(".."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="SparkleFrame" class="md-header__button md-logo" aria-label="SparkleFrame" data-md-component="logo">
+      
+  <img src="../images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SparkleFrame
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Known Parity Gaps
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/flypipe/sparkleframe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    flypipe/sparkleframe
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="SparkleFrame" class="md-nav__button md-logo" aria-label="SparkleFrame" data-md-component="logo">
+      
+  <img src="../images/logo.png" alt="logo">
+
+    </a>
+    SparkleFrame
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/flypipe/sparkleframe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    flypipe/sparkleframe
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Welcome
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../supported_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported Pyspark API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#mixed-type-column-arithmetic" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixed-type column arithmetic
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Mixed-type column arithmetic">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#numeric-string-12-test-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Numeric + String (12 test cases)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#integer-date-3-test-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integer + Date (3 test cases)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#root-cause" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Root cause
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#possible-fix-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Possible fix paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#transform-with-struct-producing-lambdas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        transform with struct-producing lambdas
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getitem-resolution-outside-schema-context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getItem resolution outside schema context
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#element_at-with-flitint-indices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        element_at with F.lit(int) indices
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#whenotherwise-with-flitnone-type-coercion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        when/otherwise with F.lit(None) type coercion
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#equality-comparison-dtype-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Equality comparison dtype resolution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#map-type-detection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Map type detection
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ordering-on-nested-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ordering on nested types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#functionspow-operand-types-and-java-nan-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        functions.pow operand types and Java NaN semantics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#string-and-non-boolean-operands-in-comparisons-and-logical-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        String and non-boolean operands in comparisons and logical operators
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getitem-with-a-column-index-on-arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getItem with a Column index on arrays
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#outer-struct-nulls-in-createdataframe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Outer struct nulls in createDataFrame
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#projection-naming-and-withcolumns-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Projection naming and withColumns resolution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#joins-on-same-named-column-keys-and-cross-joins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Joins on same-named Column keys and cross joins
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#explode-on-null-empty-and-non-collection-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        explode on null, empty and non-collection input
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#months_between-rounding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        months_between rounding
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#string-promotion-in-union" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        String promotion in union
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decimal-scale-in-createdataframe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decimal scale in createDataFrame
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#to_json-decimal-and-timestamp-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_json decimal and timestamp output
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#polars-deviations-found-by-the-nba-parity-sweep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Polars deviations found by the nba parity sweep
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#polars-deviations-found-by-the-python-engine-gap-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Polars deviations found by the Python engine gap work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decimal-arithmetic-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decimal arithmetic precision
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="known-parity-gaps">Known Parity Gaps</h1>
+<p>SparkleFrame aims to match PySpark / Spark 4.x behaviour, but some edge cases
+are not yet supported.  This page lists the known gaps so contributors can
+prioritise fixes and users can work around them.</p>
+<blockquote>
+<p>These gaps are specific to the <strong>Polars</strong> engine, whose root cause is build-time
+type resolution (see "Mixed-type column arithmetic" below). The pure-Python engine
+(<code>sparkleframe/python</code>, #102) resolves types in an <em>analyze</em> phase once the schema is
+known, which removes this whole class structurally — it already handles
+<code>Numeric + String</code>. See <a href="../design/python-engine-ast/">design/python-engine-ast.md</a>.</p>
+</blockquote>
+<h2 id="mixed-type-column-arithmetic">Mixed-type column arithmetic</h2>
+<p><strong>Affected operations:</strong> <code>+</code>, <code>-</code>, <code>*</code>, <code>/</code> between two columns of different
+types.</p>
+<p>SparkleFrame resolves column dtypes at <em>expression build time</em> (when <code>col("a")
++ col("b")</code> executes).  Because Polars expressions are lazy, the underlying
+dtypes are not yet known at that point — the DataFrame schema is only available
+later, inside <code>select()</code> / <code>withColumn()</code> / <code>filter()</code>.</p>
+<p>This means the cross-type coercion logic (<code>_coerce_mixed_arithmetic_operands</code>)
+never fires for bare column references, and Polars raises
+<code>InvalidOperationError</code> at evaluation time instead of coercing.</p>
+<h3 id="numeric-string-12-test-cases">Numeric + String (12 test cases)</h3>
+<p>Spark implicitly casts the string column to a numeric type (Float64) when the
+other operand is numeric.  SparkleFrame raises <code>InvalidOperationError</code>.</p>
+<p>Affected pair labels: <code>float_x_string</code>, <code>double_x_string</code>, <code>string_x_decimal</code>
+across all four arithmetic operators.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Spark: works (casts &quot;3.14&quot; → 3.14, returns 4.14)</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">spark_df</span><span class="o">.</span><span class="n">select</span><span class="p">((</span><span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;float_col&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;string_col&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">))</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># SparkleFrame: raises InvalidOperationError</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">sparkle_df</span><span class="o">.</span><span class="n">select</span><span class="p">((</span><span class="n">PF</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;float_col&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">PF</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;string_col&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="integer-date-3-test-cases">Integer + Date (3 test cases)</h3>
+<p>Spark treats the integer as a day offset and adds it to the date column.
+SparkleFrame raises <code>InvalidOperationError</code>.</p>
+<p>Affected pair labels: <code>byte_x_date</code>, <code>short_x_date</code>, <code>int_x_date</code> for <code>+</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Spark: works (adds 5 days to the date)</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">spark_df</span><span class="o">.</span><span class="n">select</span><span class="p">((</span><span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;int_col&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;date_col&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">))</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># SparkleFrame: raises InvalidOperationError</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">sparkle_df</span><span class="o">.</span><span class="n">select</span><span class="p">((</span><span class="n">PF</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;int_col&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">PF</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;date_col&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="root-cause">Root cause</h3>
+<p><code>_resolve_expr_output_dtype</code> returns <code>None</code> for bare <code>pl.col("name")</code>
+references when no schema context is active.  The coercion code in
+<code>_coerce_mixed_arithmetic_operands</code> correctly handles both cases but bails out
+early when either dtype is <code>None</code>.</p>
+<h3 id="possible-fix-paths">Possible fix paths</h3>
+<ol>
+<li>
+<p><strong>Schema-aware Columns</strong> — propagate the DataFrame schema into Column
+   objects so dtypes are resolvable at build time.  Requires changes to the
+   <code>Column</code> constructor, <code>DataFrame.select()</code>, and anywhere columns are
+   created.</p>
+</li>
+<li>
+<p><strong>Runtime <code>map_batches</code> fallback</strong> — when both dtypes are unresolvable,
+   wrap the two operands in <code>pl.struct().map_batches()</code> to inspect actual
+   dtypes at evaluation time and apply coercion.  Must be scoped narrowly to
+   the unknown-dtype path to avoid regressions in same-type operations (a
+   previous broad attempt was reverted for this reason).</p>
+</li>
+</ol>
+<h2 id="transform-with-struct-producing-lambdas"><code>transform</code> with struct-producing lambdas</h2>
+<p><strong>Affected operations:</strong> <code>F.transform(col, lambda x: F.struct(...))</code></p>
+<p>Polars' <code>list.eval</code> does not support <code>pl.struct</code> expressions, so SparkleFrame
+falls back to <code>map_batches</code>.  The batch callback infers the struct dtype at
+runtime from the data, and the <code>return_dtype</code> hint is constructed from the
+struct field names (defaulting unknown types to <code>Utf8</code>).</p>
+<p>This means:</p>
+<ul>
+<li>
+<p><strong><code>_struct_parts</code> metadata propagation is required:</strong> <code>WhenBuilder</code>
+  (<code>when/otherwise</code>) propagates <code>_struct_parts</code> from the struct branch so that
+  <code>transform</code> can build the return dtype.  If this metadata is lost (e.g.
+  through a chain not yet covered), the fallback parses <code>.alias("name")</code>
+  patterns from the expression's string representation.</p>
+</li>
+<li>
+<p><strong>Performance:</strong> <code>map_batches</code> processes one row at a time in the struct
+  path.  This is acceptable for typical transform+struct patterns (e.g. UTM
+  parsing) but will be slower than native <code>list.eval</code> for very large datasets.</p>
+</li>
+</ul>
+<h2 id="getitem-resolution-outside-schema-context"><code>getItem</code> resolution outside schema context</h2>
+<p><strong>Affected operations:</strong> <code>col("arr").getItem(0)</code> used inside <code>filter()</code> or
+other contexts where <code>to_native()</code> is called before a schema is available.</p>
+<p>SparkleFrame stores <code>getItem</code> operations as a lazy chain (<code>_getitem_chain</code>)
+resolved during <code>to_native()</code>.  When <code>to_native()</code> runs outside a schema
+context (e.g. inside <code>isNotNull()</code> before <code>filter()</code> evaluates), the dtype
+resolver returns <code>None</code>, forcing a UDF fallback.</p>
+<p>The UDF fallbacks (<code>_extract_by_key</code>, <code>_index_at</code>) now handle <code>pl.Series</code>
+inputs correctly, but the resolution is less efficient than the native
+<code>list.get</code> / <code>struct.field</code> paths used when dtype is known.</p>
+<h2 id="element_at-with-flitint-indices"><code>element_at</code> with <code>F.lit(int)</code> indices</h2>
+<p><strong>Affected operations:</strong> <code>element_at(col, F.lit(n))</code>, <code>try_element_at(col, F.lit(n))</code></p>
+<p><code>F.lit(value)</code> wraps the value in <code>pl.repeat(value, pl.len())</code>, which is a
+<code>pl.Expr</code> rather than a plain Python <code>int</code>.  SparkleFrame resolves this by
+evaluating the expression against a dummy DataFrame to extract the integer.
+This works but adds a small overhead per call.</p>
+<h2 id="whenotherwise-with-flitnone-type-coercion"><code>when/otherwise</code> with <code>F.lit(None)</code> type coercion</h2>
+<p><strong>Affected operations:</strong> <code>F.when(cond, expr).otherwise(F.lit(None))</code></p>
+<p>PySpark infers the result type from the non-null branch; SparkleFrame now
+uses <code>pl.Null</code> dtype for <code>lit(None)</code>, which Polars correctly super-types with
+the non-null branch.  This is resolved for standard types but may still
+surface for complex nested types not yet tested.</p>
+<h2 id="equality-comparison-dtype-resolution">Equality comparison dtype resolution</h2>
+<p><strong>Affected operations:</strong> <code>==</code>, <code>!=</code> between columns where both dtypes are
+unresolvable at expression build time.</p>
+<p>SparkleFrame includes a same-family short-circuit (both string, both numeric,
+or both boolean) that uses native Polars comparisons.  For cross-type
+comparisons (e.g. <code>col(int) == lit(string)</code>), the full coercion logic applies,
+which may use <code>map_batches</code> with a UDF.</p>
+<h2 id="map-type-detection">Map type detection</h2>
+<p><strong>Affected operations:</strong> all comparisons and arithmetic involving <code>MapType</code>
+columns.</p>
+<p>Polars stores maps as <code>List(Struct([key, value]))</code>, which is indistinguishable
+from a regular list-of-structs at the dtype level.  SparkleFrame cannot detect
+whether a column is a true Spark <code>MapType</code> and therefore cannot replicate
+Spark's map-specific behaviour (e.g. rejecting all comparisons on maps).</p>
+<p>This is a fundamental Polars representation issue with no straightforward fix.</p>
+<h2 id="ordering-on-nested-types">Ordering on nested types</h2>
+<p><strong>Affected operations:</strong> <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code> on <code>ArrayType</code> and <code>StructType</code>
+columns.</p>
+<p>Polars does not implement lexicographic ordering for <code>List</code> or <code>Struct</code> dtypes.
+Spark supports element-wise ordering on arrays and field-wise ordering on
+structs, but replicating this would require manually exploding and comparing
+elements — a non-trivial implementation.</p>
+<h2 id="functionspow-operand-types-and-java-nan-semantics"><code>functions.pow</code> operand types and Java NaN semantics</h2>
+<p><strong>Affected operations:</strong> <code>F.pow(base, exponent)</code> (the <code>Column</code> <code>**</code> / reflected <code>**</code> operators
+are not affected for operand types — they cast both sides to <code>Float64</code> first).</p>
+<p>Spark's <code>pow</code> casts both operands to <code>double</code> before computing, so it accepts any numeric,
+decimal, string (ANSI cast, whitespace trimmed) or null operand and always returns <code>double</code>.
+The Polars engine's <code>F.pow</code> hands the raw operands to Polars' <code>pow</code>, which:</p>
+<ul>
+<li>rejects a negative integer exponent (<code>2 ** -1</code> fails converting <code>-1</code> to <code>u32</code>) and returns an
+  integer dtype for integer operands;</li>
+<li>rejects <code>Decimal</code>, <code>Null</code> (e.g. <code>F.lit(None)</code>) and <code>String</code> operands outright.</li>
+</ul>
+<p>Separately, Polars follows C99 <code>pow</code>, whereas Spark uses Java's <code>Math.pow</code>: <code>1 ** NaN</code> and
+<code>(±1) ** ±inf</code> are <code>NaN</code> in Spark but <code>1.0</code> in Polars.</p>
+<p><strong>Workaround:</strong> cast operands to <code>double</code> first, e.g. <code>F.pow(F.col("a").cast("double"), 2)</code>.
+The pure-Python engine implements all of these (see <code>spark_pow</code> in
+<code>sparkleframe/python/functions_helpers.py</code>).</p>
+<h2 id="string-and-non-boolean-operands-in-comparisons-and-logical-operators">String and non-boolean operands in comparisons and logical operators</h2>
+<p><strong>Affected operations:</strong> <code>==</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code> with a string operand on one side, and
+<code>&amp;</code>, <code>|</code>, <code>~</code> on non-boolean operands.</p>
+<p>Spark 4 (ANSI) compares a string with another type by casting the string strictly: to <code>bigint</code>
+against integral types, to <code>double</code> against float/double/decimal, and to the other type against
+boolean, date, timestamp and binary. A malformed string raises <code>CAST_INVALID_INPUT</code>. This runs
+into the same build-time dtype limitation as "Mixed-type column arithmetic" above, so the
+Polars engine raises a type mismatch instead of coercing (<code>"7" == 7</code>, <code>"2024-01-15" &lt; date</code>).</p>
+<p>The logical operators accept only boolean operands in Spark. A string operand is cast to boolean
+(<code>"yes"</code>, <code>"t"</code>, <code>"1"</code>, … are true), a <code>null</code> literal is typed as boolean, and anything else is a
+<code>DATATYPE_MISMATCH</code> analysis error. The Polars engine rejects string operands and, for integer
+operands, silently computes a <strong>bitwise</strong> <code>and</code>/<code>or</code>/<code>not</code> instead of raising.</p>
+<p>Arrays and structs with null elements (or NaN inside them) are covered by "Ordering on nested
+types".</p>
+<p><strong>Workaround:</strong> cast explicitly, e.g. <code>F.col("s").cast("long") == F.col("n")</code> or
+<code>F.col("flag").cast("boolean") &amp; F.col("b")</code>. The pure-Python engine implements all of these.</p>
+<h2 id="getitem-with-a-column-index-on-arrays"><code>getItem</code> with a Column index on arrays</h2>
+<p><strong>Affected operations:</strong> <code>col("arr")[col("i")]</code>, <code>col("arr").getItem(col("i"))</code>.</p>
+<p>A Column key is supported on map columns (<code>create_map(...)[col("status")]</code>), where it looks the
+value up as a map key and returns null when absent, as Spark does. Spark also reads a Column key on
+an array as a 0-based index; sparkleframe raises <code>NotImplementedError</code> for that case rather than
+returning wrong values. Use <code>element_at(col("arr"), col("i") + 1)</code> instead.</p>
+<h2 id="outer-struct-nulls-in-createdataframe">Outer struct nulls in <code>createDataFrame</code></h2>
+<p><strong>Affected operations:</strong> <code>spark.createDataFrame(rows, schema)</code> where a <code>StructType</code> column holds
+<code>None</code>.</p>
+<p>The outer null is lost: <code>None</code> becomes a struct whose fields are all null, so <code>isNull()</code> on that
+column returns <code>False</code> where Spark returns <code>True</code>. Structs produced by <code>from_json</code> keep their outer
+nulls and are not affected.</p>
+<h2 id="projection-naming-and-withcolumns-resolution">Projection naming and <code>withColumns</code> resolution</h2>
+<p><strong>Affected operations:</strong> <code>select(...)</code> with an unaliased expression; <code>withColumns({...})</code> where a later
+entry reads a column an earlier entry replaces.</p>
+<p>Spark names an unaliased expression after its SQL text (<code>F.col("salary") * 1.1</code> is <code>(salary * 1.1)</code>).
+The Polars engine names it after the root column (<code>salary</code>), so the output can even collide with an
+existing column name.</p>
+<p><code>withColumns</code> evaluates every entry against the <strong>input</strong> frame. A later entry may reference a column
+an earlier entry <em>adds</em> (lateral column alias, Spark 3.4+). A name that already exists in the input,
+though, keeps meaning the input value even if an earlier entry of the same call replaces it:
+<code>withColumns({"x": col("x") + 1, "z": col("x") * 2})</code> computes <code>z</code> from the original <code>x</code>. The Polars
+engine applies the entries one after another, so <code>z</code> sees the new <code>x</code>.</p>
+<p><strong>Workaround:</strong> alias expressions explicitly, and split a <code>withColumns</code> that reads a column it also
+replaces into two calls. The pure-Python engine implements both.</p>
+<h2 id="joins-on-same-named-column-keys-and-cross-joins">Joins on same-named Column keys and cross joins</h2>
+<p><strong>Affected operations:</strong> <code>left.join(right, on=F.col("id"))</code> (or <code>[F.col("id")]</code>) when both sides
+have <code>id</code>; <code>left.join(right)</code> without <code>on</code>; <code>crossJoin</code>.</p>
+<p>In Spark, <code>F.col("id")</code> in a join condition is an unqualified reference that matches a column on
+both sides, so the join fails with <code>AMBIGUOUS_REFERENCE</code>. Pass the key as a string (<code>on="id"</code>), or
+compare qualified columns (<code>left["id"] == right["id"]</code>). The Polars engine treats <code>F.col("id")</code> as
+<code>on="id"</code> instead.</p>
+<p>A cross join keeps both sides' columns, so the result has two <code>id</code> columns: a bare <code>"id"</code> is
+ambiguous and <code>left["id"]</code> / <code>right["id"]</code> pick a side. The Polars engine raises on <code>join</code> without
+<code>on</code>, has no <code>crossJoin</code>, and cannot tell the two <code>id</code> columns apart.</p>
+<p><strong>Workaround:</strong> join on a string key, or rename one side's key before a Column-condition join. The
+pure-Python engine implements Spark's behavior.</p>
+<h2 id="explode-on-null-empty-and-non-collection-input"><code>explode</code> on null, empty and non-collection input</h2>
+<p><strong>Affected operations:</strong> <code>F.explode(col)</code>.</p>
+<p>Spark's <code>explode</code> emits no row for a null or empty array (<code>explode_outer</code> emits one row with a
+null), and rejects a column that is not an array or map. The Polars engine keeps a null row for both
+null and empty arrays, i.e. it behaves like <code>explode_outer</code>, and does not reject non-collection
+input.</p>
+<p><strong>Workaround:</strong> filter <code>F.size(col) &gt; 0</code> before exploding. The pure-Python engine implements Spark's
+behavior.</p>
+<h2 id="months_between-rounding"><code>months_between</code> rounding</h2>
+<p><strong>Affected operations:</strong> <code>F.months_between(end, start)</code> (default <code>roundOff=True</code>).</p>
+<p>Spark rounds the result to 8 decimal places. The Polars engine returns full precision
+(<code>2.16129032258</code> where Spark returns <code>2.16129032</code>).</p>
+<p><strong>Workaround:</strong> <code>F.round(F.months_between(end, start), 8)</code>. The pure-Python engine rounds as Spark
+does.</p>
+<h2 id="string-promotion-in-union">String promotion in <code>union</code></h2>
+<p><strong>Affected operations:</strong> <code>union</code> / <code>unionByName</code> of a string column with a numeric one.</p>
+<p>Spark 4 (ANSI) widens a string next to an integral type to <code>bigint</code>, and next to a fractional type
+(<code>float</code>, <code>double</code>, <code>decimal</code>) to <code>double</code>. It then casts the string side strictly, so <code>"20"</code> becomes
+<code>20</code> and <code>"abc"</code> raises <code>CAST_INVALID_INPUT</code>. The Polars engine fails to stack the two columns
+(<code>SchemaError: type String is incompatible with expected type Int64</code>).</p>
+<p><strong>Workaround:</strong> cast the string column to the numeric type before the union. The pure-Python engine
+implements Spark's widening.</p>
+<h2 id="decimal-scale-in-createdataframe">Decimal scale in <code>createDataFrame</code></h2>
+<p><strong>Affected operations:</strong> <code>spark.createDataFrame(rows, schema)</code> with a <code>DecimalType(p, s)</code> field and
+<code>Decimal</code> values whose scale differs from <code>s</code>.</p>
+<p>Spark stores each value at the field's scale, rounded HALF_UP (<code>Decimal("0.065")</code> in <code>decimal(5,4)</code>
+is <code>0.0650</code>), and rejects a value with more integral digits than the precision allows. The Polars engine
+keeps the value's own scale, so a later <code>cast("string")</code> or <code>to_json</code> prints <code>0.065</code>, and it accepts
+the over-wide value.</p>
+<p><strong>Workaround:</strong> quantize the values to the field's scale before building the frame. The pure-Python
+engine rescales as Spark does.</p>
+<h2 id="to_json-decimal-and-timestamp-output"><code>to_json</code> decimal and timestamp output</h2>
+<p><strong>Affected operations:</strong> <code>F.to_json(...)</code> over structs, maps or arrays that contain <code>DecimalType</code>,
+<code>TimestampType</code> or <code>DateType</code> values.</p>
+<p>Spark writes a decimal as a JSON <strong>number</strong> at the column's scale (<code>{"apr":0.0650}</code>). A timestamp is
+written as a string in the <code>timestampFormat</code> option, by default <code>yyyy-MM-dd'T'HH:mm:ss.SSSXXX</code> in the
+session time zone (<code>"2026-10-01T15:32:10.000Z"</code> under UTC), and a date in <code>dateFormat</code> (default
+<code>yyyy-MM-dd</code>). The Polars engine writes decimals as JSON <strong>strings</strong> (<code>{"apr":"0.0650"}</code>) and timestamps
+as <code>yyyy-MM-dd HH:mm:ss</code>, and it rejects every option other than <code>ignoreNullFields</code>.</p>
+<p><strong>Workaround:</strong> none that reproduces Spark's output exactly. Cast decimals to <code>double</code> if the consumer
+accepts numbers without a fixed scale. The pure-Python engine matches Spark.</p>
+<h2 id="polars-deviations-found-by-the-nba-parity-sweep">Polars deviations found by the nba parity sweep</h2>
+<p>The parity tests written for the Python engine (<code>Engine.PYTHON</code>), which datahub's nba function
+uses, found these Polars deviations from Spark 4. The pure-Python engine matches Spark on all of them.
+The items are grouped by area; the parity ids in parentheses are gated in <code>POLARS_NOT_SUPPORTED</code>.</p>
+<p><strong>Casts and arithmetic</strong></p>
+<ul>
+<li>Decimal result types: <code>+ - *</code> widen to <code>decimal(38, s)</code> instead of Spark's precision rules
+  (<code>column.arithmetic.decimal_result_type</code>). <code>decimal / decimal</code> returns <code>double</code>
+  (<code>column.divide.decimal_result_type</code>). <code>sum(decimal(10,2))</code> stays <code>decimal(10,2)</code>; Spark gives
+  <code>decimal(20,2)</code> (<code>dataframe.groupby.sum_decimal_result_type</code>).</li>
+<li>Division by zero returns null or <code>inf</code> instead of raising <code>DIVIDE_BY_ZERO</code>
+  (<code>column.divide.by_zero_raises</code>, <code>column.divide.integral_returns_double</code>,
+  <code>functions.try_divide.by_zero_null</code>).</li>
+<li>String → number/decimal casts do not trim whitespace (<code>" 12 "</code>) (<code>column.cast.decimal_to_string_keeps_scale</code>,
+  <code>column.cast.to_decimal_overflow_raises</code>, <code>column.try_cast.malformed_string_matrix</code>,
+  <code>column.try_cast.to_decimal_overflow_null</code>).</li>
+<li>Rounding to a decimal scale truncates or rounds half-even instead of HALF_UP, and decimal overflow under
+  <code>try_cast</code> does not become null (<code>column.cast.to_decimal_rounds_half_up</code>, <code>column.try_cast.ddl_string_target</code>).</li>
+<li>String → date takes only a bare date (Spark takes the date part of <code>"2024-01-15T10:30:45"</code>), and string →
+  timestamp rejects a date-only string (<code>column.try_cast.malformed_string_matrix</code>, <code>column.try_cast.ddl_string_target</code>).</li>
+<li>Timestamp → string always prints 6 fraction digits; Spark drops trailing zeros (<code>column.cast.timestamp_to_string</code>).</li>
+<li><code>F.round</code> rounds half-even and keeps the input decimal scale (<code>functions.round.half_up_double_and_decimal</code>).</li>
+<li>A double cast to string prints <code>1e-9</code>; Spark prints <code>1.0E-9</code> (<code>functions.greatest.mixed_numeric_types</code>).</li>
+</ul>
+<p><strong>Comparisons and predicates</strong></p>
+<ul>
+<li><code>date &lt;=&gt; string</code> fails instead of casting the string (<code>column.eq_null_safe.mixed_types</code>).</li>
+<li><code>isin</code> does not widen mixed-type candidates, and a null candidate gives <code>false</code> instead of null when nothing
+  matches (<code>column.isin.coerces_candidates</code>, <code>column.isin.null_semantics</code>).</li>
+<li><code>contains(None)</code> raises, and a Column needle is unsupported (<code>column.contains.literal_and_null</code>).</li>
+<li>Regex: Rust's <code>$</code> does not match before a trailing <code>\n</code>, and its <code>\d</code> matches non-ASCII digits
+  (<code>column.rlike.nba_patterns</code>).</li>
+<li>A string compared with an int skips the ANSI cast, so <code>"abc"</code> does not raise (<code>dataframe.is_empty</code>).</li>
+<li><code>regexp_extract</code> with a group index the pattern does not have returns a value instead of raising
+  <code>INVALID_PARAMETER_VALUE.REGEX_GROUP_INDEX</code> (<code>functions.regexp_extract.group_index_out_of_range_raises</code>).</li>
+</ul>
+<p><strong>Nested values</strong></p>
+<ul>
+<li><code>getField</code> on a missing field or a non-struct does not raise (<code>column.get_field.struct</code>).</li>
+<li>An out-of-range <code>arr[i]</code> returns null instead of raising <code>INVALID_ARRAY_INDEX</code>; a <code>map&lt;int,string&gt;</code> column
+  cannot be built (<code>column.getitem.array_out_of_range_null</code>, <code>column.getitem.map_missing_key_null</code>).</li>
+<li>An empty <code>create_map()</code> cannot fill more than one row, and a null map key does not raise <code>NULL_MAP_KEY</code>
+  (<code>functions.create_map.empty</code>, <code>functions.create_map.null_key_raises</code>).</li>
+<li><code>map_entries</code> returns the map unchanged (<code>functions.map_entries</code>).</li>
+<li><code>array_max</code> skips NaN; Spark treats NaN as the largest double (<code>functions.array_max.nan_is_largest</code>).</li>
+</ul>
+<p><strong>Ordering and windows</strong></p>
+<ul>
+<li><code>asc_nulls_first</code> / <code>desc_nulls_first</code> are missing. <code>orderBy</code> cannot mix a plain column with a <code>.desc()</code> key.
+  The requested null ordering is ignored, so nulls sort first (<code>column.sort.nulls_ordering</code>,
+  <code>window.dense_rank.ties</code>, <code>window.order_by.desc_nulls_last</code>).</li>
+<li>A ranking window with no <code>partitionBy</code> fails instead of ranking the whole frame
+  (<code>window.row_number.without_order_raises</code>).</li>
+</ul>
+<p><strong>JSON</strong></p>
+<ul>
+<li><code>from_json</code>: malformed JSON gives null where Spark gives a struct of nulls. A <code>map&lt;string,string&gt;</code> keeps
+  nested objects as Python text and booleans as <code>"True"</code> (<code>functions.from_json.malformed_permissive</code>,
+  <code>functions.from_json.map_and_array_schemas</code>).</li>
+<li><code>get_json_object</code> rejects single-quoted JSON and raises on malformed paths (<code>$.</code>, <code>$[</code>, <code>a</code>) instead of
+  returning null (<code>functions.get_json_object.malformed_json_null</code>).</li>
+<li><code>to_json</code> accepts no option other than <code>ignoreNullFields</code> (<code>functions.to_json.options</code>).</li>
+</ul>
+<p><strong>Dates</strong></p>
+<ul>
+<li><code>try_to_date</code> returns null for valid <code>M/d/yyyy</code>, <code>M/d/yy</code>, <code>d/M/yy</code>, <code>dd/MM/yy</code> and <code>MM/yy</code> dates. It
+  accepts <code>2024-1-5</code> for <code>yyyy-MM-dd</code> and <code>2/9/2024</code> for <code>MM/dd/yyyy</code>, and it reads <code>02/29/24</code> under
+  <code>MM/dd/yyyy</code> as year 24 (<code>functions.try_to_date.nba_patterns</code>). <strong>The nba function uses all of these
+  patterns.</strong></li>
+<li><code>add_months</code> on an unparseable date string returns null instead of raising the ANSI cast error
+  (<code>functions.add_months.malformed_date_string_raises</code>).</li>
+</ul>
+<p><strong>DataFrame</strong></p>
+<ul>
+<li><code>createDataFrame</code> does not reject <code>True</code> in a bigint field, an <code>int</code> in a double field, or a string in a
+  boolean field. It stores <code>True</code> in a string field as <code>"True"</code> instead of <code>"true"</code>. Inference does not reject a
+  column that mixes bigint and double (<code>dataframe.create.value_type_mismatch_raises</code>,
+  <code>dataframe.create.names_only_schema_infers_types</code>).</li>
+<li><code>distinct</code> / <code>dropDuplicates</code> accept map columns, which Spark rejects. The <code>drop_duplicates</code> alias is missing
+  (<code>dataframe.distinct.basic</code>, <code>dataframe.drop_duplicates.all_columns</code>).</li>
+<li>Column-condition joins rename the right side's duplicate <code>x</code> to <code>x_right</code>, support only inner/left, and do not
+  raise <code>AMBIGUOUS_REFERENCE</code> for an unqualified duplicate name (<code>dataframe.join.column_condition_qualified_refs</code>,
+  <code>dataframe.join.ambiguous_reference_raises</code>, <code>dataframe.join.left_anti</code>).</li>
+<li><code>first(..., ignorenulls=True)</code> has no whole-frame <code>DataFrame.agg</code> (<code>functions.first.ignorenulls</code>).</li>
+<li><code>union</code> does not reject a boolean column unioned with a bigint one (<code>dataframe.union.positional</code>).</li>
+<li><code>toPandas</code> gives <code>datetime64[us]</code> timestamps (Spark: <code>[ns]</code>), and an empty string column is <code>str</code>
+  (Spark: <code>object</code>) (<code>dataframe.to_pandas.dtypes</code>).</li>
+</ul>
+<h2 id="polars-deviations-found-by-the-python-engine-gap-work">Polars deviations found by the Python engine gap work</h2>
+<p>Parity tests written while closing the Python engine's gaps against Polars (<code>PYTHON_ENGINE_GAPS.md</code>) found
+these Polars deviations from Spark 4. The pure-Python engine matches Spark on all of them; the parity ids in
+parentheses are gated in <code>POLARS_NOT_SUPPORTED</code>.</p>
+<p><strong>DataFrame.alias</strong></p>
+<ul>
+<li><code>alias</code> stores the name but nothing resolves it: <code>F.col("e.id")</code>, <code>select("e.*")</code> and <code>filter("e.id &gt; 1")</code> fail
+  with <code>ColumnNotFoundError</code>, so a self-join cannot tell its sides apart (<code>dataframe.alias.qualified_references</code>).</li>
+</ul>
+<p><strong>createDataFrame</strong></p>
+<ul>
+<li>A pandas frame goes through Arrow instead of PySpark's <code>to_records</code> path, so a mixed <code>object</code> column
+  (<code>[1, "x"]</code>) raises <code>ArrowInvalid</code> instead of becoming <code>string</code> (<code>dataframe.create.from_pandas</code>).</li>
+<li><code>dtypes</code> prints nested types without their element types (<code>array</code>, not <code>array&lt;bigint&gt;</code>), and an Arrow map
+  column reports <code>array</code> (<code>dataframe.create.from_arrow</code>, <code>dataframe.create.from_arrow_stream</code>).</li>
+<li>A single-<code>DataType</code> schema treats a list item as a row, so <code>createDataFrame([[1, 2]], ArrayType(...))</code>
+  raises instead of giving one <code>value</code> (<code>dataframe.create.single_datatype_schema</code>).</li>
+<li>A string field stores Python's <code>str</code> without PySpark's bool lowercasing (<code>"True"</code>) and renders dicts as
+  JSON (<code>dataframe.create.string_field_python_str</code>).</li>
+<li>Empty data with only column names builds an empty frame; Spark raises <code>CANNOT_INFER_EMPTY_SCHEMA</code>
+  (<code>dataframe.create.empty_inference_raises</code>).</li>
+<li>A DDL string schema (<code>"a int, b string"</code>) fails to build rows that a <code>StructType</code> builds
+  (<code>dataframe.create.ddl_schema</code>).</li>
+</ul>
+<p><strong>toArrow</strong></p>
+<ul>
+<li>There is no <code>toArrow</code> (PySpark 4's name). <code>to_arrow</code> returns Polars' own Arrow export, whose types differ from
+  Spark's (<code>large_string</code>, <code>large_list</code>) (<code>dataframe.to_arrow</code>).</li>
+</ul>
+<p><strong>Column</strong></p>
+<ul>
+<li><code>Column.like</code> is not implemented (<code>column.like</code>).</li>
+<li>A number cast to timestamp is read as microseconds, not seconds, since the epoch
+  (<code>column.cast.numeric_to_timestamp</code>), and a timestamp does not cast to a number
+  (<code>column.cast.timestamp_to_numeric</code>).</li>
+<li>Casts that Spark 4 ANSI rejects at analysis succeed: number/boolean → date, boolean → timestamp,
+  date → number/boolean and timestamp → boolean (<code>column.cast.ansi_datetime_mismatch_raises</code>).</li>
+<li>NaN / ±inf cast to decimal raises; Spark gives null even under ANSI (<code>column.cast.non_finite_to_decimal_null</code>).</li>
+<li>A time-only string (<code>"10:30:00"</code>, <code>"T10:30Z"</code>) cast to timestamp is null or raises; Spark puts it on the current
+  date in the string's zone (<code>column.cast.time_only_string_to_timestamp</code>).</li>
+</ul>
+<p><strong>filter / where SQL strings</strong></p>
+<ul>
+<li>Predicate strings go to <code>pl.sql_expr</code>, whose SQL dialect is not Spark's
+  (<code>dataframe.filter.sql_string_expressions</code>):</li>
+<li>typed number literals (<code>1e0</code>, <code>2S</code>, <code>1Y</code>), double-quoted strings and <code>\'</code> escapes are not understood;</li>
+<li>string escapes (<code>\u0031</code>, <code>\061</code>, <code>\d</code>) are not unescaped, and adjacent literals (<code>'a' '1'</code>) don't concatenate;</li>
+<li><code>LIKE</code> escapes, <code>IS [NOT] TRUE/FALSE/UNKNOWN</code>, <code>NOT IN</code> with a null candidate and <code>round</code> give different rows;</li>
+<li>several Spark functions (<code>date_format</code>, <code>datediff</code>) and <code>IN</code> lists with expressions don't resolve;</li>
+<li><code>LIKE 'a\\'</code> (escape at the end) and an out-of-range <code>128Y</code> don't raise.</li>
+</ul>
+<p><strong>Datetime patterns</strong></p>
+<ul>
+<li><code>date_format</code> copies pattern letters it does not know into the output (<code>Q</code> gives <code>"Q"</code>, <code>K</code> gives <code>"K"</code>) instead
+  of formatting them, and does not raise for the letters and widths Spark rejects (week-based <code>w</code>/<code>u</code>/<code>e</code>,
+  <code>V</code>, <code>B</code>, <code>QQQQQ</code>, ...) (<code>functions.date_format.pattern_letters</code>).</li>
+<li><code>to_timestamp</code> / <code>try_to_timestamp</code> do not parse day-of-year (<code>D</code>), <code>K</code>/<code>k</code> hours, zone names (<code>z</code>), region
+  ids (<code>VV</code>) or <code>GMT+2</code> offsets (<code>O</code>), and do not raise for format-only letters (<code>Q</code>, <code>E</code>, <code>F</code>)
+  (<code>functions.to_timestamp.pattern_letters</code>).</li>
+</ul>
+<p><strong>get_json_object</strong></p>
+<ul>
+<li><code>[*]</code> wildcards return only some of the matches, and do not follow Spark's rules: a single match unwrapped,
+  <code>[*][*]</code> flattened, JSON-null fields dropped (<code>functions.get_json_object.wildcard</code>).</li>
+<li>Non-integer numbers are copied from the source text; Spark rewrites them as Java doubles (<code>1.50</code> is <code>1.5</code>,
+  <code>1e2</code> is <code>100.0</code>, an overflow is <code>"Infinity"</code>) (<code>functions.get_json_object.number_rendering</code>).</li>
+</ul>
+<p><strong>lit</strong></p>
+<ul>
+<li><code>lit([1, 2.5])</code> fails instead of widening the elements to <code>double</code>, and <code>lit(dict)</code> / <code>lit(tuple)</code> build
+  struct/list literals where Spark raises <code>UNSUPPORTED_FEATURE.LITERAL_TYPE</code> (<code>functions.lit.list</code>).</li>
+</ul>
+<p><strong>from_json</strong></p>
+<ul>
+<li>A DDL schema string must be one of a few simple forms: <code>struct&lt;...&gt;</code> and field lists with nested types raise
+  <code>Unsupported Spark type name</code>, a top-level <code>name: type</code> list is accepted (Spark's <code>fromDDL</code> rejects it), and a
+  non-container type (<code>"int"</code>) is accepted instead of raising <code>INVALID_JSON_SCHEMA</code>. An unparseable record
+  gives null instead of a struct of nulls (<code>functions.from_json.ddl_schema</code>).</li>
+</ul>
+<h2 id="decimal-arithmetic-precision">Decimal arithmetic precision</h2>
+<p><strong>Affected operations:</strong> <code>+</code>, <code>-</code>, <code>*</code> with a <code>DecimalType</code> operand, e.g. <code>col("apr") * 100</code> on a
+<code>decimal(5,4)</code> column.</p>
+<p>Values and scale match Spark, but the precision does not: sparkleframe widens the result to 38
+(<code>decimal(38,4)</code>) where Spark applies its <code>DecimalPrecision</code> rules (<code>decimal(9,4)</code>, an integer
+literal counting as <code>decimal(3,0)</code>). Downstream functions that derive their type from the input,
+such as <code>round</code>, inherit the wider precision (<code>round(col("apr") * 100, 2)</code> is <code>decimal(37,2)</code>, not
+<code>decimal(8,2)</code>), though the scale and the rendered values are the same.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.top", "navigation.path", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.code.select"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>

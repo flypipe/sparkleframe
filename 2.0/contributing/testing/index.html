@@ -1,0 +1,812 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../images/favicon.ico">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Testing - SparkleFrame</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#testing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+          <aside class="md-banner md-banner--warning">
+            <div class="md-banner__inner md-grid md-typeset">
+              
+  You're not viewing the latest version.
+  <a href="../../..">
+    <strong>Click here to go to latest.</strong>
+  </a>
+
+            </div>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+          </aside>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="SparkleFrame" class="md-header__button md-logo" aria-label="SparkleFrame" data-md-component="logo">
+      
+  <img src="../../images/logo.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SparkleFrame
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Testing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/flypipe/sparkleframe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    flypipe/sparkleframe
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="SparkleFrame" class="md-nav__button md-logo" aria-label="SparkleFrame" data-md-component="logo">
+      
+  <img src="../../images/logo.png" alt="logo">
+
+    </a>
+    SparkleFrame
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/flypipe/sparkleframe" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    flypipe/sparkleframe
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Welcome
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../supported_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported Pyspark API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#run-tests-in-docker" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run tests in Docker
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-assertion-helper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The assertion helper
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cover-valid-and-malformed-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cover valid and malformed inputs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#test-layering-who-owns-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test layering: who owns what
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#smells-to-avoid-in-colocated-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smells to avoid in colocated tests
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Smells to avoid in colocated tests">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-re-asserting-values-that-parity-already-covers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Re-asserting values that parity already covers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-fixtures-that-cant-fail-the-property" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Fixtures that can't fail the property
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-mocking-ast-phases-did-analyze-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Mocking AST phases ("did analyze run?")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-import-smoke-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Import-smoke tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-runtime-type-assertions-that-duplicate-mypy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Runtime "type" assertions that duplicate mypy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-reflected-operator-tests-that-only-check-the-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Reflected-operator tests that only check the operator
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-substring-repr-smoke-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Substring repr smoke tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parity-test-conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parity-test conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+                
+
+
+
+  
+
+
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="testing">Testing</h1>
+<p>Every new method on <strong>functions</strong>, <strong>column</strong>, or <strong>dataframe</strong> must include <strong>Spark parity
+tests</strong> in the corresponding <code>*_test.py</code>. A parity test runs the <em>same pipeline</em> on SparkleFrame
+and on real PySpark and asserts the results match.</p>
+<h2 id="run-tests-in-docker">Run tests in Docker</h2>
+<p>Always run tests via <code>make</code>, not bare <code>pytest</code> — the Docker container sets env vars (e.g.
+<code>TIMEZONE</code>) the Spark fixture depends on.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>make<span class="w"> </span><span class="nb">test</span><span class="w">                                            </span><span class="c1"># whole suite</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>make<span class="w"> </span><span class="nb">test</span><span class="w"> </span><span class="nv">f</span><span class="o">=</span>sparkleframe/polarsdf/functions_test.py<span class="w">  </span><span class="c1"># one file</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>make<span class="w"> </span><span class="nb">test</span><span class="w"> </span><span class="nv">f</span><span class="o">=</span>sparkleframe/tests/parity<span class="w">                </span><span class="c1"># the engine-parametrized parity suite</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>make<span class="w"> </span>pr-check<span class="w">                                         </span><span class="c1"># black + lint + coverage (the PR gate)</span>
+</code></pre></div>
+<h2 id="the-assertion-helper">The assertion helper</h2>
+<p>Use <code>assert_matches_spark</code> from <code>sparkleframe/tests/parity/oracle.py</code> whenever Spark produces a
+result DataFrame. It compares an engine frame against a real PySpark frame <strong>via the engine
+adapter</strong> (engine-agnostic), with order-insensitive multiset compare by default.</p>
+<p>For <strong>co-located, polars-only tests</strong> (the <code>sparkleframe/polarsdf/*_test.py</code> files), import the
+<code>ENGINES</code> dict and pass the polars adapter, keyed by <code>Engine.POLARS</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkleframe.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">Engine</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkleframe.tests.parity.engines</span><span class="w"> </span><span class="kn">import</span> <span class="n">ENGINES</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkleframe.tests.parity.oracle</span><span class="w"> </span><span class="kn">import</span> <span class="n">assert_matches_spark</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">sf_result</span> <span class="o">=</span> <span class="n">sparkle_df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">spark_result</span> <span class="o">=</span> <span class="n">spark_df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">assert_matches_spark</span><span class="p">(</span><span class="n">sf_result</span><span class="p">,</span> <span class="n">spark_result</span><span class="p">,</span> <span class="n">ENGINES</span><span class="p">[</span><span class="n">Engine</span><span class="o">.</span><span class="n">POLARS</span><span class="p">])</span>
+</code></pre></div>
+<p><strong>Engine-parametrized</strong> parity tests in <code>sparkleframe/tests/parity/</code> use the <code>engine</code> fixture
+instead (see <a href="#parity-test-conventions">Parity-test conventions</a> below). Pass <code>check_row_order=True</code>
+only when the ordering itself is under test (e.g. <code>orderBy</code> / <code>sort</code>).</p>
+<h2 id="cover-valid-and-malformed-inputs">Cover valid and malformed inputs</h2>
+<p>Parity tests must exercise <strong>more than well-formed data</strong>. A common mistake is cast or timestamp
+tests where every string parses successfully, so strict error paths (<code>CAST_INVALID_INPUT</code>, etc.)
+are never evaluated.</p>
+<p>For cast, parse, and conversion APIs, fixtures <strong>must</strong> include malformed or edge-case values:</p>
+<ul>
+<li>Invalid timestamp or date strings (<code>"not-a-date"</code>, wrong pattern for the format)</li>
+<li>Unparseable strings for numeric or boolean casts</li>
+<li><code>null</code> mixed with bad values (see <code>test_try_to_timestamp_malformed_returns_null</code> in
+  <code>functions_test.py</code>)</li>
+</ul>
+<p>What to assert depends on the API:</p>
+<ol>
+<li><strong>Strict APIs</strong> (<code>cast</code>, <code>to_timestamp</code>, …): include malformed input where <strong>Spark raises</strong>;
+   confirm Spark fails, then assert SparkleFrame <strong>also raises</strong> on evaluation (<code>pytest.raises</code>).
+   See <code>TestColumnSparkParity</code> in <code>column_test.py</code>.</li>
+<li><strong>Lenient APIs</strong> (<code>try_cast</code>, <code>try_to_timestamp</code>, <code>try_to_date</code>, …): include malformed rows; bad
+   values become <code>null</code>, then compare the full result frame to Spark with
+   <code>assert_matches_spark(sf, spark, ENGINES[Engine.POLARS])</code>.</li>
+<li><strong>Valid inputs:</strong> still required — same pipeline on Spark and SparkleFrame, then frame parity.</li>
+<li><strong>Strict/lenient pairs:</strong> add at least one test where Spark <strong>raises</strong> on the strict API (confirm
+   on Spark first, then <code>pytest.raises</code> on SparkleFrame evaluation), and a matching test that the
+   lenient API returns <code>null</code> on the same input. See <code>TestElementAt::test_array_oob_raises_like_spark</code>
+   in <code>functions_test.py</code>.</li>
+</ol>
+<p>See <a href="../spark4-semantics/">spark4-semantics.md</a> for which APIs are strict vs lenient and why.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">pytest</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyspark.sql.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_timestamp</span> <span class="k">as</span> <span class="n">spark_to_timestamp</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pyspark.sql.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">try_to_timestamp</span> <span class="k">as</span> <span class="n">spark_try_to_timestamp</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkleframe.polarsdf.dataframe</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataFrame</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkleframe.polarsdf.functions</span><span class="w"> </span><span class="kn">import</span> <span class="n">to_timestamp</span><span class="p">,</span> <span class="n">try_to_timestamp</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkleframe.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">Engine</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkleframe.tests.parity.engines</span><span class="w"> </span><span class="kn">import</span> <span class="n">ENGINES</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sparkleframe.tests.parity.oracle</span><span class="w"> </span><span class="kn">import</span> <span class="n">assert_matches_spark</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="c1"># Valid inputs</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="n">df</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;2023-01-01 12:34:56&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">]})</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">sparkle_df</span> <span class="o">=</span> <span class="n">DataFrame</span><span class="p">(</span><span class="n">df</span><span class="p">)</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="n">spark_df</span> <span class="o">=</span> <span class="n">spark</span><span class="o">.</span><span class="n">createDataFrame</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">())</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="n">sf_result</span> <span class="o">=</span> <span class="n">sparkle_df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">to_timestamp</span><span class="p">(</span><span class="s2">&quot;ts&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;result&quot;</span><span class="p">))</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="n">spark_result</span> <span class="o">=</span> <span class="n">spark_df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">spark_to_timestamp</span><span class="p">(</span><span class="s2">&quot;ts&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;result&quot;</span><span class="p">))</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="n">assert_matches_spark</span><span class="p">(</span><span class="n">sf_result</span><span class="p">,</span> <span class="n">spark_result</span><span class="p">,</span> <span class="n">ENGINES</span><span class="p">[</span><span class="n">Engine</span><span class="o">.</span><span class="n">POLARS</span><span class="p">])</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="c1"># Malformed input — strict API must fail (confirm Spark first)</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="n">bad_df</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;not-a-date&quot;</span><span class="p">]})</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="n">sparkle_bad</span> <span class="o">=</span> <span class="n">DataFrame</span><span class="p">(</span><span class="n">bad_df</span><span class="p">)</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="n">spark_bad</span> <span class="o">=</span> <span class="n">spark</span><span class="o">.</span><span class="n">createDataFrame</span><span class="p">(</span><span class="n">bad_df</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">())</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>    <span class="n">spark_bad</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">spark_to_timestamp</span><span class="p">(</span><span class="s2">&quot;ts&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>    <span class="n">sparkle_bad</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">to_timestamp</span><span class="p">(</span><span class="s2">&quot;ts&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">to_native_df</span><span class="p">()</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="c1"># Malformed input — lenient API returns null, then frame parity</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="n">mixed_df</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">&quot;ts&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;2023-01-01 12:34:56&quot;</span><span class="p">,</span> <span class="s2">&quot;not-a-date&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">]})</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="n">sparkle_mixed</span> <span class="o">=</span> <span class="n">DataFrame</span><span class="p">(</span><span class="n">mixed_df</span><span class="p">)</span>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="n">spark_mixed</span> <span class="o">=</span> <span class="n">spark</span><span class="o">.</span><span class="n">createDataFrame</span><span class="p">(</span><span class="n">mixed_df</span><span class="o">.</span><span class="n">to_pandas</span><span class="p">())</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a><span class="n">sf_result</span> <span class="o">=</span> <span class="n">sparkle_mixed</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">try_to_timestamp</span><span class="p">(</span><span class="s2">&quot;ts&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;result&quot;</span><span class="p">))</span>
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a><span class="n">spark_result</span> <span class="o">=</span> <span class="n">spark_mixed</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">spark_try_to_timestamp</span><span class="p">(</span><span class="s2">&quot;ts&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;result&quot;</span><span class="p">))</span>
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a><span class="n">assert_matches_spark</span><span class="p">(</span><span class="n">sf_result</span><span class="p">,</span> <span class="n">spark_result</span><span class="p">,</span> <span class="n">ENGINES</span><span class="p">[</span><span class="n">Engine</span><span class="o">.</span><span class="n">POLARS</span><span class="p">])</span>
+</code></pre></div>
+<h2 id="test-layering-who-owns-what">Test layering: who owns what</h2>
+<p>SparkleFrame has five overlapping test layers. Each layer owns a <em>different property</em> of the
+same code. When writing a new test, decide which layer should own the assertion and resist
+restating it elsewhere — duplicated assertions add maintenance cost without adding signal.</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Lives in</th>
+<th>Owns</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AST phase units</td>
+<td><code>sparkleframe/python/ast/*_test.py</code></td>
+<td>What a single phase produces: coercion table, analyze inserts <code>Cast</code>, evaluate computes values from a resolved tree. Pure functions; no DataFrame.</td>
+</tr>
+<tr>
+<td>Engine parity</td>
+<td><code>sparkleframe/tests/parity/</code></td>
+<td>Result <em>values</em> match real Spark across <code>[POLARS]</code> and <code>[PYTHON]</code>. The oracle compares records as a sorted multiset and does <strong>not</strong> assert schema/dtypes.</td>
+</tr>
+<tr>
+<td>Colocated DataFrame units</td>
+<td><code>sparkleframe/&lt;engine&gt;/dataframe_test.py</code></td>
+<td>Orchestration contract for the DataFrame surface: projection, output order, output names, <em>resolved output dtype</em>, argument handling, unimplemented-slot raising. <strong>Not values</strong> — parity owns those.</td>
+</tr>
+<tr>
+<td>Colocated Column units</td>
+<td><code>sparkleframe/&lt;engine&gt;/column_test.py</code></td>
+<td>AST shape produced by dunder methods: which node type, which operator string, which operand is on which side (especially for reflected ops).</td>
+</tr>
+<tr>
+<td>Colocated functions units</td>
+<td><code>sparkleframe/&lt;engine&gt;/functions_test.py</code></td>
+<td>AST shape produced by each <code>F.*</code> factory: node type, name, arg structure, branch order for <code>when/otherwise</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The shorthand: <strong>parity owns values; colocated units own structure.</strong> If a colocated test
+asserts a numeric result that parity already covers, either delete the assertion or replace it
+with the structural property it was implicitly probing (typically: output schema/dtype).</p>
+<h2 id="smells-to-avoid-in-colocated-tests">Smells to avoid in colocated tests</h2>
+<p>These are the common smells that have shown up in review. Fix them at write-time, not at
+review-time.</p>
+<h3 id="1-re-asserting-values-that-parity-already-covers">1. Re-asserting values that parity already covers</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># BAD — parity already proves 11/22 against real Spark; this is strictly weaker.</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">out</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">((</span><span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;b&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">))</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">assert</span> <span class="n">out</span><span class="o">.</span><span class="n">to_records</span><span class="p">()</span> <span class="o">==</span> <span class="p">[{</span><span class="s2">&quot;r&quot;</span><span class="p">:</span> <span class="mi">11</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;r&quot;</span><span class="p">:</span> <span class="mi">22</span><span class="p">}]</span>
+</code></pre></div>
+<p>If the only unique thing the test proves is the resolved dtype, keep just that and drop the
+value assertion:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># GOOD — parity owns the value; this owns the schema/dtype claim parity ignores.</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">out</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">((</span><span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;i&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;l&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">))</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">_schema</span><span class="p">[</span><span class="s2">&quot;r&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">dataType</span><span class="p">,</span> <span class="n">LongType</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="2-fixtures-that-cant-fail-the-property">2. Fixtures that can't fail the property</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># BAD — single-column input; ``select(&quot;a&quot;)`` passes even if select ignored its arg.</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">df</span> <span class="o">=</span> <span class="n">DataFrame</span><span class="p">([(</span><span class="mi">1</span><span class="p">,),</span> <span class="p">(</span><span class="mi">2</span><span class="p">,)],</span> <span class="n">StructType</span><span class="p">([</span><span class="n">StructField</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="n">IntegerType</span><span class="p">())]))</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">assert</span> <span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to_records</span><span class="p">()</span> <span class="o">==</span> <span class="p">[{</span><span class="s2">&quot;a&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;a&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}]</span>
+</code></pre></div>
+<p>A test must use a fixture that lets the property fail. For projection, that means <strong>≥2
+columns</strong>; for ordering, distinct names; for dtype resolution, operands whose result type
+differs from the inputs.</p>
+<h3 id="3-mocking-ast-phases-did-analyze-run">3. Mocking AST phases ("did analyze run?")</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># BAD — couples to call structure; passes even if the frame is assembled wrong.</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="k">with</span> <span class="n">patch</span><span class="p">(</span><span class="s2">&quot;sparkleframe.python.ast.analyzer.analyze&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">m</span><span class="p">:</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>    <span class="n">df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;b&quot;</span><span class="p">))</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>    <span class="n">m</span><span class="o">.</span><span class="n">assert_called_once</span><span class="p">()</span>
+</code></pre></div>
+<p>A behavioral assertion on the output (schema + records, or resolved dtype) already proves
+analyze fired <em>and</em> checks the contract. Mocks here lock in implementation details and bypass
+the actual property under test.</p>
+<h3 id="4-import-smoke-tests">4. Import-smoke tests</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># BAD — passes whenever the module exists; zero information.</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_helpers_module_importable</span><span class="p">():</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>    <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">helpers</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+</code></pre></div>
+<p>Trust the import system. If you need a single canary that the package layout is intact, write
+<strong>one</strong> dedicated test, not one per submodule.</p>
+<h3 id="5-runtime-type-assertions-that-duplicate-mypy">5. Runtime "type" assertions that duplicate mypy</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># BAD — mypy and ruff catch this in CI.</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">out</span><span class="p">,</span> <span class="n">DataFrame</span><span class="p">)</span>
+</code></pre></div>
+<p>The meaningful runtime analog is asserting the resolved output <code>StructField</code> dtype, which mypy
+<em>can't</em> see.</p>
+<h3 id="6-reflected-operator-tests-that-only-check-the-operator">6. Reflected-operator tests that only check the operator</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># BAD — passes even if ``__rsub__`` swaps operands.</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">result</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">c</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">assert</span> <span class="n">result</span><span class="o">.</span><span class="n">_expr</span><span class="o">.</span><span class="n">op</span> <span class="o">==</span> <span class="s2">&quot;-&quot;</span>
+</code></pre></div>
+<p>Non-commutative reflected dunders (<code>__rsub__</code>, <code>__rtruediv__</code>, <code>__rpow__</code>) must also assert
+operand placement — otherwise a left/right swap regression slips through.</p>
+<h3 id="7-substring-repr-smoke-tests">7. Substring repr smoke tests</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># BAD — passes for any repr that contains the class name.</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">assert</span> <span class="s2">&quot;Column(&quot;</span> <span class="ow">in</span> <span class="nb">repr</span><span class="p">(</span><span class="n">col</span><span class="p">)</span>
+</code></pre></div>
+<p>Either assert the repr <em>delegates</em> (contains the wrapped name/expression), or delete the test.
+"Class name appears in its own repr" is a tautology.</p>
+<h2 id="parity-test-conventions">Parity-test conventions</h2>
+<p>The shared parity suite (<code>sparkleframe/tests/parity/</code>) runs each test against <strong>every engine</strong>.</p>
+<ul>
+<li><strong>The <code>engine</code> fixture</strong> (from <code>conftest.py</code>) parametrizes a test over all engines in <code>ENGINES</code>,
+  so one test runs as <code>...[POLARS]</code> and <code>...[PYTHON]</code>. Build frames and expressions through the
+  fixture, never by importing an engine directly:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nd">@pytest</span><span class="o">.</span><span class="n">mark</span><span class="o">.</span><span class="n">feature</span><span class="p">(</span><span class="s2">&quot;functions.abs.integer&quot;</span><span class="p">)</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">test_abs_integer</span><span class="p">(</span><span class="n">engine</span><span class="p">,</span> <span class="n">spark</span><span class="p">):</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">F</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">functions</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="n">actual</span> <span class="o">=</span> <span class="n">engine</span><span class="o">.</span><span class="n">build_df</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">schema</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">F</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">))</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="n">expected</span> <span class="o">=</span> <span class="n">spark</span><span class="o">.</span><span class="n">createDataFrame</span><span class="p">(</span><span class="n">rows</span><span class="p">,</span> <span class="n">schema</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">SF</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">SF</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;r&quot;</span><span class="p">))</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>    <span class="n">assert_matches_spark</span><span class="p">(</span><span class="n">actual</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">engine</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><strong><code>@pytest.mark.feature("&lt;id&gt;")</code></strong> tags the Spark behavior under test. The id is what the
+  per-engine gate in <code>gaps.py</code> keys on. Use dotted <code>module.area.case</code> naming, matching existing
+  ids — e.g. <code>functions.to_timestamp.with_format</code>, <code>column.cast.int_to_boolean</code>,
+  <code>dataframe.join.polars_joins</code>.</li>
+<li><strong>Gating</strong> is automatic: if the id is in an engine's gate set, the test <code>xfail</code>s for that engine;
+  unscaffolded engines skip. You don't add <code>xfail</code> markers by hand — see <a href="../engines/">engines.md</a>.</li>
+<li><strong><code>check_row_order=True</code></strong> only when ordering is the thing under test.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.top", "navigation.path", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.code.select"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
