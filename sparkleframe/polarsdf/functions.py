@@ -20,6 +20,7 @@ from sparkleframe.polarsdf.functions_helpers import (
     _rand_batch,
     _RankWrapper,
     _re_split_sparklike,
+    _round_batch,
     _schema_from_string,
     _size_sparklike_value,
     _struct_return_dtype_from_parts,
@@ -472,7 +473,8 @@ def round(col_name: Union[str, Column], scale: int = 0) -> Column:
     """
     Mimics pyspark.sql.functions.round.
 
-    Rounds the values of a column to the specified number of decimal places.
+    Rounds the values of a column to the specified number of decimal places. A decimal column
+    rounds half up into Spark's narrowed decimal type (see :func:`_round_batch`).
 
     Args:
         col_name (str or Column): The column to round.
@@ -482,28 +484,43 @@ def round(col_name: Union[str, Column], scale: int = 0) -> Column:
         Column: A Column representing the rounded values.
     """
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
-    return Column(expr.round(scale))
+    return Column(expr.map_batches(lambda series: _round_batch(series, scale), is_elementwise=True))
 
 
-class WhenBuilder:
+def _when_value(value):
+    # Spark closes an unterminated nested when with null, e.g. when(a, when(b, x)).otherwise(y).
+    return value.otherwise(None) if isinstance(value, WhenBuilder) else value
+
+
+class WhenBuilder(Column):
+    """
+    A when chain. Until .otherwise is called it is usable as a Column whose unmatched rows are
+    null, as in Spark: F.coalesce(F.when(a, x), y) or F.when(a, x).alias("c").
+    """
+
     def __init__(self, condition: Column, value):
+        value = _when_value(value)
         self.branches = [(condition.to_native(), _to_expr(value))]
-        self._struct_parts: Optional[list[pl.Expr]] = None
-        if isinstance(value, Column) and value._struct_parts is not None:
-            self._struct_parts = value._struct_parts
+        struct_parts = value._struct_parts if isinstance(value, Column) else None
+        super().__init__(self._chain(None), struct_parts=struct_parts)
 
-    def when(self, condition: Any, value) -> "WhenBuilder":
-        condition = Column(condition) if not isinstance(condition, Column) else condition
-        self.branches.append((condition.to_native(), _to_expr(value)))
-        if self._struct_parts is None and isinstance(value, Column) and value._struct_parts is not None:
-            self._struct_parts = value._struct_parts
-        return self
-
-    def otherwise(self, value) -> Column:
+    def _chain(self, otherwise_value) -> pl.Expr:
         expr = pl.when(self.branches[0][0]).then(self.branches[0][1])
         for cond, val in self.branches[1:]:
             expr = expr.when(cond).then(val)
-        return Column(expr.otherwise(_to_expr(value)), struct_parts=self._struct_parts)
+        return expr.otherwise(_to_expr(otherwise_value))
+
+    def when(self, condition: Any, value) -> "WhenBuilder":
+        condition = Column(condition) if not isinstance(condition, Column) else condition
+        value = _when_value(value)
+        self.branches.append((condition.to_native(), _to_expr(value)))
+        if self._struct_parts is None and isinstance(value, Column) and value._struct_parts is not None:
+            self._struct_parts = value._struct_parts
+        self.expr = self._chain(None)
+        return self
+
+    def otherwise(self, value) -> Column:
+        return Column(self._chain(_when_value(value)), struct_parts=self._struct_parts)
 
 
 def when(condition: Any, value) -> WhenBuilder:
@@ -579,6 +596,18 @@ def regexp_replace(col_name: Union[str, Column], pattern: str, replacement: str)
     col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
     expr = _to_expr(col_name)
     return Column(expr.str.replace_all(pattern, replacement))
+
+
+def regexp_extract(col_name: Union[str, Column], pattern: str, idx: int) -> Column:
+    """
+    Mimics pyspark.sql.functions.regexp_extract.
+
+    Extracts capture group ``idx`` of the first match of ``pattern``. Like Spark, a non-matching
+    string gives an empty string and a null input gives null.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    extracted = expr.cast(pl.String).str.extract(pattern, idx)
+    return Column(pl.when(expr.is_null()).then(pl.lit(None, dtype=pl.String)).otherwise(extracted.fill_null("")))
 
 
 def length(col_name: Union[str, Column]) -> Column:
@@ -872,6 +901,23 @@ def lower(col_name: Union[str, Column]) -> Column:
     return Column(expr.str.to_lowercase())
 
 
+def upper(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.upper.
+
+    Converts all characters of a string column to upper case.
+
+    Args:
+        col_name (str or Column): The string column to transform.
+
+    Returns:
+        Column: A Column with upper-cased string values.
+    """
+    col_name = pl.col(col_name) if isinstance(col_name, str) else col_name
+    expr = _to_expr(col_name)
+    return Column(expr.str.to_uppercase())
+
+
 def initcap(col_name: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.initcap.
@@ -996,6 +1042,46 @@ def date_sub(col_name: Union[str, Column], days: int) -> Column:
     return Column(_as_date_sparklike_expr(expr) - pl.duration(days=int(days)))
 
 
+def add_months(start: Union[str, Column], months: Union[int, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.add_months.
+
+    Like Spark, a day past the end of the target month is clamped to its last day (2024-01-31 + 1 -> 2024-02-29).
+    """
+    expr = _to_expr(start) if isinstance(start, Column) else pl.col(start)
+    if isinstance(months, Column):
+        offset = _to_expr(months).cast(pl.String) + pl.lit("mo")
+    else:
+        offset = f"{int(months)}mo"
+    return Column(_as_date_sparklike_expr(expr).dt.offset_by(offset))
+
+
+_TRUNC_FORMATS = {
+    "year": "1y",
+    "yyyy": "1y",
+    "yy": "1y",
+    "quarter": "1q",
+    "month": "1mo",
+    "mon": "1mo",
+    "mm": "1mo",
+    "week": "1w",
+}
+
+
+def trunc(date_col: Union[str, Column], format: str) -> Column:
+    """
+    Mimics pyspark.sql.functions.trunc.
+
+    Truncates a date to the start of its year, quarter, month or (Monday-based) week. Like Spark, an
+    unsupported format gives null.
+    """
+    expr = _to_expr(date_col) if isinstance(date_col, Column) else pl.col(date_col)
+    every = _TRUNC_FORMATS.get(format.lower())
+    if every is None:
+        return Column(pl.repeat(None, pl.len(), dtype=pl.Date))
+    return Column(_as_date_sparklike_expr(expr).dt.truncate(every))
+
+
 def datediff(end: Union[str, Column], start: Union[str, Column]) -> Column:
     """
     Mimics pyspark.sql.functions.datediff.
@@ -1106,6 +1192,16 @@ def size(col_name: Union[str, Column]) -> Column:
     )
 
 
+def array_max(col_name: Union[str, Column]) -> Column:
+    """
+    Mimics pyspark.sql.functions.array_max.
+
+    Like Spark, null elements are skipped and an empty array gives null.
+    """
+    expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
+    return Column(expr.list.max())
+
+
 def filter(col_name: Union[str, Column], func: Callable[[Column], Any]) -> Column:
     """Mimics pyspark.sql.functions.filter for array columns."""
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
@@ -1120,6 +1216,7 @@ def explode(col_name: Union[str, Column]) -> Column:
     expr = _to_expr(col_name) if isinstance(col_name, Column) else pl.col(col_name)
     column = Column(expr.explode())
     setattr(column, "_is_explode", True)
+    setattr(column, "_explode_source_expr", expr)
     if isinstance(col_name, str):
         setattr(column, "_explode_source_name", col_name)
     return column
@@ -1248,10 +1345,12 @@ def to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Column:
 
     Converts a string column to a date using the given Spark format pattern.
     Malformed values raise under Spark 4 ANSI defaults (see :func:`try_to_date`).
+    A date column is returned as is and a timestamp column is truncated to its date;
+    the format applies to strings only.
 
     Args:
-        col_name (str or Column): Column with string values to convert to dates.
-        fmt (str, optional): The date format. Defaults to ``yyyy-MM-dd``.
+        col_name (str or Column): Column with string, date or timestamp values to convert to dates.
+        fmt (str, optional): The date format for string values. Defaults to ``yyyy-MM-dd``.
 
     Returns:
         Column: A Column with values converted to Polars Date type.
@@ -1265,10 +1364,12 @@ def try_to_date(col_name: Union[str, Column], fmt: Optional[str] = None) -> Colu
     Mimics pyspark.sql.functions.try_to_date (Spark 4+).
 
     Converts a string column to a date, returning null for unparseable values.
+    A date column is returned as is and a timestamp column is truncated to its date;
+    the format applies to strings only.
 
     Args:
-        col_name (str or Column): Column with string values to convert to dates.
-        fmt (str, optional): The date format. Defaults to 'yyyy-MM-dd'.
+        col_name (str or Column): Column with string, date or timestamp values to convert to dates.
+        fmt (str, optional): The date format for string values. Defaults to 'yyyy-MM-dd'.
 
     Returns:
         Column: A Column with values converted to Polars Date type (null for failures).

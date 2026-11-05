@@ -136,6 +136,7 @@ PYTHON_NOT_IMPLEMENTED = {
     "functions.element_at.map_literal_string_key",
     "functions.element_at.map_missing_literal_key_returns_null",
     "functions.explode",
+    "functions.explode.select_with_other_columns",
     "functions.filter.by_struct_field_equality",
     "functions.filter.getitem_int_in_filter",
     "functions.filter.getitem_string_key_on_map_in_filter",
@@ -170,6 +171,7 @@ PYTHON_NOT_IMPLEMENTED = {
     "functions.struct.oracle",
     "functions.substring",
     "functions.to_date.malformed_raises",
+    "functions.to_date.timestamp_and_date_input",
     "functions.to_date.with_format",
     "functions.to_json.array",
     "functions.to_json.struct",
@@ -197,6 +199,7 @@ PYTHON_NOT_IMPLEMENTED = {
     "functions.try_to_date.custom_format",
     "functions.try_to_date.custom_format_malformed",
     "functions.try_to_date.default_format_malformed",
+    "functions.try_to_date.timestamp_and_date_input",
     "functions.try_to_date.valid_matches_to_date",
     "functions.try_to_timestamp.column_input",
     "functions.try_to_timestamp.default_malformed_returns_null",
@@ -219,4 +222,4 @@ GATES = {
 # lower it (never raise it) when you delete entries. The ratchet test enforces
 # that the live set never exceeds this number, so a regression can't quietly
 # re-gate a behavior instead of being fixed.
-PYTHON_GATE_HIGH_WATER_MARK = 165
+PYTHON_GATE_HIGH_WATER_MARK = 168

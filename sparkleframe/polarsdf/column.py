@@ -26,6 +26,8 @@ from sparkleframe.polarsdf.column_helpers import (
 )
 from sparkleframe.polarsdf.types import BooleanType, DataType, spark_type_name_to_polars
 
+_EXPLODE_ATTRS = ("_is_explode", "_explode_source_name", "_explode_source_expr")
+
 
 class Column:
     def __init__(
@@ -279,7 +281,11 @@ class Column:
         Returns:
             Column: A new Column with the alias applied
         """
-        return Column(self.expr, getitem_chain=self._getitem_chain, output_alias=name, builder=self._builder)
+        aliased = Column(self.expr, getitem_chain=self._getitem_chain, output_alias=name, builder=self._builder)
+        for attr in _EXPLODE_ATTRS:
+            if hasattr(self, attr):
+                setattr(aliased, attr, getattr(self, attr))
+        return aliased
 
     def asc(self) -> "Column":
         base = self.to_native()
