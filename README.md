@@ -120,3 +120,5 @@ API code is available at [https://github.com/flypipe/sparkleframe](https://githu
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a map of the codebase, [AGENTS.md](AGENTS.md) for the
 contributor/agent guide, and [docs/contributing/](docs/contributing/) for the detailed guides
 (testing, Spark 4 semantics, engines).
+Releases follow [semantic versioning](https://semver.org/), driven by commit prefixes — see the
+[release guide](docs/contributing/release.md).
