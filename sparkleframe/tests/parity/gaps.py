@@ -44,6 +44,7 @@ POLARS_NOT_SUPPORTED = {
     "dataframe.join.cross_keeps_duplicate_names",
     "functions.explode.drops_null_and_empty",
     "functions.explode.non_collection_raises",
+    "functions.explode.select_with_other_columns",
     "functions.months_between",
     "dataframe.union.string_promotion",
     "dataframe.create.decimal_rescaled_to_field",

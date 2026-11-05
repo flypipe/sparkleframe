@@ -1026,11 +1026,12 @@ def test_explode_drops_null_and_empty_against_spark(engine, spark):
 
 @pytest.mark.feature("functions.explode.select_with_other_columns")
 def test_explode_select_with_other_columns_against_spark(engine, spark):
+    """The other selected columns repeat per element; null and empty arrays emit no row."""
     F = engine.functions
     schema = _schema(("id", _STR), ("arr", SparkArrayType(_LONG)))
     rows = [("a", [1, 2, 3]), ("b", [4]), ("c", None), ("d", [])]
     actual = engine.build_df(rows, schema).select("id", F.explode("arr").alias("e"))
-    expected = spark.createDataFrame(rows, schema).select("id", SF.explode_outer("arr").alias("e"))
+    expected = spark.createDataFrame(rows, schema).select("id", SF.explode("arr").alias("e"))
     assert_matches_spark(actual, expected, engine)
 
 
