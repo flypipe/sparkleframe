@@ -1278,6 +1278,49 @@ def test_to_json_decimal_scale_preserved_against_spark(engine, spark):
         engine.to_records(engine.build_df(rows, schema).select(F.to_json("amount")))
 
 
+@pytest.mark.feature("functions.to_json.decimal_nested")
+def test_to_json_decimal_nested_against_spark(engine, spark):
+    """Decimals inside arrays, maps and nested structs are JSON numbers too, in BigDecimal.toString form."""
+    F = engine.functions
+    schema = _schema(
+        ("apr", SparkDecimalType(5, 4)),
+        ("tiny", SparkDecimalType(10, 7)),
+        ("amounts", SparkArrayType(SparkDecimalType(13, 2))),
+        ("label", _STR),
+    )
+    rows = [
+        (Decimal("0.0650"), Decimal("0.0000001"), [Decimal("180000.00"), None, Decimal("-12.50")], "a"),
+        (None, Decimal("0E-7"), None, 'quoted "0.0650"'),
+    ]
+    options = {"ignoreNullFields": False}
+
+    def nested(f):
+        return f.struct(
+            f.struct("apr", "tiny").alias("rates"),
+            "amounts",
+            f.array(f.struct("apr", "label")).alias("offers"),
+            "label",
+        )
+
+    actual = engine.build_df(rows, schema).select(
+        F.to_json(nested(F), options).alias("j"),
+        F.to_json("amounts").alias("arr"),
+        F.to_json(F.create_map("label", "apr")).alias("m"),
+    )
+    expected = spark.createDataFrame(rows, schema).select(
+        SF.to_json(nested(SF), options).alias("j"),
+        SF.to_json("amounts").alias("arr"),
+        SF.to_json(SF.create_map("label", "apr")).alias("m"),
+    )
+    assert_matches_spark(actual, expected, engine)
+
+    # Malformed: a bare decimal column is not a struct, map or array.
+    with pytest.raises(Exception):
+        spark.createDataFrame(rows, schema).select(SF.to_json("apr")).collect()
+    with pytest.raises(Exception):
+        engine.to_records(engine.build_df(rows, schema).select(F.to_json("apr")))
+
+
 @pytest.mark.feature("functions.to_json.timestamp_format")
 @pytest.mark.parametrize(
     "options",
