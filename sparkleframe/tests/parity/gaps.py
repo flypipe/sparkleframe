@@ -42,7 +42,7 @@ POLARS_NOT_SUPPORTED = {
     # Spark-only semantics the Python engine implements — see docs/known_gaps.md "Projection naming and
     # withColumns resolution", "Joins on same-named Column keys and cross joins", "explode on null, empty and
     # non-collection input", "months_between rounding", "String promotion in union", "Decimal scale in
-    # createDataFrame" and "to_json decimal and timestamp output".
+    # createDataFrame" and "to_json timestamp output".
     "dataframe.select.expression_auto_name",
     "dataframe.with_columns.replaced_name_reads_input",
     "dataframe.join.with_duplicated_spark_keys",
@@ -53,7 +53,6 @@ POLARS_NOT_SUPPORTED = {
     "functions.months_between",
     "dataframe.union.string_promotion",
     "dataframe.create.decimal_rescaled_to_field",
-    "functions.to_json.decimal_scale_preserved",
     "functions.to_json.timestamp_format",
     # Found by the nba parity sweep — see docs/known_gaps.md "Polars deviations found by the nba parity sweep".
     "column.arithmetic.decimal_result_type",

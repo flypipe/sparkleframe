@@ -302,19 +302,20 @@ the over-wide value.
 **Workaround:** quantize the values to the field's scale before building the frame. The pure-Python
 engine rescales as Spark does.
 
-## `to_json` decimal and timestamp output
+## `to_json` timestamp output
 
-**Affected operations:** `F.to_json(...)` over structs, maps or arrays that contain `DecimalType`,
-`TimestampType` or `DateType` values.
+**Affected operations:** `F.to_json(...)` over structs, maps or arrays that contain `TimestampType` or
+`DateType` values.
 
-Spark writes a decimal as a JSON **number** at the column's scale (`{"apr":0.0650}`). A timestamp is
-written as a string in the `timestampFormat` option, by default `yyyy-MM-dd'T'HH:mm:ss.SSSXXX` in the
-session time zone (`"2026-10-01T15:32:10.000Z"` under UTC), and a date in `dateFormat` (default
-`yyyy-MM-dd`). The Polars engine writes decimals as JSON **strings** (`{"apr":"0.0650"}`) and timestamps
-as `yyyy-MM-dd HH:mm:ss`, and it rejects every option other than `ignoreNullFields`.
+Spark writes a timestamp as a string in the `timestampFormat` option, by default
+`yyyy-MM-dd'T'HH:mm:ss.SSSXXX` in the session time zone (`"2026-10-01T15:32:10.000Z"` under UTC), and a
+date in `dateFormat` (default `yyyy-MM-dd`). The Polars engine writes timestamps as `yyyy-MM-dd HH:mm:ss`,
+and it rejects every option other than `ignoreNullFields`.
 
-**Workaround:** none that reproduces Spark's output exactly. Cast decimals to `double` if the consumer
-accepts numbers without a fixed scale. The pure-Python engine matches Spark.
+Decimals match Spark on both engines: a JSON **number** at the column's scale (`{"apr":0.0650}`).
+
+**Workaround:** format timestamps with `date_format` into a string field before `to_json`. The pure-Python
+engine matches Spark.
 
 ## Polars deviations found by the nba parity sweep
 

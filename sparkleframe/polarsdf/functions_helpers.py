@@ -666,7 +666,57 @@ def _is_spark_map_entry_list_dtype(list_dtype: pl.List) -> bool:
     return names == {"key", "value"}
 
 
+# Polars' json_encode and json.dumps both write a decimal as a JSON string, while Spark writes it as a JSON
+# number at the column's scale. Decimals are therefore wrapped in this marker before encoding; the marker
+# contains NUL, which every JSON writer escapes as \u0000, so the quoted marker is then swapped for the bare
+# number. A real string value can only match it if it holds the exact NUL-delimited marker text.
+_DECIMAL_MARKER = "\x00sparkleframe-decimal\x00"
+_ESCAPED_DECIMAL_MARKER = re.escape(json.dumps(_DECIMAL_MARKER)[1:-1])
+_ENCODED_DECIMAL_PATTERN = re.compile(f'"{_ESCAPED_DECIMAL_MARKER}([^"]*){_ESCAPED_DECIMAL_MARKER}"')
+
+
+def _contains_decimal(dt: pl.DataType) -> bool:
+    if isinstance(dt, pl.Decimal):
+        return True
+    if isinstance(dt, pl.Struct):
+        return any(_contains_decimal(f.dtype) for f in dt.fields)
+    if isinstance(dt, pl.List):
+        return _contains_decimal(dt.inner)
+    return False
+
+
+def _mark_decimals(expr: pl.Expr, dt: pl.DataType) -> pl.Expr:
+    """Rewrite every decimal inside ``expr`` as its marker-wrapped plain string, keeping nulls null."""
+    if isinstance(dt, pl.Decimal):
+        return pl.concat_str([pl.lit(_DECIMAL_MARKER), expr.cast(pl.String), pl.lit(_DECIMAL_MARKER)])
+    if isinstance(dt, pl.Struct) and _contains_decimal(dt):
+        fields = [_mark_decimals(expr.struct.field(f.name), f.dtype).alias(f.name) for f in dt.fields]
+        return pl.when(expr.is_null()).then(None).otherwise(pl.struct(fields))
+    if isinstance(dt, pl.List) and _contains_decimal(dt.inner):
+        return expr.list.eval(_mark_decimals(pl.element(), dt.inner))
+    return expr
+
+
+def _unmark_decimal(match: re.Match) -> str:
+    # str(Decimal) follows Java's BigDecimal.toString, which Spark's JSON writer uses: the column's scale is
+    # kept ("0.0650") and very small values switch to exponent form ("1E-7").
+    return str(Decimal(match.group(1)))
+
+
 def _to_json_batch(s: pl.Series) -> pl.Series:
+    """Spark's to_json: decimals are written as JSON numbers at the column's scale."""
+    if not _contains_decimal(s.dtype):
+        return _encode_json_batch(s)
+    marked = s.to_frame().select(_mark_decimals(pl.col(s.name), s.dtype).alias(s.name)).to_series()
+    encoded = _encode_json_batch(marked).to_list()
+    return pl.Series(
+        s.name,
+        [None if text is None else _ENCODED_DECIMAL_PATTERN.sub(_unmark_decimal, text) for text in encoded],
+        dtype=pl.String,
+    )
+
+
+def _encode_json_batch(s: pl.Series) -> pl.Series:
     name = s.name
     if s.len() == 0:
         return pl.Series(name, [], dtype=pl.String)
